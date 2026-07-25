@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 site_name: dsc
 site_description: Discourse CLI — manage multiple Discourse forums from the terminal.
 site_url: https://pacharanero.github.io/dsc/
@@ -117,5 +121,5 @@ markdown_extensions:
       emoji_generator: !!python/name:zensical.extensions.emoji.to_svg
 
 copyright: >-
-  Copyright &copy; 2025–2026 Marcus Baw.
+  Copyright &copy; 2025–2026 Marcus Baw and Koloki Ltd.
   Source <a href="https://github.com/pacharanero/dsc">pacharanero/dsc</a>.

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 mod common;
 use common::*;
 use tempfile::TempDir;
@@ -139,10 +143,12 @@ fn setting_set() {
     vprintln("e2e_setting_set: updating a site setting");
     let dir = TempDir::new().expect("tempdir");
     let config_path = make_config(&dir, &test);
-    // Fetch the current value of 'contact_email', flip it, then restore.
-    // Use a safe benign setting: 'default_locale' is available but risky.
-    // Instead, just verify we can set a known writable setting without error.
-    // We use 'short_site_description' which is typically an empty string.
+    // Restore the actual original value, not a guessed empty default.
+    let client = dsc::api::DiscourseClient::new(&to_config(&test)).expect("client");
+    let original_value = client
+        .fetch_site_setting("short_site_description")
+        .expect("fetch original short_site_description");
+    let _restore = RestoreSettingOnDrop::new(client, "short_site_description", original_value);
     let marker = "dsc-e2e-test-marker";
     let set_output = run_dsc(
         &[
@@ -178,12 +184,6 @@ fn setting_set() {
         "expected '{}', got '{}'",
         marker,
         got.trim()
-    );
-
-    // Restore to empty.
-    run_dsc(
-        &["setting", "set", &test.name, "short_site_description", ""],
-        &config_path,
     );
 }
 

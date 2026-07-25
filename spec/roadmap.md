@@ -16,23 +16,13 @@ The built surface, grouped - see CHANGELOG for the full per-release detail.
 - **CLI / distribution** - universal `--format`, `completions install` (+ PowerShell), `man` pages, `version --format`, SIGPIPE-safe piping, config-path resolution, cargo-dist release + git-cliff changelog, `s/version++` one-command release, push/PR CI gate. Specs: [config-path-resolution](commands/config-path-resolution.md), [cli-design](cli-design.md).
 
 
-## In progress
-
-- [~] ⭐ **R10 - `category` Phase 5 link rewriting** - admonition conversion now ships as `--convert-admonitions=quote-callouts|plain-blockquote`; internal `--rewrite-links` remains. The Quote Callouts target requires the Arkshine theme component; the plain-blockquote target is portable and email-safe. Spec: [category-workflow](commands/category-workflow.md).
-
 ## 1.0 launch checklist
 
 Required before announcing on [meta.discourse.org](https://meta.discourse.org). The stable `RXX` identifiers below are intentionally non-contiguous: completed items were removed rather than renumbered or reused.
 
-### Release blockers
-
-- [ ] **R35 - Record third-party asset provenance** - determine the licences and required notices for vendored Discourse/Font Awesome SVGs, then add REUSE/SPDX coverage and a regeneration/provenance record. Confirm the intended MIT exception for original `dsc` code/docs.
-- [ ] **R38 - Make workflow security a blocking CI gate** - resolve Zizmor's release-workflow findings: eliminate the publish-time cache poisoning risk, replace or constrain cargo-dist's dynamic matrix shell fragments and container images, then add `zizmor --strict-collection .` as a blocking read-only CI job. REUSE validation follows R35's licence/provenance decision.
-
 ### Contract, documentation, and launch package
 
 - [ ] **R36 - Isolate live compatibility tests** - make tests that contact Discourse explicit opt-in, disposable-resource based, serialised where needed, and cleanup-safe; retain offline tests as the ordinary local/CI gate.
-- [~] **R37 - Post-1.0 CLI ergonomics** - make bare `dsc` exit successfully after showing its command summary, add shared `~` path expansion and Clap path hints, report `dsc version` without config resolution, and review cargo-binstall metadata and release checksum naming. HTTP client now has a 10s connect / 120s total timeout so a dead or misconfigured host fails fast instead of hanging the CLI.
 - [ ] **R3 - Record an asciinema** (~30s) of the pull → edit → push → diff loop; embed in README.
 - [ ] **R5 - Pre-circulate the Meta post** to a couple of Discourse regulars before posting.
 - [ ] **R2 - Cut `v1.0.0`** from a fresh, clean, synchronised worktree after this checklist passes, with a release rehearsal (`s/test-fmt-clippy`, docs build, `cargo audit`, `cargo publish --dry-run`) and generated changelog review.

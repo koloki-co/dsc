@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use crate::api::DiscourseClient;
 use crate::api::GroupSummary;
 use crate::cli::{ListFormat, StructuredFormat};

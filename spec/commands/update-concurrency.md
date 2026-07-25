@@ -7,7 +7,7 @@
 > koloki-demo (a held-open fake `./launcher rebuild` process; `dsc update` skips
 > the forum before any OS op, exit 0).
 
-Driver: the Koloki / Baw Medical fleet update on 2026-07-01. One forum (igkt) failed to rebuild (an unrelated leftover MySQL import template), and while supervising a manual `./launcher rebuild app` in another terminal, re-running `dsc update all` would have been unsafe - see Motivation.
+Driver: the Koloki fleet update on 2026-07-01. One forum (igkt) failed to rebuild (an unrelated leftover MySQL import template), and while supervising a manual `./launcher rebuild app` in another terminal, re-running `dsc update all` would have been unsafe - see Motivation.
 
 ## 1. Leaner parallel flag: `-p [N]`
 

@@ -23,7 +23,7 @@ Flags:
 ## dsc category pull
 
 ```
-dsc category pull <discourse> <category-id-or-slug> [<local-path>] [--convert-admonitions <style>]
+dsc category pull <discourse> <category-id-or-slug> [<local-path>] [--convert-admonitions <style>] [--rewrite-links]
 ```
 
 Pulls the category into a directory of Markdown files. If `<local-path>` is omitted, writes to a new folder in the current directory (named from the category slug/name). Files are named from topic titles.
@@ -43,6 +43,8 @@ pulled_at: 2026-06-22T09:19:00Z
 
 `category push` reads `topic_id` from this block to route updates by ID, so renaming the file or editing the title no longer risks creating a duplicate topic. The front matter is local-only metadata: `dsc` strips it before sending content to Discourse, so the `---` block never reaches the published post. Files without front matter (e.g. ones you author by hand) still work - they fall back to slug/title matching.
 
+- `--rewrite-links` — rewrite same-forum links to pulled category topics as local `filename.md` paths. The category export is flat, so it cannot reproduce an original parent-directory layout.
+
 ## dsc category push
 
 ```text
@@ -60,6 +62,7 @@ Flags:
 - `--no-bump` — update posts without bumping their topics to the top of the category activity feed (sends `post[no_bump]=true`). Use for silent bulk maintenance edits.
 - `--skip-revision` — update posts without recording an edit-history revision (sends `post[skip_revision]=true`). Suppresses the online audit trail; use sparingly.
 - `-a`, `--convert-admonitions <quote-callouts|plain-blockquote>` — convert MkDocs/Zensical admonitions while pushing, or the selected generated form back while pulling. Omit it to preserve raw Markdown.
+- `--rewrite-links` — rewrite relative `.md` links such as `../versioning.md` to matching same-category forum topic URLs. Unresolved local targets are left intact and reported as warnings on stderr.
 
 ### Admonition conversion
 
@@ -80,7 +83,18 @@ dsc category push forum 34 forum-export/ --convert-admonitions=plain-blockquote
 
 This generates a readable bold emoji lead-in inside a normal quote. It is the safer choice for email-heavy forums: Quote Callouts is browser-side theme styling, so email notifications contain the underlying quote rather than a styled callout. `dsc` does not detect component installation; selecting `quote-callouts` is an explicit deployment prerequisite.
 
-Relative Markdown-link rewriting is not yet available.
+### Link rewriting
+
+Use `--rewrite-links` to switch between a flat local category export and its same-forum topic URLs:
+
+```text
+dsc category pull forum 34 forum-export/ --rewrite-links
+dsc category push forum 34 forum-export/ --rewrite-links
+```
+
+On pull, `https://forum.example.com/t/versioning/42#details` becomes `versioning.md#details` when topic 42 is in the pulled category. Links to another forum or to a topic outside the category stay as full URLs.
+
+On push, any relative `.md` path is resolved by its final filename stem, so `../versioning.md` and `versioning.md` both resolve to the local `versioning.md` file's `topic_id` front matter and then to the current remote topic slug. Links with no matching category file are preserved and reported as warnings. Fenced code examples and image destinations are not rewritten.
 
 ### Recommended workflow
 

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use super::client::DiscourseClient;
 use super::error::http_error;
 use super::models::{CreatePostResponse, TopicResponse};

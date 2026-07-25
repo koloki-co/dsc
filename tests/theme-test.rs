@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 mod common;
 use common::*;
 use dsc::api::DiscourseClient;
@@ -386,13 +390,8 @@ fn theme_duplicate() {
     let new_id: u64 = new_id_str
         .parse()
         .expect("theme duplicate should print numeric ID");
+    let client = DiscourseClient::new(&to_config(&test)).expect("client");
+    let _cleanup = DeleteThemeOnDrop::new(client, new_id);
     vprintln(&format!("duplicated theme, new ID: {}", new_id));
     assert_ne!(new_id, theme_id, "duplicate should have a different ID");
-
-    // Clean up the duplicated theme
-    let client = DiscourseClient::new(&to_config(&test)).expect("client");
-    client
-        .delete_theme(new_id)
-        .expect("failed to delete duplicate theme during cleanup");
-    vprintln(&format!("cleaned up duplicate theme {}", new_id));
 }

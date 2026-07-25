@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 #
 # Serve the docs locally with hot-reload. Binds the first free port in
 # 8000-8030, so it never clashes with another project's docs server already

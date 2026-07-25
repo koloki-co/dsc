@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use super::models::{AboutResponse, SiteResponse};
 use super::rate_limit::{RETRY_BUFFER, parse_rate_limit_wait, summarize_rate_limit_body};
 use crate::config::DiscourseConfig;
@@ -59,7 +63,6 @@ impl DiscourseClient {
         let client = Client::builder()
             .default_headers(headers)
             .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
             .build()
             .context("building http client")?;
 
@@ -71,29 +74,37 @@ impl DiscourseClient {
         &self.baseurl
     }
 
+    /// Return the underlying reqwest client, for requests that need to
+    /// opt out of the standard per-request timeout (e.g. bulk backup
+    /// downloads that can legitimately take minutes).
+    pub(crate) fn raw_client(&self) -> &Client {
+        &self.client
+    }
+
     pub(crate) fn get(&self, path: &str) -> Result<Response> {
         let url = format!("{}{}", self.baseurl, path);
         // Route GETs through `send_retrying` so a 429 response (whether
         // from Discourse's app-level rate limit or a fronting nginx)
         // is retried automatically. Crucial for the analytics command
         // which can fan out tens of GETs back-to-back.
-        self.send_retrying(|| Ok(self.client.get(&url)))
+        self.send_retrying(|| Ok(self.client.get(&url).timeout(REQUEST_TIMEOUT)))
     }
 
     pub(crate) fn post(&self, path: &str) -> Result<reqwest::blocking::RequestBuilder> {
         let url = format!("{}{}", self.baseurl, path);
-        Ok(self.client.post(url))
+        Ok(self.client.post(url).timeout(REQUEST_TIMEOUT))
     }
 
     pub(crate) fn put(&self, path: &str) -> Result<reqwest::blocking::RequestBuilder> {
         let url = format!("{}{}", self.baseurl, path);
-        Ok(self.client.put(url))
+        Ok(self.client.put(url).timeout(REQUEST_TIMEOUT))
     }
 
     pub(crate) fn delete(&self, path: &str) -> Result<reqwest::blocking::Response> {
         let url = format!("{}{}", self.baseurl, path);
         self.client
             .delete(url)
+            .timeout(REQUEST_TIMEOUT)
             .send()
             .context("sending delete request")
     }

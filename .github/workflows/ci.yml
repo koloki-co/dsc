@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 # Gate `main` and every PR on formatting, lints, and tests. The tag-triggered
 # release build (release.yml) does NOT run the suite, so this is the gate that
 # keeps `main` releasable. Action SHAs are pinned with a `# vX.Y.Z` comment per
@@ -48,9 +52,11 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      # e2e tests are gated on a test-forum config that isn't present in CI, so
-      # they skip cleanly here; lib + offline integration tests run.
+      # Live compatibility tests require DSC_LIVE_TESTS=1 and an explicit
+      # configuration path. Keep the ordinary CI gate network-free.
       - name: cargo test
+        env:
+          DSC_LIVE_TESTS: "0"
         run: cargo test
 
   msrv:
@@ -67,6 +73,8 @@ jobs:
           toolchain: 1.95.0
 
       - name: cargo test --locked
+        env:
+          DSC_LIVE_TESTS: "0"
         run: cargo test --locked
 
   audit:
@@ -90,3 +98,27 @@ jobs:
       # `audit.toml` (`[advisories] ignore = ["RUSTSEC-XXXX-NNNN"]`) with a note.
       - name: cargo audit
         run: cargo audit
+
+  reuse:
+    name: REUSE compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+
+  workflow-security:
+    name: GitHub Actions security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2.85.0
+        with:
+          tool: zizmor@1.28.0
+          fallback: none
+      - run: zizmor --strict-collection .
+        env:
+          GH_TOKEN: ${{ github.token }}

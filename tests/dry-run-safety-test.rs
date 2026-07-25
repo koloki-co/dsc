@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use std::path::Path;
 use std::process::{Command, Output};
 use tempfile::TempDir;
@@ -42,6 +46,7 @@ fn dry_run_unsafe_commands_short_circuit_before_config_resolution() {
             vec!["--dry-run", "upload", "example", missing_input],
         ),
         ("config check", vec!["--dry-run", "config", "check"]),
+        ("doctor", vec!["--dry-run", "doctor"]),
     ];
 
     for (name, args) in commands {

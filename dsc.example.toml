@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 # Each Discourse install gets its own [[discourse]] block.
 # Only `name` and `baseurl` are required; everything else is optional but
 # unlocks more functionality (admin commands need apikey/api_username, SSH

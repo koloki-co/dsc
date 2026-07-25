@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use crate::api::DiscourseClient;
 use crate::cli::OutputFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
@@ -170,7 +174,13 @@ pub fn backup_pull(
     let client = DiscourseClient::new(discourse)?;
 
     let url = format!("{}/admin/backups/{}", client.baseurl(), backup_filename);
-    let response = client.get(&format!("/admin/backups/{}", backup_filename))?;
+    // Backup downloads can legitimately take minutes for large archives;
+    // bypass the standard per-request timeout by using the raw client.
+    let response = client
+        .raw_client()
+        .get(&url)
+        .send()
+        .context("downloading backup")?;
     let status = response.status();
     if !status.is_success() {
         return Err(anyhow!(

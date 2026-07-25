@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 // Shared test helpers - each test binary pulls in the whole module but uses
 // only some helpers, so allow dead code rather than cfg-gate every item.
 #![allow(dead_code)]
@@ -9,9 +13,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
-
-pub const DEFAULT_TEST_CONFIG: &str = "testdsc.toml";
-pub const FALLBACK_TEST_CONFIG: &str = "test-dsc.toml";
 
 pub fn verbose_enabled() -> bool {
     std::env::var("DSC_TEST_VERBOSE")
@@ -57,18 +58,14 @@ pub struct TestDiscourse {
 }
 
 fn load_test_config() -> Option<TestConfig> {
-    let path = match std::env::var("TEST_DSC_CONFIG") {
-        Ok(path) => path,
-        Err(_) => {
-            if Path::new(DEFAULT_TEST_CONFIG).exists() {
-                DEFAULT_TEST_CONFIG.to_string()
-            } else if Path::new(FALLBACK_TEST_CONFIG).exists() {
-                FALLBACK_TEST_CONFIG.to_string()
-            } else {
-                return None;
-            }
-        }
-    };
+    let live_tests_enabled = std::env::var("DSC_LIVE_TESTS")
+        .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !live_tests_enabled {
+        return None;
+    }
+
+    let path = std::env::var("TEST_DSC_CONFIG").ok()?;
     let raw = fs::read_to_string(path).ok()?;
     toml::from_str(&raw).ok()
 }
@@ -104,7 +101,8 @@ pub fn post_and_verify(d: &TestDiscourse, topic_id: u64, marker: &str) {
         "posting marker to topic {} on {}",
         topic_id, d.name
     ));
-    client.create_post(topic_id, &body).expect("post");
+    let post_id = client.create_post(topic_id, &body).expect("post");
+    let _cleanup = DeletePostOnDrop::new(client.clone(), post_id);
     vprintln(&format!("verifying marker on topic {}", topic_id));
     let topic = client.fetch_topic(topic_id, true).expect("fetch topic");
     let found = topic.post_stream.posts.iter().any(|post| {
@@ -114,6 +112,83 @@ pub fn post_and_verify(d: &TestDiscourse, topic_id: u64, marker: &str) {
             .unwrap_or(false)
     });
     assert!(found, "marker not found on forum");
+}
+
+/// Deletes a test-created post even if the assertion that follows panics.
+pub struct DeletePostOnDrop {
+    client: DiscourseClient,
+    post_id: u64,
+}
+
+impl DeletePostOnDrop {
+    pub fn new(client: DiscourseClient, post_id: u64) -> Self {
+        Self { client, post_id }
+    }
+}
+
+impl Drop for DeletePostOnDrop {
+    fn drop(&mut self) {
+        if let Err(error) = self.client.delete_post(self.post_id) {
+            eprintln!(
+                "[e2e] failed to delete test post {}: {error:#}",
+                self.post_id
+            );
+        }
+    }
+}
+
+/// Restores a test-mutated site setting even if the test panics.
+pub struct RestoreSettingOnDrop {
+    client: DiscourseClient,
+    setting: String,
+    original_value: String,
+}
+
+impl RestoreSettingOnDrop {
+    pub fn new(client: DiscourseClient, setting: &str, original_value: String) -> Self {
+        Self {
+            client,
+            setting: setting.to_string(),
+            original_value,
+        }
+    }
+}
+
+impl Drop for RestoreSettingOnDrop {
+    fn drop(&mut self) {
+        if let Err(error) = self
+            .client
+            .update_site_setting(&self.setting, &self.original_value)
+        {
+            eprintln!(
+                "[e2e] failed to restore site setting {}: {error:#}",
+                self.setting
+            );
+        }
+    }
+}
+
+/// Deletes a test-created theme even if the assertion that follows panics.
+pub struct DeleteThemeOnDrop {
+    client: DiscourseClient,
+    theme_id: u64,
+}
+
+impl DeleteThemeOnDrop {
+    pub fn new(client: DiscourseClient, theme_id: u64) -> Self {
+        Self { client, theme_id }
+    }
+}
+
+impl Drop for DeleteThemeOnDrop {
+    fn drop(&mut self) {
+        if let Err(error) = self.client.delete_theme(self.theme_id) {
+            eprintln!(
+                "[e2e] failed to delete test theme {}: {error:#}",
+                self.theme_id
+            );
+        }
+    }
 }
 
 pub fn run_dsc(args: &[&str], config_path: &Path) -> std::process::Output {

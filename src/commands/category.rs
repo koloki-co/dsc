@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use crate::api::{CategoryInfo, DiscourseClient, PostEditOptions, TopicSummary};
 use crate::cli::{AdmonitionStyle, ListFormat};
 use crate::commands::common::{ensure_api_credentials, not_found, select_discourse};
@@ -7,6 +11,7 @@ use crate::utils::{
     write_markdown, yaml_scalar,
 };
 use anyhow::{Context, Result, anyhow};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -112,6 +117,7 @@ pub fn category_pull(
     category: &str,
     local_path: Option<&Path>,
     admonition_style: Option<AdmonitionStyle>,
+    rewrite_links: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -130,7 +136,12 @@ pub fn category_pull(
         }
     };
     ensure_dir(&dir)?;
-    for topic in category.topic_list.topics {
+    let topics = category.topic_list.topics;
+    let local_paths = topics
+        .iter()
+        .map(|topic| (topic.id, format!("{}.md", slugify(&topic.title))))
+        .collect::<HashMap<_, _>>();
+    for topic in topics {
         let topic_detail = client.fetch_topic(topic.id, true)?;
         let raw = topic_detail
             .post_stream
@@ -141,6 +152,11 @@ pub fn category_pull(
         let body = match admonition_style {
             Some(style) => convert_discourse_admonitions(&raw, style),
             None => raw,
+        };
+        let body = if rewrite_links {
+            rewrite_forum_links(&body, &discourse.baseurl, &local_paths)
+        } else {
+            body
         };
         let filename = format!("{}.md", slugify(&topic.title));
         let contents = render_category_topic(&topic, &discourse.baseurl, &body);
@@ -181,6 +197,8 @@ pub struct CategoryPushOptions {
     pub edit: PostEditOptions,
     /// Optional local MkDocs/Zensical admonition conversion before push.
     pub admonition_style: Option<AdmonitionStyle>,
+    /// Rewrite local Markdown links to same-category forum topic URLs.
+    pub rewrite_links: bool,
 }
 
 /// One planned change for `category push`, decided before any mutation so
@@ -227,6 +245,11 @@ pub fn category_push(
         .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("md"))
         .collect();
     paths.sort();
+    let links = if options.rewrite_links {
+        local_topic_links(&paths, &topics)?
+    } else {
+        HashMap::new()
+    };
 
     // Plan first: decide every action (and fail any --updates-only mismatch)
     // before mutating anything on the server.
@@ -238,6 +261,18 @@ pub fn category_push(
             Some(style) => convert_mkdocs_admonitions(&body, style),
             None => body,
         };
+        let (body, unresolved_links) = if options.rewrite_links {
+            rewrite_relative_links(&body, &discourse.baseurl, &links)
+        } else {
+            (body, Vec::new())
+        };
+        for link in unresolved_links {
+            eprintln!(
+                "warning: {}: no category topic matches relative link {}",
+                path.display(),
+                link
+            );
+        }
         let title = front
             .get("title")
             .cloned()
@@ -525,6 +560,177 @@ fn find_topic_match<'a>(
                 .map(|s| s.to_string_lossy().eq_ignore_ascii_case(&topic.slug))
                 .unwrap_or(false)
     })
+}
+
+#[derive(Clone)]
+struct TopicLink {
+    id: u64,
+    slug: String,
+}
+
+/// Resolve each local filename stem to its current category topic. Front
+/// matter supplies the durable binding; the fresh category listing supplies
+/// the canonical slug for the forum URL.
+fn local_topic_links(
+    paths: &[PathBuf],
+    topics: &[TopicSummary],
+) -> Result<HashMap<String, TopicLink>> {
+    let mut links = HashMap::new();
+    for path in paths {
+        let raw = read_markdown(path)?;
+        let (front, body) = strip_frontmatter(&raw);
+        let title = front
+            .get("title")
+            .cloned()
+            .or_else(|| extract_title(&body))
+            .unwrap_or_else(|| path.file_stem().unwrap().to_string_lossy().to_string());
+        let Some(id) = route_topic_id(&front, &title, path, topics) else {
+            continue;
+        };
+        let Some(topic) = topics.iter().find(|topic| topic.id == id) else {
+            continue;
+        };
+        let Some(stem) = path.file_stem() else {
+            continue;
+        };
+        links.insert(
+            link_key(&stem.to_string_lossy()),
+            TopicLink {
+                id,
+                slug: topic.slug.clone(),
+            },
+        );
+    }
+    Ok(links)
+}
+
+/// Rewrite relative `.md` links in a local document to their matching forum
+/// topic URLs. The category export is flat, so only a target's final filename
+/// stem is used when resolving paths such as `../versioning.md`.
+fn rewrite_relative_links(
+    raw: &str,
+    baseurl: &str,
+    links: &HashMap<String, TopicLink>,
+) -> (String, Vec<String>) {
+    rewrite_markdown_links(raw, |destination| {
+        let Some((stem, suffix)) = relative_markdown_stem(destination) else {
+            return Ok(None);
+        };
+        links
+            .get(&link_key(stem))
+            .map(|topic| {
+                Some(format!(
+                    "{}/t/{}/{}{}",
+                    normalize_baseurl(baseurl),
+                    topic.slug,
+                    topic.id,
+                    suffix
+                ))
+            })
+            .ok_or_else(|| destination.to_string())
+    })
+}
+
+/// Rewrite same-forum topic links to the flat local Markdown paths created by
+/// `category pull`. Links outside the pulled category remain full URLs.
+fn rewrite_forum_links(raw: &str, baseurl: &str, local_paths: &HashMap<u64, String>) -> String {
+    let (rewritten, _) = rewrite_markdown_links(raw, |destination| {
+        let Some((topic_id, suffix)) = forum_topic_id(destination, baseurl) else {
+            return Ok(None);
+        };
+        Ok(local_paths
+            .get(&topic_id)
+            .map(|path| format!("{path}{suffix}")))
+    });
+    rewritten
+}
+
+/// Rewrite Markdown inline-link destinations outside fenced code blocks. This
+/// deliberately supports the simple `[text](destination)` form used by the
+/// category workflow and leaves other Markdown byte-for-byte untouched.
+fn rewrite_markdown_links(
+    raw: &str,
+    mut replacement: impl FnMut(&str) -> std::result::Result<Option<String>, String>,
+) -> (String, Vec<String>) {
+    let mut out = String::with_capacity(raw.len());
+    let mut unresolved = Vec::new();
+    let mut fence = None;
+
+    for line in raw.split_inclusive('\n') {
+        update_fence(&mut fence, line);
+        if fence.is_some() {
+            out.push_str(line);
+            continue;
+        }
+        out.push_str(&rewrite_link_line(line, &mut replacement, &mut unresolved));
+    }
+    (out, unresolved)
+}
+
+fn rewrite_link_line(
+    line: &str,
+    replacement: &mut impl FnMut(&str) -> std::result::Result<Option<String>, String>,
+    unresolved: &mut Vec<String>,
+) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut remaining = line;
+    while let Some(open) = remaining.find('[') {
+        // Images have the same destination syntax but are not content links.
+        if open > 0 && remaining.as_bytes()[open - 1] == b'!' {
+            out.push_str(&remaining[..open + 1]);
+            remaining = &remaining[open + 1..];
+            continue;
+        }
+        let Some(close_label) = remaining[open..].find("](") else {
+            break;
+        };
+        let destination_start = open + close_label + 2;
+        let Some(close_destination) = remaining[destination_start..].find(')') else {
+            break;
+        };
+        let destination_end = destination_start + close_destination;
+        let destination = &remaining[destination_start..destination_end];
+
+        out.push_str(&remaining[..destination_start]);
+        match replacement(destination) {
+            Ok(Some(value)) => out.push_str(&value),
+            Ok(None) => out.push_str(destination),
+            Err(value) => {
+                unresolved.push(value);
+                out.push_str(destination);
+            }
+        }
+        remaining = &remaining[destination_end..];
+    }
+    out.push_str(remaining);
+    out
+}
+
+fn relative_markdown_stem(destination: &str) -> Option<(&str, &str)> {
+    let (path, suffix) = split_link_suffix(destination);
+    if path.starts_with('/') || path.contains("://") {
+        return None;
+    }
+    let stem = path.rsplit('/').next()?.strip_suffix(".md")?;
+    (!stem.is_empty()).then_some((stem, suffix))
+}
+
+fn forum_topic_id<'a>(destination: &'a str, baseurl: &str) -> Option<(u64, &'a str)> {
+    let (path, suffix) = split_link_suffix(destination);
+    let path = path
+        .strip_prefix(&normalize_baseurl(baseurl))?
+        .strip_prefix("/t/")?;
+    let id = path.rsplit('/').next()?.parse().ok()?;
+    Some((id, suffix))
+}
+
+fn split_link_suffix(destination: &str) -> (&str, &str) {
+    let index = destination.find(['?', '#']).unwrap_or(destination.len());
+    destination.split_at(index)
+}
+
+fn link_key(stem: &str) -> String {
+    stem.to_ascii_lowercase()
 }
 
 /// MkDocs/Zensical's three admonition markers, including its two foldable
@@ -1024,6 +1230,69 @@ mod tests {
         assert_eq!(
             route_topic_id(&f, "Dependency management", &path, &topics),
             Some(55)
+        );
+    }
+
+    #[test]
+    fn relative_links_rewrite_to_category_topic_urls_and_warn_when_unresolved() {
+        let mut links = HashMap::new();
+        links.insert(
+            link_key("versioning"),
+            TopicLink {
+                id: 42,
+                slug: "versioning".to_string(),
+            },
+        );
+        let source = concat!(
+            "[Known](../Versioning.md#details)\n",
+            "[Missing](missing.md)\n",
+            "[External](https://example.com/guide.md)\n",
+            "![Image](diagram.md)\n",
+            "```markdown\n",
+            "[Literal](versioning.md)\n",
+            "```\n"
+        );
+
+        let (rewritten, unresolved) =
+            rewrite_relative_links(source, "https://forum.example.com/", &links);
+
+        assert_eq!(
+            rewritten,
+            concat!(
+                "[Known](https://forum.example.com/t/versioning/42#details)\n",
+                "[Missing](missing.md)\n",
+                "[External](https://example.com/guide.md)\n",
+                "![Image](diagram.md)\n",
+                "```markdown\n",
+                "[Literal](versioning.md)\n",
+                "```\n"
+            )
+        );
+        assert_eq!(unresolved, ["missing.md"]);
+    }
+
+    #[test]
+    fn forum_links_rewrite_to_flat_local_markdown_paths() {
+        let local_paths = HashMap::from([(42, "versioning.md".to_string())]);
+        let source = concat!(
+            "[Known](https://forum.example.com/t/versioning/42#details)\n",
+            "[Other topic](https://forum.example.com/t/elsewhere/99)\n",
+            "[External](https://other.example/t/versioning/42)\n",
+            "```markdown\n",
+            "[Literal](https://forum.example.com/t/versioning/42)\n",
+            "```\n"
+        );
+
+        assert_eq!(
+            rewrite_forum_links(source, "https://forum.example.com/", &local_paths),
+            concat!(
+                "[Known](versioning.md#details)\n",
+                "[Other topic](https://forum.example.com/t/elsewhere/99)\n",
+                "[External](https://other.example/t/versioning/42)\n",
+                "```markdown\n",
+                "[Literal](https://forum.example.com/t/versioning/42)\n",
+                "```\n"
+            )
         );
     }
 

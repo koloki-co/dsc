@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! `dsc harden` — turn a fresh Ubuntu server reachable via `ssh root@host`
 //! into a hardened box with a non-root sudo user, SSH locked down, rootless
 //! Docker, fail2ban, unattended upgrades, swap, and a firewall.

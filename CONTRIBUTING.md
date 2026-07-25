@@ -68,8 +68,8 @@ s/                    # Project scripts: build, test, docs, install, version++
 
 ## Support stance
 
-`dsc` is best-effort, community-driven, no SLA. Issues are triaged when the author has time; field-driven specs (see [spec/from-the-field.md](spec/from-the-field.md)) are prioritised over speculative ones because their use case is verified. If you need a guarantee, hire a contractor - the code is MIT-licensed.
+`dsc` is best-effort, community-driven, no SLA. Issues are triaged when the author has time; field-driven specs (see [spec/from-the-field.md](spec/from-the-field.md)) are prioritised over speculative ones because their use case is verified. If you need a guarantee, hire a contractor.
 
 ## License
 
-By contributing you agree your contribution is licensed under the same terms as the rest of the project ([MIT](LICENSE)).
+By contributing you agree your contribution is licensed under the same terms as the rest of the project ([GPL-2.0-or-later](LICENSE)).
