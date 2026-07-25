@@ -32,7 +32,7 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 ### Contract, documentation, and launch package
 
 - [ ] **R36 - Isolate live compatibility tests** - make tests that contact Discourse explicit opt-in, disposable-resource based, serialised where needed, and cleanup-safe; retain offline tests as the ordinary local/CI gate.
-- [ ] **R37 - Post-1.0 CLI ergonomics** - make bare `dsc` exit successfully after showing its command summary, add shared `~` path expansion and Clap path hints, report `dsc version` without config resolution, set an HTTP timeout, and review cargo-binstall metadata and release checksum naming.
+- [~] **R37 - Post-1.0 CLI ergonomics** - make bare `dsc` exit successfully after showing its command summary, add shared `~` path expansion and Clap path hints, report `dsc version` without config resolution, and review cargo-binstall metadata and release checksum naming. HTTP client now has a 10s connect / 120s total timeout so a dead or misconfigured host fails fast instead of hanging the CLI.
 - [ ] **R3 - Record an asciinema** (~30s) of the pull → edit → push → diff loop; embed in README.
 - [ ] **R5 - Pre-circulate the Meta post** to a couple of Discourse regulars before posting.
 - [ ] **R2 - Cut `v1.0.0`** from a fresh, clean, synchronised worktree after this checklist passes, with a release rehearsal (`s/test-fmt-clippy`, docs build, `cargo audit`, `cargo publish --dry-run`) and generated changelog review.
