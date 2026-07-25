@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 #
 # Usage: s/version++ [patch|minor|major] [--pr|--direct]   (default: patch)
 #

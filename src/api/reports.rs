@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Wrapper around `/admin/reports/{report_id}.json`.
 //!
 //! Each Discourse report, when called with `start_date` + `end_date`, returns

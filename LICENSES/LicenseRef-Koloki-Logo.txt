@@ -1,0 +1,3 @@
+Copyright 2026 Koloki Ltd. All rights reserved.
+
+Permission is granted to copy and redistribute unmodified copies of the Koloki logo solely when bundled with the dsc project or its documentation, provided that this notice remains with the logo. No permission is granted to modify the logo, use it separately, or imply Koloki Ltd's endorsement.

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+# Run the real-Discourse compatibility suite only when the caller has
+# deliberately supplied an absolute, readable configuration file. The test
+# harness consumes both variables, and the single test thread avoids collisions
+# on the configured disposable resources.
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+if [[ "${DSC_LIVE_TESTS:-}" != "1" ]]; then
+  echo "Set DSC_LIVE_TESTS=1 to run live compatibility tests." >&2
+  exit 2
+fi
+
+if [[ "${TEST_DSC_CONFIG:-}" != /* || ! -r "$TEST_DSC_CONFIG" ]]; then
+  echo "Set TEST_DSC_CONFIG to an absolute, readable live-test configuration." >&2
+  exit 2
+fi
+
+cargo test -- --test-threads=1 "$@"

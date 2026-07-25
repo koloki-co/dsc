@@ -2,6 +2,8 @@
 
 A Discourse CLI written in Rust. Manage multiple Discourse forums from your terminal — track installs, run upgrades over SSH, manage users and groups, sync topics and categories as local Markdown, upload files, search, archive activity, and more.
 
+Created by Marcus Baw and [Koloki Ltd](https://koloki.co/), an [official Discourse Partner](https://www.discourse.org/partners).
+
 Most functionality uses the Discourse REST API; `dsc update` runs remote rebuilds via SSH.
 
 ## Install
@@ -46,7 +48,13 @@ Most functionality uses the Discourse REST API; `dsc update` runs remote rebuild
 
 === ":simple-rust: Cargo"
 
-    If you already have Rust 1.95.0 or newer:
+    Install the prebuilt archive with cargo-binstall:
+
+    ```bash
+    cargo binstall dsc-rs
+    ```
+
+    Or build from crates.io with Rust 1.95.0 or newer:
 
     ```bash
     cargo install dsc-rs
@@ -83,7 +91,7 @@ One config describes every forum you run. Act on all of them at once:
 dsc list                         # tag-filterable overview
 dsc update all --parallel        # rebuilds over SSH across every forum
 dsc setting set --tags production site_name "New Name"
-dsc config check                 # verify API + SSH reachability for every install
+dsc doctor                       # alias for config check: verify API + SSH reachability
 ```
 
 ### 2. Topics and categories as Markdown

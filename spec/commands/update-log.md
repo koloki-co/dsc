@@ -7,7 +7,7 @@
 > verified on koloki-demo (seeded log; `update`/`update all --skip-recent` skip
 > without touching a forum). Stretch (central register topic) not built.
 
-Driver: the Koloki / Baw Medical fleet (~20 forums). Running `dsc update all`, one forum fails (igkt) and gets fixed by hand; re-running to catch it should NOT re-do the 19 that already succeeded. Historically this was tracked by hand in a "Servers" checklist topic on a personal Discourse.
+Driver: the Koloki fleet (~20 forums). Running `dsc update all`, one forum fails (igkt) and gets fixed by hand; re-running to catch it should NOT re-do the 19 that already succeeded. Historically this was tracked by hand in a "Servers" checklist topic on a personal Discourse.
 
 ## Motivation - it's not just a record
 

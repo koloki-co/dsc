@@ -1,3 +1,8 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+use crate::utils::expand_tilde_path;
 use anyhow::{Context, Result, anyhow};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
@@ -247,6 +252,7 @@ where
     F: Fn(&str) -> Option<OsString> + Copy,
 {
     if let Some(path) = flag {
+        let path = expand_tilde_path(path).map_err(anyhow::Error::msg)?;
         if !path.exists() {
             return Err(anyhow!(
                 "config file not found: {} (specified via --config)",
@@ -257,7 +263,7 @@ where
     }
 
     if let Some(raw) = env(ENV_CONFIG) {
-        let path = PathBuf::from(raw);
+        let path = expand_tilde_path(PathBuf::from(raw)).map_err(anyhow::Error::msg)?;
         if !path.exists() {
             return Err(anyhow!(
                 "config file not found: {} (specified via ${})",
@@ -299,7 +305,13 @@ where
     // $DSC_CONFIG_HOME -> $XDG_CONFIG_HOME/dsc -> $HOME/.config/dsc
     let config_home: Option<PathBuf> = env(ENV_CONFIG_HOME)
         .map(PathBuf::from)
-        .or_else(|| env("XDG_CONFIG_HOME").map(|x| PathBuf::from(x).join("dsc")))
+        .map(expand_tilde_or_original)
+        .or_else(|| {
+            env("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .map(expand_tilde_or_original)
+                .map(|x| x.join("dsc"))
+        })
         .or_else(|| env("HOME").map(|h| PathBuf::from(h).join(".config").join("dsc")));
     if let Some(dir) = config_home {
         candidates.push(dir.join("dsc.toml"));
@@ -309,7 +321,7 @@ where
     {
         if let Some(xdg_config_dirs) = env("XDG_CONFIG_DIRS") {
             for dir in std::env::split_paths(&xdg_config_dirs) {
-                candidates.push(dir.join("dsc").join("dsc.toml"));
+                candidates.push(expand_tilde_or_original(dir).join("dsc").join("dsc.toml"));
             }
         } else {
             candidates.push(PathBuf::from("/etc/xdg/dsc/dsc.toml"));
@@ -320,6 +332,10 @@ where
     }
 
     candidates
+}
+
+fn expand_tilde_or_original(path: PathBuf) -> PathBuf {
+    expand_tilde_path(path.clone()).unwrap_or(path)
 }
 
 #[cfg(test)]

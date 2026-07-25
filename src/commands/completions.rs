@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use crate::cli::{Cli, CompletionCommand, CompletionShell};
 use crate::utils::ensure_dir;
 use anyhow::{Context, Result, anyhow};

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use crate::api::{DiscourseClient, PmTopicSummary, TopicResponse, UserAction};
 use crate::commands::common::{ensure_api_credentials, not_found, select_discourse};
 use crate::config::Config;

@@ -1,11 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 [package]
 name = "dsc-rs"
 version = "0.10.32"
 edition = "2024"
 rust-version = "1.95"
-authors = ["Marcus Baw <marcus@bawmedical.co.uk>"]
+authors = ["Marcus Baw <info@koloki.co>"]
 description = "Discourse CLI tool for managing multiple Discourse forums: track installs, run upgrades over SSH, manage emojis, sync topics and categories as Markdown, and more."
-license = "MIT"
+license = "GPL-2.0-or-later"
 repository = "https://github.com/pacharanero/dsc"
 homepage = "https://github.com/pacharanero/dsc"
 readme = "README.md"
@@ -17,6 +21,18 @@ upgrade-guid = "1E1DDAAC-E772-481A-9806-30A5B3564BA2"
 path-guid = "47EBE96D-DB77-42D0-B8FC-3442D69B8947"
 license = false
 eula = false
+
+# cargo-binstall maps cargo-dist's versionless target archives to `dsc` in the
+# nested Unix archive layout and the flat Windows ZIP layout.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.tar.xz"
+pkg-fmt = "txz"
+bin-dir = "{ name }-{ target }/{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.zip"
+pkg-fmt = "zip"
+bin-dir = "{ bin }{ binary-ext }"
 
 [lib]
 name = "dsc"
@@ -32,7 +48,7 @@ members = ["."]
 # Config for 'dist'
 [workspace.metadata.dist]
 # The preferred dist version to use in CI (Cargo.toml SemVer syntax)
-cargo-dist-version = "0.31.0"
+cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app
@@ -49,8 +65,8 @@ install-updater = false
 tap = "pacharanero/homebrew-tap"
 publish-jobs = ["homebrew"]
 publish-prereleases = false
-# We hand-edit .github/workflows/release.yml to pin actions to commit SHAs
-# (supply-chain hardening); tell dist not to error on the resulting drift.
+# release.yml has a hand-maintained, static matrix so workflow inputs never
+# become executable shell fragments. Tell dist not to overwrite it.
 allow-dirty = ["ci"]
 
 [dependencies]

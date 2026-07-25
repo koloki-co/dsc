@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Category *definition* sync: `category def pull/push` (declarative, all
 //! categories) and `category show/get/set` (imperative, one field). Distinct
 //! from `category pull/push` in `category.rs`, which sync topic *content*.

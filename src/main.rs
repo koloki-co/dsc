@@ -1,5 +1,9 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use anyhow::{Result, anyhow};
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use dsc::cli::*;
 use dsc::commands;
 use dsc::commands::analytics::SectionFilter;
@@ -80,6 +84,11 @@ fn main() -> Result<()> {
     // lowercase `-v` / `-version` / `--v` as a version request rather than
     // letting it fall through to an "unexpected argument" error.
     let args: Vec<String> = std::env::args().collect();
+    if args.len() == 1 {
+        Cli::command().print_help()?;
+        println!();
+        return Ok(());
+    }
     if args.len() == 2 && matches!(args[1].as_str(), "-v" | "-version" | "--v") {
         println!("dsc {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -91,6 +100,14 @@ fn main() -> Result<()> {
         return Err(anyhow!(
             "[dry-run] {command}: a complete dry-run plan is not implemented; refusing before configuration or side effects.\nhint: remove --dry-run only after reviewing this command's documentation and inputs"
         ));
+    }
+
+    if let Commands::Version {
+        discourse: None,
+        format,
+    } = &cli.command
+    {
+        return commands::version::own_version(*format);
     }
 
     let config_source = resolve_config_source(cli.config)?;
@@ -359,12 +376,14 @@ fn main() -> Result<()> {
                 category,
                 local_path,
                 convert_admonitions,
+                rewrite_links,
             } => commands::category::category_pull(
                 &config,
                 &discourse,
                 &category,
                 local_path.as_deref(),
                 convert_admonitions,
+                rewrite_links,
             ),
 
             CategoryCommand::Push {
@@ -372,6 +391,7 @@ fn main() -> Result<()> {
                 local_path,
                 category,
                 convert_admonitions,
+                rewrite_links,
                 updates_only,
                 no_bump,
                 skip_revision,
@@ -388,6 +408,7 @@ fn main() -> Result<()> {
                         skip_revision,
                     },
                     admonition_style: convert_admonitions,
+                    rewrite_links,
                 },
             ),
 
@@ -1216,6 +1237,13 @@ fn main() -> Result<()> {
                     parallel,
                     max,
                 }),
+        } => commands::config::config_check(&config, format, skip_ssh, parallel, max),
+
+        Commands::Doctor {
+            format,
+            skip_ssh,
+            parallel,
+            max,
         } => commands::config::config_check(&config, format, skip_ssh, parallel, max),
 
         Commands::Config { command: None } => {

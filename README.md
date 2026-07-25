@@ -1,6 +1,16 @@
 # dsc
 
+<p align="center">
+  <img src="docs/assets/dsc-logo-black-on-orange.svg" alt="dsc" width="96">
+  <br>
+  <sub>Created by</sub>
+  <br>
+  <a href="https://koloki.co/"><img src="docs/assets/koloki-logo-master-2x.png" alt="Koloki" width="220"></a>
+</p>
+
 A Discourse CLI tool written in Rust. Manage multiple Discourse forums from your terminal — track installs, run upgrades over SSH, manage emojis, perform backups, and sync topics and categories as local Markdown.
+
+Created by Marcus Baw and [Koloki Ltd](https://koloki.co/), an [official Discourse Partner](https://www.discourse.org/partners).
 
 Most functionality uses the Discourse REST API. `dsc update` runs remote rebuilds via SSH.
 
@@ -69,7 +79,13 @@ Download `dsc-rs-x86_64-pc-windows-msvc.msi` from the [latest release](https://g
 
 ### From crates.io
 
-If you already have a Rust toolchain:
+If you already have cargo-binstall, use the prebuilt release archive:
+
+```bash
+cargo binstall dsc-rs
+```
+
+Otherwise, build from crates.io with a Rust toolchain:
 
 ```bash
 cargo install dsc-rs
@@ -79,7 +95,7 @@ The crate is published as `dsc-rs` (the `dsc` name was taken), but the installed
 
 ### Direct download
 
-Prebuilt archives for Linux, macOS, and Windows are attached to every [GitHub release](https://github.com/pacharanero/dsc/releases/latest). Download, extract, and drop `dsc` (or `dsc.exe`) anywhere on your `PATH`.
+Prebuilt archives for Linux, macOS, and Windows are attached to every [GitHub release](https://github.com/pacharanero/dsc/releases/latest). Download, extract, and drop `dsc` (or `dsc.exe`) anywhere on your `PATH`. Each archive has a sibling `.sha256` file, and `sha256.sum` contains the unified archive, MSI, and source checksum set in `sha256sum -c` compatible format.
 
 ### From source
 
@@ -109,7 +125,7 @@ EOF
 chmod 600 dsc.toml
 
 # Verify API (and SSH, if configured) connectivity before doing anything else
-dsc config check
+dsc doctor
 
 # List configured forums (read-only)
 dsc list
@@ -171,4 +187,8 @@ For questions about administering Discourse, ask on [Discourse Meta](https://met
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+`dsc` source code and documentation are licensed under [GPL-2.0-or-later](LICENSE). Third-party assets keep their own licences and attribution; see [NOTICE.md](NOTICE.md) and [REUSE.toml](REUSE.toml).
+
+Koloki Ltd is an official Discourse Partner. `dsc` itself is an independent open-source project and is not endorsed by Civilized Discourse Construction Kit, Inc. (CDCK). Discourse is a trademark of CDCK.
+
+The selected Font Awesome Free 6.6.0 icons used by the Discourse UI are copyright 2024 Fonticons, Inc. and licensed under [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/). Font Awesome brand icons remain trademarks of their respective owners and are used only to identify the represented products or services.

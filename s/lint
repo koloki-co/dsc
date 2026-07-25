@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 # Fast local lint gate: the same formatting and Clippy checks enforced by CI.
 # Full tests intentionally remain in s/test-fmt-clippy and CI.
 

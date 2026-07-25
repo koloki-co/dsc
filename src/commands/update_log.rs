@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! Append-only update log: one TSV line per `dsc update` pass per forum, so a
 //! fleet round is auditable and re-runnable without repeating the day's work.
 //! See spec/update-log.md.

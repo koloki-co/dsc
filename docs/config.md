@@ -28,6 +28,8 @@ When `--config` or `$DSC_CONFIG` is in effect, the source line shows which selec
 dsc config check [--format text|json|yaml] [--skip-ssh] [--parallel] [--max <n>]
 ```
 
+`dsc doctor` is a top-level alias with the same options and behaviour.
+
 Probes each configured Discourse and reports two things per install:
 
 - **API** — sends `GET /about.json` with the configured `apikey`/`api_username`. Reports `ok` on 2xx, flags 401/403 with a hint to check credentials, and surfaces other HTTP errors verbatim.
@@ -47,4 +49,5 @@ dsc config check
 dsc config check -p               # probe all forums in parallel (fastest-first)
 dsc config check --format json
 dsc config check --skip-ssh       # API-only check, much faster
+dsc doctor --parallel              # alias, with concurrent probes
 ```

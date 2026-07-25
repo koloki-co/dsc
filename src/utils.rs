@@ -1,8 +1,72 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
+
+/// Parse a CLI path, expanding a bare `~` or leading `~/` against the user's
+/// home directory. Shells do not expand tildes in quoted or `--flag=~/path`
+/// arguments, so every CLI path uses this parser.
+pub fn tilde_pathbuf(value: &str) -> std::result::Result<PathBuf, String> {
+    expand_tilde_with_home(value, home_dir().as_deref())
+}
+
+/// Expand a leading tilde while retaining a string-valued CLI argument. Used
+/// for hybrid arguments that accept either a local path or a remote resource.
+pub fn tilde_path_string(value: &str) -> std::result::Result<String, String> {
+    if value != "~" && !value.starts_with("~/") {
+        return Ok(value.to_string());
+    }
+    tilde_pathbuf(value)?
+        .into_os_string()
+        .into_string()
+        .map_err(|_| "expanded path is not valid UTF-8".to_string())
+}
+
+/// Expand a leading tilde in a path already obtained from another source, such
+/// as an environment variable.
+pub fn expand_tilde_path(path: PathBuf) -> std::result::Result<PathBuf, String> {
+    let Some(value) = path.to_str() else {
+        return Ok(path);
+    };
+    tilde_pathbuf(value)
+}
+
+fn expand_tilde_with_home(
+    value: &str,
+    home: Option<&Path>,
+) -> std::result::Result<PathBuf, String> {
+    let suffix = if value == "~" {
+        Some("")
+    } else {
+        value.strip_prefix("~/").or_else(|| {
+            if cfg!(windows) {
+                value.strip_prefix("~\\")
+            } else {
+                None
+            }
+        })
+    };
+    let Some(suffix) = suffix else {
+        return Ok(PathBuf::from(value));
+    };
+    let home = home.ok_or_else(|| "cannot expand '~': HOME is not set".to_string())?;
+    Ok(if suffix.is_empty() {
+        home.to_path_buf()
+    } else {
+        home.join(suffix)
+    })
+}
+
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
 
 /// Trim trailing slashes from a base URL.
 pub fn normalize_baseurl(baseurl: &str) -> String {
@@ -325,6 +389,41 @@ pub fn parse_relative_duration(input: &str) -> Option<chrono::Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tilde_path_expands_bare_and_prefixed_forms() {
+        let home = Path::new("/home/example");
+        assert_eq!(
+            expand_tilde_with_home("~", Some(home)).unwrap(),
+            PathBuf::from("/home/example")
+        );
+        assert_eq!(
+            expand_tilde_with_home("~/config/dsc.toml", Some(home)).unwrap(),
+            PathBuf::from("/home/example/config/dsc.toml")
+        );
+    }
+
+    #[test]
+    fn tilde_path_preserves_other_paths_and_rejects_missing_home() {
+        assert_eq!(
+            expand_tilde_with_home("./local.md", None).unwrap(),
+            PathBuf::from("./local.md")
+        );
+        assert_eq!(
+            expand_tilde_with_home("~other/file", None).unwrap(),
+            PathBuf::from("~other/file")
+        );
+        assert!(expand_tilde_with_home("~/file", None).is_err());
+    }
+
+    #[test]
+    fn tilde_path_string_preserves_non_paths() {
+        assert_eq!(
+            tilde_path_string("https://example.com/theme.git").unwrap(),
+            "https://example.com/theme.git"
+        );
+        assert_eq!(tilde_path_string("forum-name").unwrap(), "forum-name");
+    }
 
     #[test]
     fn slugify_simple_ascii() {

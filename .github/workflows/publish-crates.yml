@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 name: Publish to crates.io
 
 on:
@@ -28,22 +32,12 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
 
-      - name: Cache Cargo registry and build artefacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-publish-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-publish-
-
       - name: cargo build
         run: cargo build --release --locked
 
       - name: cargo test
         env:
-          TEST_DSC_CONFIG: /dev/null/disable-e2e
+          DSC_LIVE_TESTS: "0"
         run: cargo test --locked --quiet
 
       - name: cargo publish (dry run)

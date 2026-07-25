@@ -1,4 +1,9 @@
-use clap::{ArgAction, Parser, Subcommand, ValueEnum};
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+use crate::utils::{tilde_path_string, tilde_pathbuf};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum, ValueHint};
 use clap_complete::Shell;
 use std::path::PathBuf;
 
@@ -13,7 +18,12 @@ pub struct Cli {
     /// (default `~/.config/dsc/dsc.toml`), then system locations.
     /// Errors if the given file does not exist (no silent fallthrough).
     /// See `dsc config` for the active selection.
-    #[arg(long, short = 'c')]
+    #[arg(
+        long,
+        short = 'c',
+        value_parser = tilde_pathbuf,
+        value_hint = ValueHint::FilePath
+    )]
     pub config: Option<PathBuf>,
     /// Describe side effects without applying them. Read-only commands ignore
     /// the flag; commands without a complete plan refuse before side effects.
@@ -66,6 +76,7 @@ pub enum Commands {
   cat forums.txt | dsc import")]
     Import {
         /// Path to import input (text/CSV). Reads stdin when omitted.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         path: Option<PathBuf>,
     },
     /// Run remote OS + Discourse update workflow, or `dsc update log` to view history.
@@ -259,7 +270,12 @@ pub enum Commands {
         /// Subject: a username or an email address.
         user: String,
         /// Output directory (default `sar-<username>-<date>/`).
-        #[arg(long, short = 'o')]
+        #[arg(
+            long,
+            short = 'o',
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::DirPath
+        )]
         output: Option<PathBuf>,
         /// Also collect the subject's private messages. Off by default: PMs
         /// contain third-party personal data and need a disclose/redact
@@ -325,7 +341,11 @@ pub enum Commands {
         /// the new user's authorized_keys. A typical value is
         /// `~/.ssh/<hostname>.pub` — the per-server keypair pattern in
         /// the Bawmedical hardening playbook.
-        #[arg(long)]
+        #[arg(
+            long,
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::FilePath
+        )]
         pubkey_file: PathBuf,
     },
     /// Community-health analytics — growth, activity, and health metrics
@@ -390,6 +410,7 @@ pub enum Commands {
         /// Discourse name.
         discourse: String,
         /// Path to the file to upload.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         file: PathBuf,
         /// Discourse upload context. Default `composer` is correct for
         /// embedding in posts; other values include `avatar`,
@@ -409,6 +430,28 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<ConfigCommand>,
     },
+    /// Check configured API authentication and SSH reachability.
+    #[command(after_help = "Alias for `dsc config check`.
+
+Examples:
+  dsc doctor
+  dsc doctor --parallel
+  dsc doctor --skip-ssh")]
+    Doctor {
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+        /// Skip the SSH reachability probe.
+        #[arg(long)]
+        skip_ssh: bool,
+        /// Probe forums concurrently (results stream fastest-first). Much
+        /// faster on a large fleet.
+        #[arg(long, short = 'p')]
+        parallel: bool,
+        /// Maximum workers when --parallel is set (default: 8).
+        #[arg(long, short = 'm')]
+        max: Option<usize>,
+    },
     /// Generate or install shell completion scripts.
     #[command(visible_alias = "comp")]
     #[command(after_help = "Examples:
@@ -422,7 +465,12 @@ pub enum Commands {
         #[arg(value_enum)]
         shell: Option<CompletionShell>,
         /// Output directory. Prints to stdout when omitted.
-        #[arg(long, short = 'd')]
+        #[arg(
+            long,
+            short = 'd',
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::DirPath
+        )]
         dir: Option<PathBuf>,
     },
     /// Generate man pages for `dsc` and every subcommand.
@@ -436,7 +484,12 @@ pub enum Commands {
   dsc man --dir ./man")]
     Man {
         /// Output directory. Required - this command always writes to disk.
-        #[arg(long, short = 'd')]
+        #[arg(
+            long,
+            short = 'd',
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::DirPath
+        )]
         dir: PathBuf,
     },
     /// Print the dsc version.
@@ -563,6 +616,7 @@ impl Commands {
             Commands::Config {
                 command: Some(ConfigCommand::Check { .. }),
             } => Some("dsc config check"),
+            Commands::Doctor { .. } => Some("dsc doctor"),
             Commands::Completions { command, dir, .. } => match command {
                 Some(CompletionCommand::Install { .. }) => Some("dsc completions install"),
                 None if dir.is_some() => Some("dsc completions --dir"),
@@ -641,6 +695,7 @@ pub enum EmojiCommand {
         /// Discourse name.
         discourse: String,
         /// Local directory to save emoji images into.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::DirPath)]
         output_dir: PathBuf,
     },
     /// Push (upload) one emoji file, or bulk-upload from a directory (alias: add).
@@ -649,6 +704,7 @@ pub enum EmojiCommand {
         /// Discourse name.
         discourse: String,
         /// Local file or directory path.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::AnyPath)]
         emoji_path: PathBuf,
         /// Optional emoji name (file uploads only).
         emoji_name: Option<String>,
@@ -682,6 +738,7 @@ pub enum TopicCommand {
         /// Topic ID.
         topic_id: u64,
         /// Destination file or directory (auto-derived when omitted).
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::AnyPath)]
         local_path: Option<PathBuf>,
         /// Pull the entire thread (every post) as a single Markdown file
         /// with YAML frontmatter and per-post headings. Default behaviour
@@ -698,6 +755,7 @@ pub enum TopicCommand {
         /// Topic ID.
         topic_id: u64,
         /// Local Markdown file path.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
         /// Update the post without bumping the topic in the activity feed.
         /// Use for silent maintenance edits (sends post[no_bump]=true).
@@ -717,6 +775,7 @@ pub enum TopicCommand {
         /// Topic ID.
         topic_id: u64,
         /// Local Markdown file path.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
         /// Skip sync confirmation prompt.
         #[arg(long, short = 'y')]
@@ -744,6 +803,7 @@ pub enum TopicCommand {
         /// Topic ID.
         topic_id: u64,
         /// Input file path. Reads stdin when omitted or `-`.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
@@ -760,6 +820,7 @@ pub enum TopicCommand {
         #[arg(long, short = 't')]
         title: String,
         /// Input file path. Reads stdin when omitted or `-`.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
@@ -870,11 +931,15 @@ pub enum CategoryCommand {
         /// Category ID or slug.
         category: String,
         /// Destination directory (auto-derived when omitted).
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::DirPath)]
         local_path: Option<PathBuf>,
         /// Convert the selected generated admonition representation back to
         /// MkDocs/Zensical syntax. Omit to preserve raw Markdown.
         #[arg(long, short = 'a', value_enum, value_name = "STYLE")]
         convert_admonitions: Option<AdmonitionStyle>,
+        /// Rewrite same-category forum links to local Markdown paths.
+        #[arg(long)]
+        rewrite_links: bool,
     },
     /// Push local Markdown files into a category.
     #[command(visible_alias = "ps")]
@@ -884,11 +949,15 @@ pub enum CategoryCommand {
         /// Category ID or slug.
         category: String,
         /// Local directory containing Markdown files.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::DirPath)]
         local_path: PathBuf,
         /// Convert MkDocs/Zensical admonitions to the selected Discourse
         /// representation. Omit to preserve raw Markdown.
         #[arg(long, short = 'a', value_enum, value_name = "STYLE")]
         convert_admonitions: Option<AdmonitionStyle>,
+        /// Rewrite relative Markdown links to same-category forum URLs.
+        #[arg(long)]
+        rewrite_links: bool,
         /// Only update existing topics; error instead of creating a new topic
         /// when a local file has no remote match.
         #[arg(long)]
@@ -955,6 +1024,7 @@ pub enum CategoryDefCommand {
         /// Discourse name.
         discourse: String,
         /// Destination file (defaults to categories.yaml).
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
     },
     /// Apply a category-definition file to a Discourse (upsert; never deletes).
@@ -963,6 +1033,7 @@ pub enum CategoryDefCommand {
         /// Discourse name.
         discourse: String,
         /// Local categories.yaml (or .json) file.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
     },
 }
@@ -1025,6 +1096,7 @@ pub enum GroupCommand {
         /// Path to a file of email addresses (one per line; blank
         /// lines and `#` comments are ignored). Reads stdin when
         /// omitted or `-`.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
         /// Send Discourse notifications to added users.
         #[arg(long)]
@@ -1061,6 +1133,7 @@ pub enum BackupCommand {
         /// Backup filename on the server (from `dsc backup list`).
         backup_filename: String,
         /// Local output path. Defaults to the backup filename in the current directory.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
     },
     /// Push (restore) a backup on the server (alias: restore).
@@ -1117,6 +1190,7 @@ pub enum PaletteCommand {
         /// Palette ID.
         palette_id: u64,
         /// Destination file path (auto-derived when omitted).
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
     },
     /// Push local JSON to create or update a palette.
@@ -1125,6 +1199,7 @@ pub enum PaletteCommand {
         /// Discourse name.
         discourse: String,
         /// Local JSON file path.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
         /// Palette ID to update (creates a new palette when omitted).
         palette_id: Option<u64>,
@@ -1190,6 +1265,7 @@ pub enum ThemeCommand {
         discourse: String,
         /// Git repo URL (creds may be embedded for private repos) or a local
         /// bundle file (`.tar.gz`/zip theme export).
+        #[arg(value_parser = tilde_path_string, value_hint = ValueHint::AnyPath)]
         source: String,
         /// Git branch to import (remote only; defaults to the repo's default).
         #[arg(long, short = 'b')]
@@ -1218,6 +1294,7 @@ pub enum ThemeCommand {
         /// Theme ID (from `dsc theme list`).
         theme_id: u64,
         /// Destination file path (auto-derived from theme name when omitted).
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
     },
     /// Push a local JSON file to create or update a theme.
@@ -1226,6 +1303,7 @@ pub enum ThemeCommand {
         /// Discourse name.
         discourse: String,
         /// Local JSON file path.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
         /// Theme ID to update (creates a new theme when omitted).
         theme_id: Option<u64>,
@@ -1353,6 +1431,7 @@ pub enum ThemeFieldCommand {
         /// Field spec: `target/name`, e.g. `common/scss`.
         field: String,
         /// Destination file (auto-derived from the field name when omitted).
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
     },
     /// Push a file back to one field. Honours global `--dry-run`.
@@ -1364,6 +1443,7 @@ pub enum ThemeFieldCommand {
         /// Field spec: `target/name`, e.g. `common/scss`.
         field: String,
         /// File whose contents become the field body.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
     },
 }
@@ -1391,6 +1471,7 @@ pub enum ThemeAssetCommand {
         /// Upload-var name (referenced as `$name` in SCSS).
         name: String,
         /// File to upload (image/font).
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         file: PathBuf,
     },
     /// Remove a bound upload asset (`$var`). Honours global `--dry-run`.
@@ -1451,6 +1532,7 @@ pub enum ThemeSettingCommand {
         /// Theme ID.
         theme_id: u64,
         /// Destination file (auto-derived from the theme name when omitted).
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
     },
     /// Push a settings file back, PUTting only the changed settings. Honours
@@ -1461,6 +1543,7 @@ pub enum ThemeSettingCommand {
         /// Theme ID.
         theme_id: u64,
         /// Settings file to apply.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
     },
 }
@@ -1479,6 +1562,7 @@ pub enum PmCommand {
         #[arg(long, short = 't')]
         title: String,
         /// Input file path. Reads stdin when omitted or `-`.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
     },
     /// List PMs for a user.
@@ -1646,6 +1730,7 @@ pub enum InviteCommand {
         discourse: String,
         /// Path to a file of email addresses (one per line; blank lines and
         /// `#` comments ignored). Reads stdin when omitted or `-`.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
         /// Add every invitee to one or more groups on accept (repeatable).
         #[arg(long, short = 'g')]
@@ -1926,6 +2011,7 @@ pub enum PostCommand {
         /// Post ID.
         post_id: u64,
         /// Output file path. Prints to stdout when omitted.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
     },
     /// Push a local file to update a post (alias: edit).
@@ -1936,6 +2022,7 @@ pub enum PostCommand {
         /// Post ID.
         post_id: u64,
         /// Input file path. Reads stdin when omitted or `-`.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
     },
     /// Delete a post by ID.
@@ -1977,7 +2064,11 @@ pub enum TagCommand {
         /// Discourse name.
         discourse: String,
         /// Output file (default: tags.yaml). Extension determines format (.yaml/.json).
-        #[arg(default_value = "tags.yaml")]
+        #[arg(
+            default_value = "tags.yaml",
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::FilePath
+        )]
         local_path: PathBuf,
     },
     /// Push a local taxonomy file to the server (upsert; optionally prune).
@@ -1986,6 +2077,7 @@ pub enum TagCommand {
         /// Discourse name.
         discourse: String,
         /// Input taxonomy file.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
         /// Delete server tags/groups absent from the file.
         #[arg(long)]
@@ -2066,7 +2158,11 @@ pub enum SettingCommand {
         discourse: String,
         /// Output path. Format detected by extension (.json → JSON,
         /// otherwise YAML). Defaults to `settings.yaml`.
-        #[arg(default_value = "settings.yaml")]
+        #[arg(
+            default_value = "settings.yaml",
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::FilePath
+        )]
         local_path: PathBuf,
         /// Only include settings whose value differs from default. Produces
         /// a manageable file (~50-100 entries) suitable for version control.
@@ -2087,6 +2183,7 @@ pub enum SettingCommand {
         /// Discourse name.
         discourse: String,
         /// Path to the settings snapshot file (YAML or JSON).
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
         /// For settings present on the server but absent from the file,
         /// reset them to their default value. Off by default (file describes
@@ -2105,8 +2202,10 @@ pub enum SettingCommand {
     #[command(visible_alias = "df")]
     Diff {
         /// First source: Discourse name or snapshot file path.
+        #[arg(value_parser = tilde_path_string, value_hint = ValueHint::AnyPath)]
         source: String,
         /// Second source: Discourse name or snapshot file path.
+        #[arg(value_parser = tilde_path_string, value_hint = ValueHint::AnyPath)]
         target: String,
         /// Filter to settings where at least one source differs from default.
         /// Reduces noise when most settings on both sides are still default.
@@ -2145,7 +2244,12 @@ pub enum CompletionCommand {
         #[arg(long)]
         shell: Option<CompletionShell>,
         /// Completion directory to write to.
-        #[arg(long, short = 'd')]
+        #[arg(
+            long,
+            short = 'd',
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::DirPath
+        )]
         dir: Option<PathBuf>,
     },
 }
@@ -2218,6 +2322,71 @@ pub enum StructuredFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+
+    fn count_path_hints(command: &clap::Command) -> usize {
+        let here = command
+            .get_arguments()
+            .filter(|arg| {
+                matches!(
+                    arg.get_value_hint(),
+                    ValueHint::AnyPath | ValueHint::FilePath | ValueHint::DirPath
+                )
+            })
+            .count();
+        here + command
+            .get_subcommands()
+            .map(count_path_hints)
+            .sum::<usize>()
+    }
+
+    #[test]
+    fn every_path_argument_has_a_completion_hint() {
+        assert_eq!(count_path_hints(&Cli::command()), 43);
+    }
+
+    #[test]
+    fn cli_paths_expand_tildes_in_equals_and_positional_forms() {
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .expect("test requires a home directory");
+        let cli = Cli::try_parse_from([
+            "dsc",
+            "--config=~/dsc.toml",
+            "topic",
+            "push",
+            "forum",
+            "1",
+            "~/topic.md",
+        ])
+        .expect("tilde paths parse");
+        assert_eq!(cli.config, Some(home.join("dsc.toml")));
+        let Commands::Topic {
+            command: TopicCommand::Push { local_path, .. },
+        } = cli.command
+        else {
+            panic!("expected topic push command");
+        };
+        assert_eq!(local_path, home.join("topic.md"));
+    }
+
+    #[test]
+    fn hybrid_theme_source_expands_local_tilde_paths() {
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map(PathBuf::from)
+            .expect("test requires a home directory");
+        let cli = Cli::try_parse_from(["dsc", "theme", "install", "forum", "~/theme.tar.gz"])
+            .expect("theme source parses");
+        let Commands::Theme {
+            command: ThemeCommand::Install { source, .. },
+        } = cli.command
+        else {
+            panic!("expected theme install command");
+        };
+        assert_eq!(source, home.join("theme.tar.gz").to_string_lossy());
+    }
 
     #[test]
     fn category_admonition_style_accepts_both_explicit_modes() {
@@ -2265,6 +2434,38 @@ mod tests {
             panic!("expected category pull command");
         };
         assert_eq!(convert_admonitions, Some(AdmonitionStyle::PlainBlockquote));
+    }
+
+    #[test]
+    fn category_rewrite_links_parses_on_pull_and_push() {
+        let cli = Cli::try_parse_from([
+            "dsc",
+            "category",
+            "push",
+            "forum",
+            "34",
+            "./playbook",
+            "--rewrite-links",
+        ])
+        .expect("push rewrite-links parses");
+        let Commands::Category {
+            command: CategoryCommand::Push { rewrite_links, .. },
+        } = cli.command
+        else {
+            panic!("expected category push command");
+        };
+        assert!(rewrite_links);
+
+        let cli =
+            Cli::try_parse_from(["dsc", "category", "pull", "forum", "34", "--rewrite-links"])
+                .expect("pull rewrite-links parses");
+        let Commands::Category {
+            command: CategoryCommand::Pull { rewrite_links, .. },
+        } = cli.command
+        else {
+            panic!("expected category pull command");
+        };
+        assert!(rewrite_links);
     }
 
     #[test]
@@ -2379,6 +2580,7 @@ mod tests {
             ),
             (&["dsc", "man", "--dir", "man"], "dsc man --dir"),
             (&["dsc", "config", "check"], "dsc config check"),
+            (&["dsc", "doctor"], "dsc doctor"),
         ];
 
         for &(args, expected) in blocked {

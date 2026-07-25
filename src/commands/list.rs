@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use crate::cli::OutputFormat;
 use crate::commands::common::{fetch_fullname_from_url, open_url, parse_tags};
 use crate::config::{Config, DiscourseConfig, save_config};

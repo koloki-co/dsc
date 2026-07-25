@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 set -euo pipefail
 
 # Download the Discourse UI SVG icon set from a pinned Discourse commit and
@@ -96,8 +101,56 @@ extract_symbol_to_file() {
 missing=()
 written=0
 
+is_classified_additional_icon() {
+  # Keep this in sync with the non-Font-Awesome annotations in REUSE.toml.
+  # A new symbol from the mixed-provenance source must not be redistributed
+  # until its upstream author and licence have been recorded.
+  local candidate
+  local -a classified=(
+    bookmark-delete
+    discourse-add-translation
+    discourse-bell-exclamation
+    discourse-bell-one
+    discourse-bell-slash
+    discourse-bookmark-clock
+    discourse-chat-search
+    discourse-chevron-collapse
+    discourse-chevron-expand
+    discourse-compress
+    discourse-dnd
+    discourse-emojis
+    discourse-expand
+    discourse-flask-check
+    discourse-h1
+    discourse-h2
+    discourse-h3
+    discourse-h4
+    discourse-h5
+    discourse-other-tab
+    discourse-sidebar
+    discourse-sparkles
+    discourse-table
+    discourse-text
+    discourse-threads
+    table-cells-minus
+    table-cells-plus
+    tippy-rounded-arrow
+  )
+
+  for candidate in "${classified[@]}"; do
+    if [[ "${candidate}" == "$1" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 while IFS= read -r icon; do
   [[ -z "${icon}" ]] && continue
+
+  # Upstream describes this as an SVGRepo icon but provides no source URL,
+  # author, or licence. Do not redistribute it until its provenance is known.
+  [[ "${icon}" == "discourse-amazon" ]] && continue
 
   out_file="${OUT_DIR}/fa-${icon}.svg"
 
@@ -133,6 +186,11 @@ while IFS= read -r icon; do
   # Custom Discourse symbols live in discourse-additional.svg and use the
   # icon id verbatim (for example: discourse-h1, discourse-sidebar, etc).
   if extract_symbol_to_file "${tmpdir}/additional.svg" "${icon}" "${out_file}"; then
+    if ! is_classified_additional_icon "${icon}"; then
+      rm "${out_file}"
+      echo "Unclassified discourse-additional.svg icon: ${icon}" >&2
+      exit 1
+    fi
     written=$((written + 1))
     continue
   fi

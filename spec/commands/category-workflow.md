@@ -1,6 +1,6 @@
 # `dsc category` pull/push workflow — gaps + admonition/URL conversion + silent push
 
-> **Status: Gaps 1–3 and 5 implemented (unreleased). Gap 4 planned.**
+> **Status: Gaps 1–5 implemented (unreleased).**
 > Surfaced from a real-world offline playbook sync workflow against
 > `forum.rcpch.tech`. Gaps 1–3 affect the `category pull` / `category push`
 > command pair. Gap 4 is content transformation for a single-source workflow.
@@ -11,7 +11,7 @@ Spec for five features in `dsc category pull` and `dsc category push`:
 1. **`category pull` does not embed topic IDs** ✅ implemented
 2. **`category push` ignores `--dry-run`** ✅ implemented
 3. **`category push` silently creates new topics on slug mismatch** ✅ implemented
-4. **No admonition/URL conversion on pull/push** — planned
+4. **No admonition/URL conversion on pull/push** ✅ implemented
 5. **No `--no-bump` / `--skip-revision` for silent bulk edits** ✅ implemented
 
 ## Context: the real-world driver
@@ -381,7 +381,7 @@ blockquote. It is a theme component, not a server plugin, so email
 notifications do not receive its visual styling; email readers see the
 underlying quote content.
 
-#### `--rewrite-links` flag (planned)
+#### `--rewrite-links` flag
 
 On **push** (MkDocs → Discourse): rewrite relative Markdown links to full
 forum URLs. Requires a resolved map of `{filename_stem}` → `{topic_id, slug}`
@@ -402,14 +402,12 @@ Algorithm:
 4. If found, rewrite the URL. If not found, emit a warning (do not silently drop the link).
 
 On **pull** (Discourse → MkDocs): rewrite full `forum.rcpch.tech/t/…` URLs
-back to relative `.md` paths. This is best-effort; links to non-playbook topics
-(e.g., sysadmin topics) are left as full URLs.
+back to the flat export's `filename.md` paths. This is best-effort; links to
+non-playbook topics (e.g., sysadmin topics) are left as full URLs.
 
 ### Priority
 
-Implement and test both directions of `--convert-admonitions` before link
-rewriting. The Discourse version is the canonical publication target, so if
-work must be staged, prioritise push before pull and link rewriting.
+Both directions of admonition conversion and link rewriting are implemented.
 
 ### Backward compatibility
 
@@ -521,14 +519,14 @@ From the Discourse source and Meta documentation:
 - [x] `updates_only: bool` parameter added to `category_push()` and wired from CLI.
 - [x] When `updates_only` is true and no match is found, a structured error is emitted instead of calling `create_topic()`.
 
-### Phase 5 — admonition/URL conversion (Gap 4) [~]
+### Phase 5 — admonition/URL conversion (Gap 4) ✅
 
 - [x] Add `--convert-admonitions <quote-callouts|plain-blockquote>` to `category push` and `category pull`.
 - [x] Implement MkDocs/Zensical admonition → selected Discourse representation on push, including nested and foldable forms while preserving fenced code blocks.
 - [x] Implement selected Discourse representation → MkDocs/Zensical best-effort reversal on pull, matching only the specific generated syntax.
-- [ ] Add `--rewrite-links` flag to `category push` and `category pull`.
-- [ ] Implement relative-path → full-forum-URL rewriting on push (requires front-matter topic ID map).
-- [ ] Implement full-forum-URL → relative-path best-effort reversal on pull.
+- [x] Add `--rewrite-links` flag to `category push` and `category pull`.
+- [x] Implement relative-path → full-forum-URL rewriting on push, resolving the final filename stem through local front matter and the fresh category listing; unresolved targets warn without changing the link.
+- [x] Implement full-forum-URL → flat local `filename.md` best-effort reversal on pull, preserving URL fragments and leaving external/out-of-category links unchanged.
 
 ### Phase 6 — `--no-bump` and `--skip-revision` flags (Gap 5)
 

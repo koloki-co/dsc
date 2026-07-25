@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! `dsc analytics` — community-health snapshot per `spec/analytics.md`.
 //!
 //! Three modes share one data path:

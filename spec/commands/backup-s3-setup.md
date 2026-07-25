@@ -7,7 +7,7 @@
 > Phase 2 (`--reuse-user`, `--use-iam-profile`, `--all`/`--tags`) and Phase 3
 > (native SDK, `--retention`, `backup status`) remain planned.
 
-Spec for one-command setup of off-site Discourse backups on Amazon S3. Goal: replace a ~15-step AWS-console + Discourse-settings runbook with a single `dsc` command. Driver: the Koloki / Baw Medical fleet - every self-hosted forum needs off-site backups, and the secure pattern (one bucket + one dedicated single-bucket IAM user per forum) is set up by hand in the AWS console for each one. Production runbook in use since 2023-01.
+Spec for one-command setup of off-site Discourse backups on Amazon S3. Goal: replace a ~15-step AWS-console + Discourse-settings runbook with a single `dsc` command. Driver: the Koloki fleet - every self-hosted forum needs off-site backups, and the secure pattern (one bucket + one dedicated single-bucket IAM user per forum) is set up by hand in the AWS console for each one. Production runbook in use since 2023-01.
 
 ## Motivation
 

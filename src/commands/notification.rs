@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! `dsc notification list|read` — inspect and mark read the API user's own
 //! Discourse notifications (`/notifications.json`).
 

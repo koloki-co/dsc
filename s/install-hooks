@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+
 # Install tracked local Git hooks for this checkout. Hooks are opt-in and this
 # script deliberately does not write into the untracked .git/hooks directory.
 

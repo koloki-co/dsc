@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 mod common;
 use common::*;
 use dsc::api::DiscourseClient;
@@ -54,12 +58,9 @@ fn update() {
         );
     }
     let client = DiscourseClient::new(&to_config(&test)).expect("client");
-    let post_id = extract_test_post_id(&output);
-    let found = if let Some(post_id) = post_id {
-        wait_for_post_marker(&client, post_id, &marker)
-    } else {
-        wait_for_marker(&client, topic_id, &marker)
-    };
+    let post_id = extract_test_post_id(&output).expect("update test should report its post ID");
+    let _cleanup = DeletePostOnDrop::new(client.clone(), post_id);
+    let found = wait_for_post_marker(&client, post_id, &marker);
     assert!(found, "marker not found on changelog");
 }
 
@@ -111,32 +112,10 @@ fn update_all() {
         );
     }
     let client = DiscourseClient::new(&to_config(&test)).expect("client");
-    let post_id = extract_test_post_id(&output);
-    let found = if let Some(post_id) = post_id {
-        wait_for_post_marker(&client, post_id, &marker)
-    } else {
-        wait_for_marker(&client, topic_id, &marker)
-    };
+    let post_id = extract_test_post_id(&output).expect("update all test should report its post ID");
+    let _cleanup = DeletePostOnDrop::new(client.clone(), post_id);
+    let found = wait_for_post_marker(&client, post_id, &marker);
     assert!(found, "marker not found on changelog");
-}
-
-fn wait_for_marker(client: &DiscourseClient, topic_id: u64, marker: &str) -> bool {
-    let max_attempts = 10;
-    for _ in 0..max_attempts {
-        if let Ok(topic) = client.fetch_topic(topic_id, true) {
-            let found = topic.post_stream.posts.iter().any(|post| {
-                post.raw
-                    .as_ref()
-                    .map(|raw| raw.contains(marker))
-                    .unwrap_or(false)
-            });
-            if found {
-                return true;
-            }
-        }
-        std::thread::sleep(Duration::from_secs(1));
-    }
-    false
 }
 
 fn wait_for_post_marker(client: &DiscourseClient, post_id: u64, marker: &str) -> bool {

@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
 use crate::commands::common::{emit_result, ensure_api_credentials, select_discourse};
@@ -10,11 +14,14 @@ use serde_json::json;
 pub fn version(config: &Config, discourse: Option<&str>, format: ListFormat) -> Result<()> {
     match discourse {
         Some(name) => forum_version(config, name, format),
-        None => {
-            let ver = env!("CARGO_PKG_VERSION");
-            emit_result(format, &json!({ "name": "dsc", "version": ver }), ver)
-        }
+        None => own_version(format),
     }
+}
+
+/// Report dsc's own version without loading configuration or contacting a forum.
+pub fn own_version(format: ListFormat) -> Result<()> {
+    let ver = env!("CARGO_PKG_VERSION");
+    emit_result(format, &json!({ "name": "dsc", "version": ver }), ver)
 }
 
 /// Print a configured forum's live Discourse version and git commit, read from

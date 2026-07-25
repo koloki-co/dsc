@@ -17,6 +17,8 @@ If none are found, it defaults to `./dsc.toml` (created on first write command).
 
 If both `-c` and `$DSC_CONFIG` are set, the flag wins.
 
+All CLI path arguments expand a bare `~` or leading `~/` themselves, including quoted paths and `--flag=~/path` forms that the shell leaves untouched. Path-valued configuration environment variables use the same expansion.
+
 ## Env-var reference
 
 | Variable | Purpose |

@@ -36,13 +36,15 @@ The full CI-mirroring gate (fmt + clippy `-D warnings` + the complete test suite
 s/test-fmt-clippy
 ```
 
-Verbose end-to-end output:
+Live compatibility tests require an explicit opt-in and an absolute path to a credential file. They run serially and may mutate their configured disposable resources, so point them only at an isolated test forum:
 
 ```bash
-DSC_TEST_VERBOSE=1 cargo test -- --nocapture
+DSC_LIVE_TESTS=1 TEST_DSC_CONFIG=/absolute/path/to/live-test.toml s/test-live
 ```
 
-End-to-end tests hit a real Discourse. Provide credentials in `testdsc.toml` (or point `TEST_DSC_CONFIG` to a file) using the shape shown below; otherwise e2e tests auto-skip.
+Add `DSC_TEST_VERBOSE=1` before that command for test diagnostics. Ordinary `cargo test`, CI, and `s/test-fmt-clippy` never contact Discourse.
+
+The live-test configuration uses the shape below:
 
 ```toml
 [[discourse]]

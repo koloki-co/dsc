@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+//
+// SPDX-License-Identifier: GPL-2.0-or-later
+
 //! `dsc log staff` — read-only access to the staff action log (the admin
 //! audit trail behind `/admin/logs/staff-action-logs` in the web UI).
 
