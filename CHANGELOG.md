@@ -5,7 +5,37 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.11.0] - 2026-07-25
+
+### Bug fixes
+
+- Bound HTTP client with a connect and total request timeout ([9645af5](https://github.com/pacharanero/dsc/commit/9645af541f7daeb55a847857f876f38c9bcabb63))
+
+- **release**: Authenticate auto-tag push ([0b15ea8](https://github.com/pacharanero/dsc/commit/0b15ea8af3a3d789144bd0a58b21a44f722db700))
+
+### Build
+
+- **deps**: Update dtolnay/rust-toolchain requirement to 4cda84d5c5c54efe2404f9d843567869ab1699d4 ([7ad1e1e](https://github.com/pacharanero/dsc/commit/7ad1e1ef38655ac496b5155378dc49f8de73c8c6))
+
+- **deps**: Bump actions/checkout ([b2d023a](https://github.com/pacharanero/dsc/commit/b2d023aae9e1748323173a88d1fc9ed05d45c0ff))
+
+- **deps**: Bump the routine-minor-and-patch group across 1 directory with 2 updates ([1d7198a](https://github.com/pacharanero/dsc/commit/1d7198a8bcdab6090c43355e76bc6f457e99b603))
+
+### Documentation
+
+- Complete protected release rehearsal ([3101a85](https://github.com/pacharanero/dsc/commit/3101a85867945b5820145f12f37f129a356fb5ce))
+
+### Features
+
+- R37 CLI ergonomics, R38 workflow security, R10 link rewriting, R36 live-test isolation ([f154bb3](https://github.com/pacharanero/dsc/commit/f154bb3f8dfa46befa5b05d3549a01ff75588a69))
+
+- **licensing**: Record third-party asset provenance and REUSE compliance ([636bdf8](https://github.com/pacharanero/dsc/commit/636bdf801b5287e8f19137def2d7520f03ba34de))
+
 ## [0.10.32] - 2026-07-24
+
+### Build
+
+- **deps**: Bump zensical in the routine-minor-and-patch group ([c6b8825](https://github.com/pacharanero/dsc/commit/c6b882543808b7c09425046d8bb39876837254f3))
 
 ### CI
 
