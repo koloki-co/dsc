@@ -6,8 +6,17 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::StatusCode;
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{HeaderMap, HeaderValue};
+use std::time::Duration;
 
 const MAX_RATE_LIMIT_RETRIES: u32 = 5;
+
+/// Cap on connection establishment; a dead/unreachable host should fail fast
+/// rather than hang the CLI indefinitely.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Cap on total request time, generous enough for the largest routine
+/// payloads (theme bundle/emoji uploads, full setting/topic pulls).
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone)]
 pub struct VersionInfo {
@@ -49,6 +58,8 @@ impl DiscourseClient {
 
         let client = Client::builder()
             .default_headers(headers)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
             .build()
             .context("building http client")?;
 
