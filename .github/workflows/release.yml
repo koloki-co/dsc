@@ -188,7 +188,12 @@ jobs:
         run: |
           rm -f artifacts/*-dist-manifest.json
           printf '%s\n' "$ANNOUNCEMENT_BODY" > "$RUNNER_TEMP/notes.txt"
-          gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" artifacts/*
+          # `dist build --artifacts=local` leaves an unpacked staging directory
+          # (dsc-rs-<target>/) in target/distrib, which the `path: target/distrib/**`
+          # upload sweeps into artifacts/. `gh release create` rejects a directory
+          # asset ("is a directory"), so upload only the regular files.
+          mapfile -t assets < <(find artifacts -maxdepth 1 -type f)
+          gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" $PRERELEASE_FLAG --title "$ANNOUNCEMENT_TITLE" --notes-file "$RUNNER_TEMP/notes.txt" "${assets[@]}"
 
   publish-homebrew-formula:
     name: Publish Homebrew formula
