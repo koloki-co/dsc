@@ -220,6 +220,9 @@ jobs:
         run: |
           git config --global user.name "$GITHUB_USER"
           git config --global user.email "$GITHUB_EMAIL"
+          # GitHub's ubuntu runner ships Homebrew but not on PATH; add it so the
+          # brew style/format calls below resolve (matches gitehr's release job).
+          export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
           brew update
           brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix Formula/dsc-rs.rb || true
           git add Formula/dsc-rs.rb
