@@ -4,6 +4,7 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
+use crate::commands::common::validate_ssh_target;
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
 use serde::Serialize;
@@ -237,6 +238,12 @@ fn check_api(discourse: &DiscourseConfig) -> CheckStatus {
 }
 
 fn check_ssh(host: &str) -> CheckStatus {
+    if let Err(err) = validate_ssh_target(host) {
+        return CheckStatus {
+            ok: false,
+            detail: err.to_string(),
+        };
+    }
     let output = Command::new("ssh")
         .args([
             "-o",
@@ -245,6 +252,7 @@ fn check_ssh(host: &str) -> CheckStatus {
             "ConnectTimeout=5",
             "-o",
             "StrictHostKeyChecking=accept-new",
+            "--",
             host,
             "true",
         ])

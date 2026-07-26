@@ -12,6 +12,7 @@ use crate::api::{CategoryDefinition, DiscourseClient};
 use crate::cli::ListFormat;
 use crate::commands::common::{emit_result, ensure_api_credentials, not_found, select_discourse};
 use crate::config::Config;
+use crate::utils::atomic_write;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -372,6 +373,7 @@ pub fn category_def_pull(
     config: &Config,
     discourse_name: &str,
     local_path: Option<&Path>,
+    force: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -402,7 +404,7 @@ pub fn category_def_pull(
     } else {
         serde_yaml::to_string(&file).context("serializing categories as YAML")?
     };
-    fs::write(path, &content).with_context(|| format!("writing {}", path.display()))?;
+    atomic_write(path, &content, force)?;
     println!(
         "Wrote {} category definition(s) to {}",
         file.categories.len(),

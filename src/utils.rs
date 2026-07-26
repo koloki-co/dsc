@@ -2,11 +2,14 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
-use std::fs;
-use std::io::IsTerminal;
+use std::fs::{self, File, OpenOptions};
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static ATOMIC_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Parse a CLI path, expanding a bare `~` or leading `~/` against the user's
 /// home directory. Shells do not expand tildes in quoted or `--flag=~/path`
@@ -96,6 +99,166 @@ pub fn ensure_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Create a directory and restrict it to its owner on Unix.
+pub fn ensure_private_dir(path: &Path) -> Result<()> {
+    ensure_dir(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("setting private permissions on {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// A same-directory temporary file committed to its destination by rename.
+pub struct AtomicOutput {
+    file: Option<File>,
+    temporary_path: PathBuf,
+    destination: PathBuf,
+    overwrite: bool,
+    committed: bool,
+}
+
+impl AtomicOutput {
+    pub fn file_mut(&mut self) -> &mut File {
+        self.file.as_mut().expect("atomic output already committed")
+    }
+
+    pub fn commit(mut self) -> Result<()> {
+        if let Some(mut file) = self.file.take() {
+            file.flush()
+                .with_context(|| format!("flushing {}", self.temporary_path.display()))?;
+            file.sync_all()
+                .with_context(|| format!("syncing {}", self.temporary_path.display()))?;
+        }
+        reject_symlink(&self.destination)?;
+        if self.destination.exists() && !self.overwrite {
+            return Err(anyhow!(
+                "refusing to overwrite {}; pass --force to replace it",
+                self.destination.display()
+            ));
+        }
+        #[cfg(windows)]
+        if self.destination.exists() {
+            fs::remove_file(&self.destination)
+                .with_context(|| format!("replacing {}", self.destination.display()))?;
+        }
+        fs::rename(&self.temporary_path, &self.destination).with_context(|| {
+            format!(
+                "committing {} to {}",
+                self.temporary_path.display(),
+                self.destination.display()
+            )
+        })?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for AtomicOutput {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_file(&self.temporary_path);
+        }
+    }
+}
+
+/// Create an atomic output file in the destination directory.
+pub fn create_atomic_output(path: &Path, overwrite: bool, private: bool) -> Result<AtomicOutput> {
+    ensure_output_available(path, overwrite)?;
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    ensure_dir(parent)?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| anyhow!("output path has no filename: {}", path.display()))?
+        .to_string_lossy();
+
+    for _ in 0..100 {
+        let sequence = ATOMIC_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temporary_path = parent.join(format!(
+            ".{}.dsc-tmp-{}-{}",
+            file_name,
+            std::process::id(),
+            sequence
+        ));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(if private { 0o600 } else { 0o644 });
+        }
+        match options.open(&temporary_path) {
+            Ok(file) => {
+                return Ok(AtomicOutput {
+                    file: Some(file),
+                    temporary_path,
+                    destination: path.to_path_buf(),
+                    overwrite,
+                    committed: false,
+                });
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("creating temporary file for {}", path.display()));
+            }
+        }
+    }
+    Err(anyhow!(
+        "could not allocate temporary file for {}",
+        path.display()
+    ))
+}
+
+/// Validate that an output path is safe and available before a multi-file pull.
+pub fn ensure_output_available(path: &Path, overwrite: bool) -> Result<()> {
+    reject_symlink(path)?;
+    if path.exists() && !overwrite {
+        return Err(anyhow!(
+            "refusing to overwrite {}; pass --force to replace it",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn reject_symlink(path: &Path) -> Result<()> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(anyhow!(
+            "refusing to write through symbolic link {}",
+            path.display()
+        )),
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| format!("inspecting {}", path.display())),
+    }
+}
+
+/// Atomically write a regular output file.
+pub fn atomic_write(path: &Path, content: impl AsRef<[u8]>, overwrite: bool) -> Result<()> {
+    let mut output = create_atomic_output(path, overwrite, false)?;
+    output
+        .file_mut()
+        .write_all(content.as_ref())
+        .with_context(|| format!("writing {}", path.display()))?;
+    output.commit()
+}
+
+/// Atomically write a file restricted to its owner on Unix.
+pub fn atomic_write_private(path: &Path, content: impl AsRef<[u8]>, overwrite: bool) -> Result<()> {
+    let mut output = create_atomic_output(path, overwrite, true)?;
+    output
+        .file_mut()
+        .write_all(content.as_ref())
+        .with_context(|| format!("writing {}", path.display()))?;
+    output.commit()
+}
+
 /// Resolve a topic path from a user-provided path and a topic title.
 pub fn resolve_topic_path(
     provided: Option<&Path>,
@@ -119,11 +282,17 @@ pub fn read_markdown(path: &Path) -> Result<String> {
 
 /// Write a Markdown file, creating parent directories if needed.
 pub fn write_markdown(path: &Path, content: &str) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        ensure_dir(parent)?;
-    }
-    fs::write(path, content).with_context(|| format!("writing {}", path.display()))?;
-    Ok(())
+    atomic_write(path, content, true)
+}
+
+/// Write a pulled Markdown file, refusing replacement unless requested.
+pub fn write_markdown_output(path: &Path, content: &str, overwrite: bool) -> Result<()> {
+    atomic_write(path, content, overwrite)
+}
+
+/// Write sensitive Markdown with owner-only permissions.
+pub fn write_markdown_private(path: &Path, content: &str, overwrite: bool) -> Result<()> {
+    atomic_write_private(path, content, overwrite)
 }
 
 /// Quote a YAML scalar if it contains characters that would confuse the
@@ -389,6 +558,42 @@ pub fn parse_relative_duration(input: &str) -> Option<chrono::Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn atomic_write_requires_explicit_overwrite() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("snapshot.txt");
+        atomic_write(&path, "first", false).unwrap();
+        assert!(atomic_write(&path, "second", false).is_err());
+        atomic_write(&path, "second", true).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), "second");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn private_atomic_write_uses_owner_only_permissions_and_rejects_symlinks() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+
+        let dir = tempdir().unwrap();
+        let private_dir = dir.path().join("sar");
+        ensure_private_dir(&private_dir).unwrap();
+        assert_eq!(
+            fs::metadata(&private_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let path = dir.path().join("private.txt");
+        atomic_write_private(&path, "secret", false).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+
+        let link = dir.path().join("link.txt");
+        symlink(&path, &link).unwrap();
+        assert!(atomic_write_private(&link, "replacement", true).is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), "secret");
+    }
 
     #[test]
     fn tilde_path_expands_bare_and_prefixed_forms() {

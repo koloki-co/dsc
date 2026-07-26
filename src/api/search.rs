@@ -6,6 +6,7 @@ use super::client::DiscourseClient;
 use super::error::http_error;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// One result row in a search response — distilled from the topic stanza of
 /// `/search.json` (which contains far more than we need).
@@ -27,22 +28,38 @@ pub struct SearchHit {
 struct RawSearchResponse {
     #[serde(default)]
     topics: Vec<SearchHit>,
+    #[serde(default)]
+    more_full_page_results: bool,
 }
 
 impl DiscourseClient {
     /// Search for topics. The `query` is passed through to Discourse verbatim
     /// (so callers can use `category:`, `status:`, `@user`, etc. filters).
     pub fn search_topics(&self, query: &str) -> Result<Vec<SearchHit>> {
-        let path = format!("/search.json?q={}", urlencode_form(query));
-        let response = self.get(&path)?;
-        let status = response.status();
-        let text = response.text().context("reading search response body")?;
-        if !status.is_success() {
-            return Err(http_error("search request", status, &text));
+        let mut topics = Vec::new();
+        let mut seen = HashSet::new();
+        for page in 1..=10 {
+            let path = format!("/search.json?q={}&page={}", urlencode_form(query), page);
+            let response = self.get(&path)?;
+            let status = response.status();
+            let text = response.text().context("reading search response body")?;
+            if !status.is_success() {
+                return Err(http_error("search request", status, &text));
+            }
+            let body: RawSearchResponse =
+                serde_json::from_str(&text).context("parsing search response json")?;
+            for topic in body.topics {
+                if seen.insert(topic.id) {
+                    topics.push(topic);
+                }
+            }
+            if !body.more_full_page_results {
+                return Ok(topics);
+            }
         }
-        let body: RawSearchResponse =
-            serde_json::from_str(&text).context("parsing search response json")?;
-        Ok(body.topics)
+        Err(anyhow::anyhow!(
+            "search results exceed Discourse's 10-page API limit; narrow the query"
+        ))
     }
 }
 

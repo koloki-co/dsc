@@ -5,6 +5,7 @@
 use crate::api::{DiscourseClient, PostEditOptions};
 use crate::commands::common::{ensure_api_credentials, select_discourse};
 use crate::config::Config;
+use crate::utils::atomic_write;
 use anyhow::{Context, Result, anyhow};
 use std::fs;
 use std::io::{self, Read, Write};
@@ -15,6 +16,7 @@ pub fn post_pull(
     discourse_name: &str,
     post_id: u64,
     local_path: Option<&Path>,
+    force: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -26,11 +28,7 @@ pub fn post_pull(
 
     match local_path {
         Some(path) => {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .with_context(|| format!("creating directory {}", parent.display()))?;
-            }
-            fs::write(path, &raw).with_context(|| format!("writing {}", path.display()))?;
+            atomic_write(path, &raw, force)?;
             println!("Post {} pulled to {}", post_id, path.display());
         }
         None => {

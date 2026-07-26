@@ -60,6 +60,35 @@ pub fn missing_config(field: &str, resource: &str, hint: &str) -> anyhow::Error 
     )
 }
 
+/// Quote one value for safe interpolation into a POSIX shell command.
+pub(crate) fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', r"'\''"))
+}
+
+/// Replace command-template placeholders with shell-quoted values.
+pub(crate) fn render_shell_template(template: &str, replacements: &[(&str, &str)]) -> String {
+    let mut rendered = template.to_string();
+    for (key, value) in replacements {
+        rendered = rendered.replace(&format!("{{{}}}", key), &shell_quote(value));
+    }
+    rendered
+}
+
+/// Reject targets that SSH could interpret as options or multiple arguments.
+pub(crate) fn validate_ssh_target(target: &str) -> Result<()> {
+    let trimmed = target.trim();
+    if trimmed.is_empty() {
+        return Err(anyhow!("ssh target is empty"));
+    }
+    if trimmed.starts_with('-') {
+        return Err(anyhow!("ssh target cannot start with '-': {}", target));
+    }
+    if trimmed.chars().any(char::is_whitespace) {
+        return Err(anyhow!("ssh target cannot contain whitespace: {}", target));
+    }
+    Ok(())
+}
+
 pub fn parse_tags(raw: &str) -> Vec<String> {
     raw.split([';', ','])
         .map(|tag| tag.trim().to_string())
@@ -152,7 +181,28 @@ pub fn parse_emails(input: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_emails;
+    use super::{parse_emails, render_shell_template, shell_quote, validate_ssh_target};
+
+    #[test]
+    fn shell_quotes_embedded_single_quotes() {
+        assert_eq!(shell_quote("a'b"), r"'a'\''b'");
+    }
+
+    #[test]
+    fn shell_template_quotes_injected_commands() {
+        assert_eq!(
+            render_shell_template("git clone {url}", &[("url", "repo; rm -rf /")]),
+            "git clone 'repo; rm -rf /'"
+        );
+    }
+
+    #[test]
+    fn validates_ssh_targets() {
+        assert!(validate_ssh_target("discourse@example.com").is_ok());
+        assert!(validate_ssh_target("").is_err());
+        assert!(validate_ssh_target("-oProxyCommand=evil").is_err());
+        assert!(validate_ssh_target("host another-argument").is_err());
+    }
 
     #[test]
     fn parses_one_per_line() {

@@ -6,6 +6,7 @@ use crate::api::{DiscourseClient, SiteSettingDetail};
 use crate::cli::ListFormat;
 use crate::commands::common::{emit_result, ensure_api_credentials, parse_tags, select_discourse};
 use crate::config::{Config, DiscourseConfig};
+use crate::utils::atomic_write_private;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -277,6 +278,10 @@ pub fn list_site_settings(
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SettingsFile {
     pub version: u32,
+    /// True only when the pull contained the complete settings catalogue.
+    /// Filtered snapshots must never be used with `--reset-unlisted`.
+    #[serde(default)]
+    pub complete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub discourse_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -312,6 +317,7 @@ pub fn pull_settings(
     local_path: &Path,
     changed_only: bool,
     category: Option<&str>,
+    force: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -347,6 +353,7 @@ pub fn pull_settings(
 
     let file = SettingsFile {
         version: 1,
+        complete: !changed_only && category.is_none(),
         discourse_version,
         pulled_at: Some(pulled_at),
         settings: entries,
@@ -358,7 +365,7 @@ pub fn pull_settings(
         serde_yaml::to_string(&file).context("serializing settings as YAML")?
     };
 
-    fs::write(local_path, &content).with_context(|| format!("writing {}", local_path.display()))?;
+    atomic_write_private(local_path, &content, force)?;
 
     println!(
         "Wrote {} setting{} to {}",
@@ -417,6 +424,7 @@ pub fn push_settings(
     local_path: &Path,
     reset_unlisted: bool,
     dry_run: bool,
+    assume_yes: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -434,6 +442,11 @@ pub fn push_settings(
         return Err(anyhow!(
             "unsupported settings file schema version {} (expected 1)",
             file.version
+        ));
+    }
+    if reset_unlisted && !file.complete {
+        return Err(anyhow!(
+            "--reset-unlisted requires a complete snapshot produced without --changed-only or --category"
         ));
     }
 
@@ -493,6 +506,18 @@ pub fn push_settings(
 
     if dry_run {
         return Ok(());
+    }
+
+    let reset_count = plan
+        .iter()
+        .filter(|action| matches!(action, PushAction::Reset { .. }))
+        .count();
+    if reset_count > 0 && !assume_yes {
+        return Err(anyhow!(
+            "refusing to reset {} unlisted setting{} without --yes; review the plan with --dry-run first",
+            reset_count,
+            if reset_count == 1 { "" } else { "s" }
+        ));
     }
 
     // Apply.

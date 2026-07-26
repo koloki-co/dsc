@@ -7,8 +7,8 @@ use crate::cli::{AdmonitionStyle, ListFormat};
 use crate::commands::common::{ensure_api_credentials, not_found, select_discourse};
 use crate::config::Config;
 use crate::utils::{
-    current_utc_iso8601, ensure_dir, normalize_baseurl, read_markdown, slugify, strip_frontmatter,
-    write_markdown, yaml_scalar,
+    current_utc_iso8601, ensure_dir, ensure_output_available, normalize_baseurl, read_markdown,
+    slugify, strip_frontmatter, write_markdown_output, yaml_scalar,
 };
 use anyhow::{Context, Result, anyhow};
 use std::collections::HashMap;
@@ -118,6 +118,7 @@ pub fn category_pull(
     local_path: Option<&Path>,
     admonition_style: Option<AdmonitionStyle>,
     rewrite_links: bool,
+    force: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -137,10 +138,10 @@ pub fn category_pull(
     };
     ensure_dir(&dir)?;
     let topics = category.topic_list.topics;
-    let local_paths = topics
-        .iter()
-        .map(|topic| (topic.id, format!("{}.md", slugify(&topic.title))))
-        .collect::<HashMap<_, _>>();
+    let local_paths = category_local_paths(&topics);
+    for filename in local_paths.values() {
+        ensure_output_available(&dir.join(filename), force)?;
+    }
     for topic in topics {
         let topic_detail = client.fetch_topic(topic.id, true)?;
         let raw = topic_detail
@@ -158,12 +159,33 @@ pub fn category_pull(
         } else {
             body
         };
-        let filename = format!("{}.md", slugify(&topic.title));
+        let filename = local_paths
+            .get(&topic.id)
+            .ok_or_else(|| anyhow!("missing local filename for topic {}", topic.id))?;
         let contents = render_category_topic(&topic, &discourse.baseurl, &body);
-        write_markdown(&dir.join(filename), &contents)?;
+        write_markdown_output(&dir.join(filename), &contents, force)?;
     }
     println!("{}", dir.display());
     Ok(())
+}
+
+fn category_local_paths(topics: &[TopicSummary]) -> HashMap<u64, String> {
+    let mut slug_counts: HashMap<String, usize> = HashMap::new();
+    for topic in topics {
+        *slug_counts.entry(slugify(&topic.title)).or_default() += 1;
+    }
+    topics
+        .iter()
+        .map(|topic| {
+            let slug = slugify(&topic.title);
+            let filename = if slug_counts.get(&slug).copied().unwrap_or(0) > 1 {
+                format!("{}-{}.md", slug, topic.id)
+            } else {
+                format!("{}.md", slug)
+            };
+            (topic.id, filename)
+        })
+        .collect()
 }
 
 /// Render one pulled topic as a Markdown document with YAML front matter
@@ -284,6 +306,8 @@ pub fn category_push(
         match topic_id {
             Some(id) => {
                 let detail = client.fetch_topic(id, true)?;
+                let listed_in_category = topics.iter().any(|topic| topic.id == id);
+                validate_topic_category(id, detail.category_id, category_id, listed_in_category)?;
                 let post = detail
                     .post_stream
                     .posts
@@ -333,6 +357,29 @@ pub fn category_push(
     }
 
     Ok(())
+}
+
+fn validate_topic_category(
+    topic_id: u64,
+    actual_category_id: Option<u64>,
+    target_category_id: u64,
+    listed_in_category: bool,
+) -> Result<()> {
+    match actual_category_id {
+        Some(actual) if actual == target_category_id => Ok(()),
+        Some(actual) => Err(anyhow!(
+            "topic {} belongs to category {}, not target category {}; refusing cross-category update",
+            topic_id,
+            actual,
+            target_category_id
+        )),
+        None if listed_in_category => Ok(()),
+        None => Err(anyhow!(
+            "cannot verify that topic {} belongs to target category {}; refusing update",
+            topic_id,
+            target_category_id
+        )),
+    }
 }
 
 /// Print the push plan using the same `~` (change) / `+` (create) /
@@ -1151,6 +1198,27 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn category_binding_rejects_cross_category_topic() {
+        let err = validate_topic_category(412, Some(9), 7, false).unwrap_err();
+        assert!(err.to_string().contains("belongs to category 9"));
+    }
+
+    #[test]
+    fn category_binding_allows_matching_or_listed_topic() {
+        validate_topic_category(412, Some(7), 7, false).unwrap();
+        validate_topic_category(412, None, 7, true).unwrap();
+        assert!(validate_topic_category(412, None, 7, false).is_err());
+    }
+
+    #[test]
+    fn category_pull_disambiguates_colliding_slugs_with_topic_ids() {
+        let topics = vec![summary(41, "Cafe", "cafe"), summary(42, "Café", "cafe-2")];
+        let paths = category_local_paths(&topics);
+        assert_eq!(paths.get(&41).unwrap(), "cafe-41.md");
+        assert_eq!(paths.get(&42).unwrap(), "cafe-42.md");
     }
 
     #[test]

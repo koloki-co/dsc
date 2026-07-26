@@ -5,8 +5,11 @@
 use crate::api::{DiscourseClient, PmTopicSummary, TopicResponse, UserAction};
 use crate::commands::common::{ensure_api_credentials, not_found, select_discourse};
 use crate::config::Config;
-use crate::utils::{current_utc_iso8601, ensure_dir, normalize_baseurl, slugify, write_markdown};
-use anyhow::{Context, Result};
+use crate::utils::{
+    atomic_write_private, current_utc_iso8601, ensure_private_dir, normalize_baseurl, slugify,
+    write_markdown_private,
+};
+use anyhow::Result;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::path::Path;
@@ -79,7 +82,7 @@ pub fn sar(
         return Ok(());
     }
 
-    ensure_dir(&dir)?;
+    ensure_private_dir(&dir)?;
 
     // Profile / PII (admin view) and the group memberships embedded in it.
     let admin_detail = client.fetch_admin_user_detail(subject.user_id)?;
@@ -98,7 +101,7 @@ pub fn sar(
         &[ACTION_NEW_TOPIC, ACTION_REPLY],
     )?;
     let posts_dir = dir.join("posts");
-    ensure_dir(&posts_dir)?;
+    ensure_private_dir(&posts_dir)?;
     let mut posts_json: Vec<Value> = Vec::with_capacity(post_actions.len());
     for action in &post_actions {
         let raw = action
@@ -111,7 +114,7 @@ pub fn sar(
                 .map(slugify)
                 .unwrap_or_else(|| "topic".to_string());
             let md = render_post_md(action, body, &base);
-            write_markdown(&posts_dir.join(format!("{}-{}.md", stem, pid)), &md)?;
+            write_markdown_private(&posts_dir.join(format!("{}-{}.md", stem, pid)), &md, true)?;
         }
         posts_json.push(json!({
             "post_id": action.post_id,
@@ -156,9 +159,10 @@ pub fn sar(
         has_ip,
     );
     write_json(&dir.join("manifest.json"), &manifest)?;
-    write_markdown(
+    write_markdown_private(
         &dir.join("README.md"),
         &render_readme(&subject, &discourse.name, &generated_at, include_messages),
+        true,
     )?;
 
     println!("SAR bundle written to {}", dir.display());
@@ -235,7 +239,7 @@ fn collect_all_actions(
 
 fn collect_messages(client: &DiscourseClient, username: &str, dir: &Path) -> Result<usize> {
     let msg_dir = dir.join("messages");
-    ensure_dir(&msg_dir)?;
+    ensure_private_dir(&msg_dir)?;
     let mut threads = client.list_private_messages(username, "inbox")?;
     threads.extend(client.list_private_messages(username, "sent")?);
 
@@ -251,9 +255,10 @@ fn collect_messages(client: &DiscourseClient, username: &str, dir: &Path) -> Res
             .as_deref()
             .map(slugify)
             .unwrap_or_else(|| "message".to_string());
-        write_markdown(
+        write_markdown_private(
             &msg_dir.join(format!("{}-{}.md", stem, pm.id)),
             &render_pm_md(&pm, &topic),
+            true,
         )?;
         count += 1;
     }
@@ -261,12 +266,8 @@ fn collect_messages(client: &DiscourseClient, username: &str, dir: &Path) -> Res
 }
 
 fn write_json(path: &Path, value: &Value) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        ensure_dir(parent)?;
-    }
     let text = serde_json::to_string_pretty(value)?;
-    std::fs::write(path, text).with_context(|| format!("writing {}", path.display()))?;
-    Ok(())
+    atomic_write_private(path, text, true)
 }
 
 fn date_part(iso: &str) -> String {

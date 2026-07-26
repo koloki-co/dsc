@@ -13,6 +13,7 @@
 //! (fail2ban / upgrades / timezone / swap / docker / ufw) lands in a
 //! follow-up commit.
 
+use crate::commands::common::{shell_quote, validate_ssh_target};
 use crate::config::HardenConfig;
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
@@ -616,6 +617,8 @@ fn assert_is_root(whoami: &str, dry_run: bool) -> Result<()> {
 /// returns an empty string — callers must tolerate that (preflight
 /// assertions above do so).
 fn ssh_run(target: &SshTarget, command: &str, dry_run: bool) -> Result<String> {
+    validate_ssh_target(&target.user).context("invalid SSH user")?;
+    validate_ssh_target(&target.host).context("invalid SSH host")?;
     if dry_run {
         eprintln!("[dry-run] ssh {} -- {}", target.as_arg(), oneline(command));
         return Ok(String::new());
@@ -644,11 +647,6 @@ fn ssh_run(target: &SshTarget, command: &str, dry_run: bool) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-/// Shell-safe single-quote wrapper. Replaces every `'` with `'\''`.
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
-}
-
 /// Flatten a multi-line command for dry-run display.
 fn oneline(s: &str) -> String {
     let compact = s
@@ -667,16 +665,6 @@ fn oneline(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn shell_quote_simple() {
-        assert_eq!(shell_quote("hello"), "'hello'");
-    }
-
-    #[test]
-    fn shell_quote_embeds_single_quotes_safely() {
-        assert_eq!(shell_quote("a'b"), r"'a'\''b'");
-    }
 
     #[test]
     fn recognises_common_ssh_key_types() {

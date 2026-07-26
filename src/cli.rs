@@ -579,7 +579,7 @@ impl Commands {
             } => Some("dsc theme pull"),
             Commands::Theme {
                 command: ThemeCommand::Push { .. },
-            } => Some("dsc theme push"),
+            } => None,
             Commands::Theme {
                 command: ThemeCommand::Duplicate { .. },
             } => Some("dsc theme duplicate"),
@@ -746,6 +746,9 @@ pub enum TopicCommand {
         /// expects.
         #[arg(long, short = 'F')]
         full: bool,
+        /// Replace an existing destination file.
+        #[arg(long)]
+        force: bool,
     },
     /// Push a local Markdown file to a topic.
     #[command(visible_alias = "ps")]
@@ -940,6 +943,9 @@ pub enum CategoryCommand {
         /// Rewrite same-category forum links to local Markdown paths.
         #[arg(long)]
         rewrite_links: bool,
+        /// Replace existing Markdown files in the destination directory.
+        #[arg(long)]
+        force: bool,
     },
     /// Push local Markdown files into a category.
     #[command(visible_alias = "ps")]
@@ -1026,6 +1032,9 @@ pub enum CategoryDefCommand {
         /// Destination file (defaults to categories.yaml).
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
+        /// Replace an existing destination file.
+        #[arg(long)]
+        force: bool,
     },
     /// Apply a category-definition file to a Discourse (upsert; never deletes).
     #[command(visible_alias = "ps")]
@@ -1135,6 +1144,9 @@ pub enum BackupCommand {
         /// Local output path. Defaults to the backup filename in the current directory.
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
+        /// Replace an existing destination file.
+        #[arg(long)]
+        force: bool,
     },
     /// Push (restore) a backup on the server (alias: restore).
     #[command(visible_alias = "ps", alias = "restore")]
@@ -1192,6 +1204,9 @@ pub enum PaletteCommand {
         /// Destination file path (auto-derived when omitted).
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
+        /// Replace an existing destination file.
+        #[arg(long)]
+        force: bool,
     },
     /// Push local JSON to create or update a palette.
     #[command(visible_alias = "ps")]
@@ -1296,6 +1311,9 @@ pub enum ThemeCommand {
         /// Destination file path (auto-derived from theme name when omitted).
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
+        /// Replace an existing destination file.
+        #[arg(long)]
+        force: bool,
     },
     /// Push a local JSON file to create or update a theme.
     #[command(visible_alias = "ps")]
@@ -1307,6 +1325,9 @@ pub enum ThemeCommand {
         local_path: PathBuf,
         /// Theme ID to update (creates a new theme when omitted).
         theme_id: Option<u64>,
+        /// Confirm updating an existing live theme after reviewing `--dry-run`.
+        #[arg(long)]
+        yes: bool,
     },
     /// Duplicate a theme and print the new theme ID.
     #[command(visible_alias = "dup")]
@@ -1433,6 +1454,9 @@ pub enum ThemeFieldCommand {
         /// Destination file (auto-derived from the field name when omitted).
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
+        /// Replace an existing destination file.
+        #[arg(long)]
+        force: bool,
     },
     /// Push a file back to one field. Honours global `--dry-run`.
     Push {
@@ -1445,6 +1469,9 @@ pub enum ThemeFieldCommand {
         /// File whose contents become the field body.
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
+        /// Confirm updating the live field after reviewing `--dry-run`.
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -1534,6 +1561,9 @@ pub enum ThemeSettingCommand {
         /// Destination file (auto-derived from the theme name when omitted).
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
+        /// Replace an existing destination file.
+        #[arg(long)]
+        force: bool,
     },
     /// Push a settings file back, PUTting only the changed settings. Honours
     /// global `--dry-run`.
@@ -2013,6 +2043,9 @@ pub enum PostCommand {
         /// Output file path. Prints to stdout when omitted.
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
+        /// Replace an existing destination file.
+        #[arg(long)]
+        force: bool,
     },
     /// Push a local file to update a post (alias: edit).
     #[command(visible_alias = "ps", alias = "edit")]
@@ -2070,6 +2103,9 @@ pub enum TagCommand {
             value_hint = ValueHint::FilePath
         )]
         local_path: PathBuf,
+        /// Replace an existing destination file.
+        #[arg(long)]
+        force: bool,
     },
     /// Push a local taxonomy file to the server (upsert; optionally prune).
     #[command(visible_alias = "ps")]
@@ -2082,6 +2118,9 @@ pub enum TagCommand {
         /// Delete server tags/groups absent from the file.
         #[arg(long)]
         prune: bool,
+        /// Confirm deletions planned by `--prune` after reviewing `--dry-run`.
+        #[arg(long)]
+        yes: bool,
     },
     /// Rename a tag, preserving topic associations.
     ///
@@ -2172,6 +2211,9 @@ pub enum SettingCommand {
         /// `security`).
         #[arg(long)]
         category: Option<String>,
+        /// Replace an existing destination file.
+        #[arg(long)]
+        force: bool,
     },
 
     /// Apply a settings snapshot file to a Discourse (idempotent).
@@ -2190,6 +2232,9 @@ pub enum SettingCommand {
         /// only the values you care about).
         #[arg(long)]
         reset_unlisted: bool,
+        /// Confirm resets planned by `--reset-unlisted` after reviewing `--dry-run`.
+        #[arg(long)]
+        yes: bool,
     },
 
     /// Compare site settings between two sources.
@@ -2543,10 +2588,6 @@ mod tests {
                 "dsc theme palette push",
             ),
             (&["dsc", "theme", "pull", "forum", "1"], "dsc theme pull"),
-            (
-                &["dsc", "theme", "push", "forum", "theme.json"],
-                "dsc theme push",
-            ),
             (
                 &["dsc", "theme", "duplicate", "forum", "1"],
                 "dsc theme duplicate",

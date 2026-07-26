@@ -132,6 +132,7 @@ fn theme_pull_push() {
             &test.name,
             json_path.to_str().unwrap(),
             &theme_id.to_string(),
+            "--yes",
         ],
         &config_path,
     );
