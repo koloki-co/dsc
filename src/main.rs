@@ -468,6 +468,13 @@ fn main() -> Result<()> {
             } => commands::category_def::category_set(
                 &config, &discourse, &category, &field, &value, dry_run,
             ),
+            CategoryCommand::Rename {
+                discourse,
+                category,
+                new_name,
+            } => commands::category_def::category_rename(
+                &config, &discourse, &category, &new_name, dry_run,
+            ),
         },
 
         Commands::Group { command } => match command {

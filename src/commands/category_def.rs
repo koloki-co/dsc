@@ -666,6 +666,75 @@ pub fn category_set(
     Ok(())
 }
 
+/// Resolve and validate a rename against the server's current category
+/// definitions. Pure (no network): looks up `category` by id/slug/name,
+/// rejects an empty/identical new name, and rejects a new name already used
+/// by a *different* category. Returns `(id, old_name, normalised_new_name)`.
+fn plan_rename(
+    defs: &[CategoryDefinition],
+    category: &str,
+    new_name: &str,
+) -> Result<(u64, String, String)> {
+    let new_norm = new_name.trim();
+    if new_norm.is_empty() {
+        return Err(anyhow!("new category name is empty"));
+    }
+
+    let def = find_def(defs, category)?;
+    let id = def.id.ok_or_else(|| not_found("category", category))?;
+    let old_name = def.name.clone();
+
+    if old_name == new_norm {
+        return Err(anyhow!(
+            "old and new category names are identical: '{}'",
+            old_name
+        ));
+    }
+    if defs.iter().any(|d| d.id != Some(id) && d.name == new_norm) {
+        return Err(anyhow!(
+            "cannot rename to '{}': a category with that name already exists",
+            new_norm
+        ));
+    }
+
+    Ok((id, old_name, new_norm.to_string()))
+}
+
+/// Rename a category, preserving its topics: a safe `PUT /categories/{id}`
+/// by resolved id, in contrast to editing `name` in a no-`id` file entry and
+/// running `def push`, which cannot tell a rename from a delete+create.
+pub fn category_rename(
+    config: &Config,
+    discourse_name: &str,
+    category: &str,
+    new_name: &str,
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+
+    let defs = client.fetch_category_definitions()?;
+    let (id, old_name, new_norm) = plan_rename(&defs, category, new_name)?;
+
+    if dry_run {
+        println!(
+            "[dry-run] would rename category '{}' -> '{}' on '{}' (id {})",
+            old_name, new_norm, discourse_name, id
+        );
+        return Ok(());
+    }
+
+    client
+        .update_category(id, &[("name".to_string(), new_norm.clone())])
+        .with_context(|| format!("renaming category '{}'", old_name))?;
+    println!(
+        "Renamed category '{}' -> '{}' (id {})",
+        old_name, new_norm, id
+    );
+    Ok(())
+}
+
 fn parse_bool(value: &str) -> Result<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" | "1" | "on" => Ok(true),
@@ -901,6 +970,67 @@ mod tests {
     fn set_params_list_clears_on_empty() {
         let params = field_to_set_params("allowed_tags", "", &BTreeMap::new()).unwrap();
         assert_eq!(params, vec![("allowed_tags[]".to_string(), String::new())]);
+    }
+
+    fn def(id: u64, name: &str) -> CategoryDefinition {
+        CategoryDefinition {
+            id: Some(id),
+            name: name.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn rename_plans_by_resolved_id() {
+        let defs = vec![def(3, "General"), def(7, "Off Topic")];
+        let (id, old, new) = plan_rename(&defs, "3", "Announcements").unwrap();
+        assert_eq!(id, 3);
+        assert_eq!(old, "General");
+        assert_eq!(new, "Announcements");
+    }
+
+    #[test]
+    fn rename_resolves_by_name_and_trims_new_name() {
+        let defs = vec![def(3, "General")];
+        let (id, _, new) = plan_rename(&defs, "General", "  Announcements  ").unwrap();
+        assert_eq!(id, 3);
+        assert_eq!(new, "Announcements");
+    }
+
+    #[test]
+    fn rename_rejects_unknown_category() {
+        let defs = vec![def(3, "General")];
+        assert!(plan_rename(&defs, "nope", "New Name").is_err());
+    }
+
+    #[test]
+    fn rename_rejects_empty_new_name() {
+        let defs = vec![def(3, "General")];
+        let err = plan_rename(&defs, "3", "   ").unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn rename_rejects_identical_names() {
+        let defs = vec![def(3, "General")];
+        let err = plan_rename(&defs, "3", "General").unwrap_err();
+        assert!(err.to_string().contains("identical"));
+    }
+
+    #[test]
+    fn rename_rejects_name_already_used_by_another_category() {
+        let defs = vec![def(3, "General"), def(7, "Off Topic")];
+        let err = plan_rename(&defs, "3", "Off Topic").unwrap_err();
+        assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn rename_allows_case_change_only_via_self_match() {
+        // Renaming a category to its own current name (post-trim) is still
+        // treated as "identical", not as a self-collision error.
+        let defs = vec![def(3, "General")];
+        let err = plan_rename(&defs, "3", " General ").unwrap_err();
+        assert!(err.to_string().contains("identical"));
     }
 
     #[test]
