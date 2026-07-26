@@ -5,6 +5,24 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.12.0] - 2026-07-26
+
+### Bug fixes
+
+- Address R40-R51 stability and security audit findings ([abebc2a](https://github.com/pacharanero/dsc/commit/abebc2a4bc4867fceb9040ed1b96beb11e43de3f))
+
+### Build
+
+- **deps**: Bump zensical in the routine-minor-and-patch group ([#62](https://github.com/pacharanero/dsc/issues/62)) ([74328fc](https://github.com/pacharanero/dsc/commit/74328fc08959ee8ac711c00b4aabb7fe260f156f))
+
+### CI
+
+- Upload only files as release assets ([7c36e72](https://github.com/pacharanero/dsc/commit/7c36e72cb9322fbef6709d9ae4e3c193c5802842))
+
+### Features
+
+- **category**: Add category rename command ([32296fb](https://github.com/pacharanero/dsc/commit/32296fb08885d5357c5b5a65c98a0d71bc8cb974))
+
 ## [0.11.0] - 2026-07-25
 
 ### Bug fixes
