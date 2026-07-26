@@ -391,9 +391,14 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 
 ### Phase 2 — iteration ergonomics
 
-- [ ] `dsc category rename <discourse> <category> <new-name>` — safe rename via
+- [x] `dsc category rename <discourse> <category> <new-name>` — safe rename via
   `PUT /categories/{id}` (preserves topics); mirrors `tag rename`. The
-  recommended path for no-`id` files.
+  recommended path for no-`id` files. **Status: implemented (unreleased).**
+  Resolves `<category>` by id/slug/name (same as `show`/`get`/`set`); rejects
+  an unresolvable category, an empty/identical new name, and a new name
+  already used by a different category; `--dry-run` prints the planned
+  rename. `src/commands/category_def.rs` (`plan_rename`, `category_rename`);
+  unit-tested (no live test, matching `tag rename`'s coverage).
 - [ ] `--append` / `--remove` for list fields on `category set` (`allowed_tags`,
   `allowed_tag_groups`).
 - [ ] `required_tag_groups` round-trip (list of `{name, min_tags}`).

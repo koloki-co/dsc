@@ -1013,6 +1013,20 @@ pub enum CategoryCommand {
         /// comma-separated list; for permissions use `group:level,...`.
         value: String,
     },
+    /// Rename a category, preserving its topics.
+    ///
+    /// Uses a safe `PUT /categories/{id}` by resolved id — the recommended
+    /// path for a no-`id` `categories.yaml` entry, where `def push` cannot
+    /// tell a rename from a delete+create.
+    #[command(visible_alias = "rn")]
+    Rename {
+        /// Discourse name.
+        discourse: String,
+        /// Category ID, slug, or name.
+        category: String,
+        /// New category name.
+        new_name: String,
+    },
 }
 
 #[derive(Subcommand)]

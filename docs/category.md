@@ -129,7 +129,7 @@ dsc category def push <discourse> <categories.yaml>   # apply the file (upsert; 
 ```
 
 - `def pull` writes one `categories.yaml` (or `.json` by extension) holding every category's definition - name, slug, colour, position, parent, `read_restricted`, description, topic template, permissions, tag rules, and display knobs. Usage counts and other volatile fields are dropped so re-pulls diff cleanly.
-- `def push` reconciles the server toward the file: it **creates** missing categories and **updates** changed ones, matching by `id` (stable), then `slug`, then `name`. It never deletes. `--dry-run` prints the plan with `+` (create), `~` (update), `=` (unchanged) sigils. A file entry with no `id` that matches nothing is flagged loudly - it would create a new category, so if you meant to rename an existing one, keep its `id` in the file to preserve its topics.
+- `def push` reconciles the server toward the file: it **creates** missing categories and **updates** changed ones, matching by `id` (stable), then `slug`, then `name`. It never deletes. `--dry-run` prints the plan with `+` (create), `~` (update), `=` (unchanged) sigils. A file entry with no `id` that matches nothing is flagged loudly - it would create a new category, so if you meant to rename an existing one, keep its `id` in the file to preserve its topics, or use `dsc category rename` below.
 - The push is idempotent: a pull followed by a push with no edits reports every category `= unchanged`.
 
 ### Single-field access
@@ -152,3 +152,23 @@ Notes:
 
 - `description` is read from the plain-text form; on write, Discourse re-cooks it as the category's "About" topic excerpt (settles a moment after a create).
 - When `def push` creates a category whose `parent` is itself brand-new in the same file, run the push twice (or create the parent first) - a parent is resolved against categories that already exist on the server.
+
+## dsc category rename
+
+Rename a category, preserving its topics. Uses a safe `PUT /categories/{id}.json` by the resolved category id - the recommended path when a `categories.yaml` entry has no `id`, since `def push` can't tell a rename from a delete+create in that case (see the note above).
+
+```bash
+dsc category rename myforum old-name new-name        # rename
+dsc -n category rename myforum old-name new-name     # dry-run
+```
+
+`<category>` resolves by `id`, `slug`, or `name`, same as `show`/`get`/`set`.
+
+Aliases: `rn`.
+
+Refuses to run when:
+
+- the category does not resolve (bad id/slug/name),
+- a different category already has the new name,
+- old and new names are identical after trimming,
+- the new name is empty after trimming.
