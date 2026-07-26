@@ -6,7 +6,7 @@ use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
 use crate::config::Config;
-use crate::utils::slugify;
+use crate::utils::{atomic_write, slugify};
 use anyhow::{Context, Result, anyhow};
 use base64::Engine;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -62,7 +62,7 @@ pub fn pull_emojis(config: &Config, discourse_name: &str, output_dir: &Path) -> 
                 }
             })
             .unwrap_or_else(|| "png".to_string());
-        let dest = output_dir.join(format!("{}.{}", emoji.name, ext));
+        let dest = output_dir.join(emoji_filename(&emoji.name, &ext));
 
         if dest.exists() {
             skipped += 1;
@@ -79,7 +79,7 @@ pub fn pull_emojis(config: &Config, discourse_name: &str, output_dir: &Path) -> 
         match http.get(&url).send() {
             Ok(resp) if resp.status().is_success() => match resp.bytes() {
                 Ok(bytes) => {
-                    if let Err(e) = fs::write(&dest, &bytes) {
+                    if let Err(e) = atomic_write(&dest, &bytes, false) {
                         eprintln!("Failed to write {}: {}", dest.display(), e);
                         failed += 1;
                     } else {
@@ -108,7 +108,14 @@ pub fn pull_emojis(config: &Config, discourse_name: &str, output_dir: &Path) -> 
         "Emoji pull complete: {} downloaded, {} skipped (existing), {} failed",
         downloaded, skipped, failed
     );
+    if failed > 0 {
+        return Err(anyhow!("{} emoji download(s) failed", failed));
+    }
     Ok(())
+}
+
+fn emoji_filename(name: &str, extension: &str) -> String {
+    format!("{}.{}", slugify(name), extension)
 }
 
 pub fn add_emoji(
@@ -420,7 +427,7 @@ fn is_duplicate_emoji_error(err: &anyhow::Error) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{emoji_name_from_path, is_duplicate_emoji_error};
+    use super::{emoji_filename, emoji_name_from_path, is_duplicate_emoji_error};
     use anyhow::anyhow;
     use std::path::Path;
 
@@ -442,6 +449,14 @@ mod tests {
         assert_eq!(
             emoji_name_from_path(Path::new("My Cool Emoji.png")).unwrap(),
             "my-cool-emoji"
+        );
+    }
+
+    #[test]
+    fn pulled_emoji_filename_cannot_traverse_directories() {
+        assert_eq!(
+            emoji_filename("../../authorized_keys", "png"),
+            "authorized-keys.png"
         );
     }
 

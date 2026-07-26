@@ -54,15 +54,16 @@ See [spec/commands/setting-sync.md](https://github.com/pacharanero/dsc/blob/main
 ## dsc setting push
 
 ```
-dsc setting push <discourse> <path> [--reset-unlisted] [--dry-run]
+dsc setting push <discourse> <path> [--reset-unlisted] [--dry-run] [--yes]
 ```
 
 Apply a settings snapshot file to a Discourse. Idempotent: only PUTs values that differ from the current server state.
 
 - Reads YAML or JSON (detected by extension).
 - Settings present in the file but unknown on the server are skipped with a warning (handles version drift).
-- `--reset-unlisted`: for settings present on the server but absent from the file, reset them to their default value. Off by default - the file describes only the values you care about.
+- `--reset-unlisted`: for settings present on the server but absent from the file, reset them to their default value. Off by default - the file describes only the values you care about. Because resetting the wrong settings is destructive (it can wipe auth providers, login methods, or SSO config), this flag requires a *complete* snapshot - one pulled without `--changed-only` or `--category` - and refuses to run otherwise. When the plan contains any reset, the push also requires `--yes` after you have reviewed it with `--dry-run`.
 - `--dry-run` (`-n`): print the plan without applying. Output uses `~` for change, `=` for unchanged, `?` for unknown, `-` for reset-to-default.
+- `--yes`: confirm a plan that contains reset-to-default actions (see `--reset-unlisted`). Not needed for plans that only change or add values.
 
 Example dry-run output:
 

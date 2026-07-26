@@ -197,16 +197,16 @@ impl DiscourseClient {
         match self.get("/about.json") {
             Ok(response) => {
                 let status = response.status();
-                match response.json::<AboutResponse>() {
-                    Ok(body) => {
-                        if status.is_success() {
+                if !status.is_success() {
+                    last_err = Some(anyhow!("about.json request failed with {}", status));
+                } else {
+                    match response.json::<AboutResponse>() {
+                        Ok(body) => {
                             version = body.about.version.or(body.about.installed_version);
-                        } else {
-                            last_err = Some(anyhow!("about.json request failed with {}", status));
                         }
-                    }
-                    Err(err) => {
-                        last_err = Some(anyhow!("reading about.json: {}", err));
+                        Err(err) => {
+                            last_err = Some(anyhow!("reading about.json: {}", err));
+                        }
                     }
                 }
             }
@@ -330,4 +330,46 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
         .position(|window| window == needle)
+}
+
+/// Convert Discourse's extensionless continuation URLs to JSON endpoints and
+/// reject absolute or otherwise untrusted paths.
+pub(super) fn json_page_path(path: &str) -> Result<String> {
+    if !path.starts_with('/') || path.starts_with("//") || path.contains('#') {
+        return Err(anyhow!("invalid pagination URL from Discourse: {}", path));
+    }
+    let (route, query) = path.split_once('?').unwrap_or((path, ""));
+    let route = if route.ends_with(".json") {
+        route.to_string()
+    } else {
+        format!("{}.json", route.trim_end_matches('/'))
+    };
+    if query.is_empty() {
+        Ok(route)
+    } else {
+        Ok(format!("{}?{}", route, query))
+    }
+}
+
+#[cfg(test)]
+mod pagination_tests {
+    use super::json_page_path;
+
+    #[test]
+    fn converts_extensionless_pagination_paths() {
+        assert_eq!(
+            json_page_path("/c/support/6?page=1").unwrap(),
+            "/c/support/6.json?page=1"
+        );
+        assert_eq!(
+            json_page_path("/latest.json?page=2").unwrap(),
+            "/latest.json?page=2"
+        );
+    }
+
+    #[test]
+    fn rejects_untrusted_pagination_urls() {
+        assert!(json_page_path("https://attacker.example/page").is_err());
+        assert!(json_page_path("//attacker.example/page").is_err());
+    }
 }

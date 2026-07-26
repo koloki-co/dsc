@@ -6,6 +6,7 @@ use crate::api::{DiscourseClient, TagGroupInfo};
 use crate::cli::ListFormat;
 use crate::commands::common::{ensure_api_credentials, not_found, select_discourse};
 use crate::config::Config;
+use crate::utils::atomic_write;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -196,6 +197,10 @@ fn validate_rename_names(old: &str, new: &str) -> Result<(String, String)> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TaxonomyFile {
     pub version: u32,
+    /// False when the pull could not read admin-only tag groups. Incomplete
+    /// snapshots cannot safely drive `--prune`.
+    #[serde(default)]
+    pub complete: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<TagEntry>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -230,7 +235,12 @@ fn is_false(v: &bool) -> bool {
 
 // ─── Pull ─────────────────────────────────────────────────────────────────────
 
-pub fn tag_pull(config: &Config, discourse_name: &str, local_path: &Path) -> Result<()> {
+pub fn tag_pull(
+    config: &Config,
+    discourse_name: &str,
+    local_path: &Path,
+    force: bool,
+) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
@@ -249,7 +259,7 @@ pub fn tag_pull(config: &Config, discourse_name: &str, local_path: &Path) -> Res
     tag_entries.sort_by(|a, b| a.name.cmp(&b.name));
 
     // Attempt tag groups (admin-only)
-    let tag_groups = match client.list_tag_groups()? {
+    let (tag_groups, complete) = match client.list_tag_groups()? {
         Some(groups) => {
             let group_names_by_id = group_names_by_id(&client)?;
             let mut entries: Vec<TagGroupEntry> = groups
@@ -274,18 +284,19 @@ pub fn tag_pull(config: &Config, discourse_name: &str, local_path: &Path) -> Res
                 })
                 .collect::<Result<_>>()?;
             entries.sort_by(|a, b| a.name.cmp(&b.name));
-            entries
+            (entries, true)
         }
         None => {
             eprintln!(
                 "Warning: tag groups not accessible (requires admin API key); omitting from output."
             );
-            Vec::new()
+            (Vec::new(), false)
         }
     };
 
     let taxonomy = TaxonomyFile {
         version: 1,
+        complete,
         tags: tag_entries,
         tag_groups,
     };
@@ -296,7 +307,7 @@ pub fn tag_pull(config: &Config, discourse_name: &str, local_path: &Path) -> Res
         serde_yaml::to_string(&taxonomy).context("serializing taxonomy as YAML")?
     };
 
-    fs::write(local_path, &content).with_context(|| format!("writing {}", local_path.display()))?;
+    atomic_write(local_path, &content, force)?;
     println!("Wrote taxonomy to {}", local_path.display());
     Ok(())
 }
@@ -483,6 +494,7 @@ pub fn tag_push(
     local_path: &Path,
     prune: bool,
     dry_run: bool,
+    assume_yes: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -498,6 +510,18 @@ pub fn tag_push(
 
     if taxonomy.version != 1 {
         anyhow::bail!("unsupported taxonomy file version: {}", taxonomy.version);
+    }
+
+    // A snapshot pulled without admin tag-group access (`complete: false`) does
+    // not list the site's tag groups, so it cannot tell "absent because deleted"
+    // from "absent because never captured". Pruning against it would delete tag
+    // groups that were simply invisible to the pull. Refuse rather than guess.
+    if prune && !taxonomy.complete {
+        anyhow::bail!(
+            "refusing to --prune from an incomplete taxonomy snapshot (complete: false); \
+             it was pulled without admin tag-group access, so pruning could delete tag \
+             groups that were never captured. Re-pull with an admin API key, or drop --prune."
+        );
     }
 
     // The file's tags arrive in two forms: explicit `tags:` entries (each may
@@ -633,6 +657,15 @@ pub fn tag_push(
 
         println!("[dry-run] No changes applied.");
         return Ok(());
+    }
+
+    let deletion_count = tag_plan.to_delete.len() + groups_to_delete.len();
+    if deletion_count > 0 && !assume_yes {
+        anyhow::bail!(
+            "refusing to delete {} tag/tag-group object{} without --yes; review the plan with --dry-run first",
+            deletion_count,
+            if deletion_count == 1 { "" } else { "s" }
+        );
     }
 
     // ── Apply, groups first so their tags are materialised ────────────────────

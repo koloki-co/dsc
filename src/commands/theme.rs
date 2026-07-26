@@ -4,10 +4,12 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::{emit_result, ensure_api_credentials, not_found, select_discourse};
+use crate::commands::common::{
+    emit_result, ensure_api_credentials, not_found, render_shell_template, select_discourse,
+};
 use crate::commands::update::run_ssh_command;
 use crate::config::{Config, DiscourseConfig};
-use crate::utils::slugify;
+use crate::utils::{atomic_write_private, slugify};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -219,7 +221,7 @@ pub fn theme_remove(
                 "missing DSC_SSH_THEME_REMOVE_CMD for theme remove; set DSC_SSH_THEME_REMOVE_CMD to your remove command"
             )
         })?;
-    let command = render_template(&template, &[("name", name), ("url", name)]);
+    let command = render_shell_template(&template, &[("name", name), ("url", name)]);
     if dry_run {
         println!("[dry-run] would run on {}: {}", target, command);
         return Ok(());
@@ -238,6 +240,7 @@ pub fn theme_pull(
     discourse_name: &str,
     theme_id: u64,
     local_path: Option<&Path>,
+    force: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -263,13 +266,7 @@ pub fn theme_pull(
     };
 
     let content = serde_json::to_string_pretty(theme).context("serializing theme to JSON")?;
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
-    }
-    std::fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
+    atomic_write_private(&path, content, force)?;
     println!("{}", path.display());
     Ok(())
 }
@@ -280,6 +277,8 @@ pub fn theme_push(
     discourse_name: &str,
     json_path: &Path,
     theme_id: Option<u64>,
+    dry_run: bool,
+    assume_yes: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -299,12 +298,39 @@ pub fn theme_push(
 
     let push_data = build_push_payload(&theme);
 
-    let target_id = theme_id.or_else(|| theme.get("id").and_then(|v| v.as_u64()));
-
-    if let Some(id) = target_id {
+    if let Some(id) = theme_id {
+        let current = client.fetch_theme(id)?;
+        let current = extract_theme(&current);
+        let name = current
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        if dry_run {
+            println!(
+                "[dry-run] {}: would update theme {} (\"{}\") from {}",
+                discourse.name,
+                id,
+                name,
+                json_path.display()
+            );
+            return Ok(());
+        }
+        if !assume_yes {
+            return Err(anyhow!(
+                "refusing to update live theme {} (\"{}\") without --yes; review with --dry-run first",
+                id,
+                name
+            ));
+        }
         client.update_theme(id, &push_data)?;
         println!("{}", id);
     } else {
+        if let Some(file_id) = theme.get("id").and_then(Value::as_u64) {
+            return Err(anyhow!(
+                "theme file contains id {}; pass that ID explicitly to update, or remove id to create a new theme",
+                file_id
+            ));
+        }
         if push_data
             .get("name")
             .and_then(|v| v.as_str())
@@ -314,6 +340,19 @@ pub fn theme_push(
             return Err(anyhow!(
                 "missing name in theme file; set name or pass a theme ID to update"
             ));
+        }
+        if dry_run {
+            let name = push_data
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            println!(
+                "[dry-run] {}: would create theme \"{}\" from {}",
+                discourse.name,
+                name,
+                json_path.display()
+            );
+            return Ok(());
         }
         let new_id = client.create_theme(&push_data)?;
         println!("{}", new_id);
@@ -375,14 +414,6 @@ fn ssh_target(discourse: &DiscourseConfig) -> String {
         .ssh_host
         .clone()
         .unwrap_or_else(|| discourse.name.clone())
-}
-
-fn render_template(template: &str, replacements: &[(&str, &str)]) -> String {
-    let mut out = template.to_string();
-    for (key, value) in replacements {
-        out = out.replace(&format!("{{{}}}", key), value);
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -637,6 +668,7 @@ pub fn theme_setting_pull(
     discourse_name: &str,
     theme_id: u64,
     local_path: Option<&Path>,
+    force: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -693,13 +725,7 @@ pub fn theme_setting_pull(
     } else {
         serde_yaml::to_string(&file).context("serializing theme settings as YAML")?
     };
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
-    }
-    std::fs::write(&path, &content).with_context(|| format!("writing {}", path.display()))?;
+    atomic_write_private(&path, &content, force)?;
 
     let n = file.settings.len();
     println!(
@@ -793,7 +819,6 @@ pub fn theme_setting_push(
         }
         return Ok(());
     }
-
     for (name, _from, to) in &changes {
         client.set_theme_setting(theme_id, name, to)?;
         println!("  set {}", name);
@@ -963,6 +988,7 @@ pub fn theme_field_pull(
     theme_id: u64,
     field_spec: &str,
     local_path: Option<&Path>,
+    force: bool,
 ) -> Result<()> {
     let (target, name) = split_target_name(field_spec);
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -1000,13 +1026,7 @@ pub fn theme_field_pull(
                 .join(format!("{}.{}", base, field_extension(type_id)))
         }
     };
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
-    }
-    std::fs::write(&path, value).with_context(|| format!("writing {}", path.display()))?;
+    atomic_write_private(&path, value, force)?;
     println!(
         "Wrote {} ({} bytes) to {}",
         field_spec,
@@ -1025,6 +1045,7 @@ pub fn theme_field_push(
     field_spec: &str,
     local_path: &Path,
     dry_run: bool,
+    assume_yes: bool,
 ) -> Result<()> {
     let (target, name) = split_target_name(field_spec);
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -1080,6 +1101,13 @@ pub fn theme_field_push(
             new_value.len()
         );
         return Ok(());
+    }
+    if !assume_yes {
+        return Err(anyhow!(
+            "refusing to update live theme {} field {} without --yes; review with --dry-run first",
+            theme_id,
+            field_spec
+        ));
     }
 
     // A single-entry `theme_fields` array upserts just this field, leaving the

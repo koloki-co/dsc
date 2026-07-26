@@ -10,7 +10,7 @@ use crate::commands::common::{emit_result, ensure_api_credentials, select_discou
 use crate::config::Config;
 use crate::utils::{
     current_utc_iso8601, read_markdown, resolve_topic_path, slugify, strip_frontmatter,
-    write_markdown, yaml_scalar,
+    write_markdown, write_markdown_output, yaml_scalar,
 };
 use anyhow::{Context, Result, anyhow};
 use serde_json::json;
@@ -24,6 +24,7 @@ pub fn topic_pull(
     topic_id: u64,
     local_path: Option<&Path>,
     full: bool,
+    force: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -34,7 +35,7 @@ pub fn topic_pull(
         let title = topic_display_title(&topic, topic_id);
         let body = render_full_thread(&topic, topic_id, &discourse.baseurl);
         let target = resolve_topic_path(local_path, &title, &std::env::current_dir()?)?;
-        write_markdown(&target, &body)?;
+        write_markdown_output(&target, &body, force)?;
         println!(
             "Topic pulled (full thread, {} posts) to: {}",
             topic.post_stream.posts.len(),
@@ -52,7 +53,7 @@ pub fn topic_pull(
         .ok_or_else(|| anyhow!("topic has no raw content"))?;
     let title = topic_display_title(&topic, topic_id);
     let target = resolve_topic_path(local_path, &title, &std::env::current_dir()?)?;
-    write_markdown(&target, &raw)?;
+    write_markdown_output(&target, &raw, force)?;
     println!("Topic pulled to: {}", target.display());
     Ok(())
 }
@@ -588,6 +589,7 @@ mod tests {
             title: title.map(|s| s.to_string()),
             slug: Some("hello-world".to_string()),
             posts_count: None,
+            category_id: None,
             post_stream: PostStream { posts, stream },
         }
     }
@@ -635,6 +637,7 @@ mod tests {
             title: Some("  ".to_string()),
             slug: Some("my-slug".to_string()),
             posts_count: None,
+            category_id: None,
             post_stream: PostStream::default(),
         };
         assert_eq!(topic_display_title(&t2, 42), "my-slug");
@@ -644,6 +647,7 @@ mod tests {
             title: None,
             slug: None,
             posts_count: None,
+            category_id: None,
             post_stream: PostStream::default(),
         };
         assert_eq!(topic_display_title(&t3, 42), "topic-42");

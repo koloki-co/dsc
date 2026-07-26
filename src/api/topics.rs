@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, json_page_path};
 use super::error::http_error;
 use super::models::{CreatePostResponse, TopicResponse};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PostInfo {
@@ -359,23 +360,44 @@ impl DiscourseClient {
             "new" => format!("/topics/private-messages-new/{}.json", username),
             other => format!("/topics/private-messages-{}/{}.json", other, username),
         };
-        let response = self.get(&path)?;
-        let status = response.status();
-        let text = response.text().context("reading PM list response")?;
-        if !status.is_success() {
-            return Err(http_error("PM list request", status, &text));
+        let mut topics = Vec::new();
+        let mut seen_topics = HashSet::new();
+        let mut seen_paths = HashSet::new();
+        let mut next = Some(path);
+        while let Some(path) = next {
+            if !seen_paths.insert(path.clone()) {
+                return Err(anyhow!(
+                    "private-message pagination loop detected: {}",
+                    path
+                ));
+            }
+            let path = json_page_path(&path)?;
+            let response = self.get(&path)?;
+            let status = response.status();
+            let text = response.text().context("reading PM list response")?;
+            if !status.is_success() {
+                return Err(http_error("PM list request", status, &text));
+            }
+            let value: Value = serde_json::from_str(&text).context("parsing PM list response")?;
+            let topic_list = value
+                .get("topic_list")
+                .ok_or_else(|| anyhow!("PM list response missing topic_list"))?;
+            let page_topics = topic_list
+                .get("topics")
+                .and_then(Value::as_array)
+                .ok_or_else(|| anyhow!("PM list response missing topics array"))?;
+            for value in page_topics {
+                let topic: PmTopicSummary =
+                    serde_json::from_value(value.clone()).context("parsing PM topic summary")?;
+                if seen_topics.insert(topic.id) {
+                    topics.push(topic);
+                }
+            }
+            next = topic_list
+                .get("more_topics_url")
+                .and_then(Value::as_str)
+                .map(str::to_string);
         }
-        let value: Value = serde_json::from_str(&text).context("parsing PM list response")?;
-        let topics = value
-            .get("topic_list")
-            .and_then(|tl| tl.get("topics"))
-            .and_then(|t| t.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| serde_json::from_value::<PmTopicSummary>(v.clone()).ok())
-                    .collect()
-            })
-            .unwrap_or_default();
         Ok(topics)
     }
 

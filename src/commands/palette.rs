@@ -13,7 +13,7 @@ use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
 use crate::config::Config;
-use crate::utils::normalize_baseurl;
+use crate::utils::{atomic_write, normalize_baseurl};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PaletteFile {
@@ -89,6 +89,7 @@ pub fn palette_pull(
     discourse_name: &str,
     palette_id: u64,
     local_path: Option<&Path>,
+    force: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -103,7 +104,7 @@ pub fn palette_pull(
             std::env::current_dir()?.join(filename)
         }
     };
-    write_palette_file(&path, &palette)?;
+    write_palette_file(&path, &palette, force)?;
     println!("{}", path.display());
     Ok(())
 }
@@ -138,7 +139,7 @@ pub fn palette_push(
         }
         let new_id = client.create_color_scheme(&palette.name, &palette.colors)?;
         palette.id = Some(new_id);
-        write_palette_file(local_path, &palette)?;
+        write_palette_file(local_path, &palette, true)?;
         let url = format!(
             "{}/admin/customize/colors/{}",
             normalize_baseurl(&discourse.baseurl),
@@ -213,19 +214,13 @@ fn read_palette_file(path: &Path) -> Result<PaletteFile> {
     Ok(palette)
 }
 
-fn write_palette_file(path: &Path, palette: &PaletteFile) -> Result<()> {
+fn write_palette_file(path: &Path, palette: &PaletteFile, overwrite: bool) -> Result<()> {
     let content = if is_yaml(path) {
         serde_yaml::to_string(palette).context("serializing palette yaml")?
     } else {
         serde_json::to_string_pretty(palette).context("serializing palette json")?
     };
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-    }
-    fs::write(path, content).with_context(|| format!("writing {}", path.display()))?;
-    Ok(())
+    atomic_write(path, content, overwrite)
 }
 
 fn is_yaml(path: &Path) -> bool {

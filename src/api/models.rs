@@ -40,6 +40,8 @@ pub struct TopicResponse {
     pub slug: Option<String>,
     #[serde(default)]
     pub posts_count: Option<u64>,
+    #[serde(default)]
+    pub category_id: Option<u64>,
     pub post_stream: PostStream,
 }
 
@@ -190,7 +192,10 @@ pub struct CategoryList {
 /// Topic list for a category.
 #[derive(Debug, Deserialize)]
 pub struct TopicList {
+    #[serde(default)]
     pub topics: Vec<TopicSummary>,
+    #[serde(default)]
+    pub more_topics_url: Option<String>,
 }
 
 /// Topic summary.

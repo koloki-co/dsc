@@ -52,7 +52,14 @@ fn run_palette(config: &dsc::config::Config, command: PaletteCommand) -> Result<
             discourse,
             palette_id,
             local_path,
-        } => commands::palette::palette_pull(config, &discourse, palette_id, local_path.as_deref()),
+            force,
+        } => commands::palette::palette_pull(
+            config,
+            &discourse,
+            palette_id,
+            local_path.as_deref(),
+            force,
+        ),
         PaletteCommand::Push {
             discourse,
             local_path,
@@ -239,12 +246,14 @@ fn main() -> Result<()> {
                 topic_id,
                 local_path,
                 full,
+                force,
             } => commands::topic::topic_pull(
                 &config,
                 &discourse,
                 topic_id,
                 local_path.as_deref(),
                 full,
+                force,
             ),
 
             TopicCommand::Push {
@@ -377,6 +386,7 @@ fn main() -> Result<()> {
                 local_path,
                 convert_admonitions,
                 rewrite_links,
+                force,
             } => commands::category::category_pull(
                 &config,
                 &discourse,
@@ -384,6 +394,7 @@ fn main() -> Result<()> {
                 local_path.as_deref(),
                 convert_admonitions,
                 rewrite_links,
+                force,
             ),
 
             CategoryCommand::Push {
@@ -416,10 +427,12 @@ fn main() -> Result<()> {
                 CategoryDefCommand::Pull {
                     discourse,
                     local_path,
+                    force,
                 } => commands::category_def::category_def_pull(
                     &config,
                     &discourse,
                     local_path.as_deref(),
+                    force,
                 ),
                 CategoryDefCommand::Push {
                     discourse,
@@ -769,11 +782,13 @@ fn main() -> Result<()> {
                 discourse,
                 backup_filename,
                 local_path,
+                force,
             } => commands::backup::backup_pull(
                 &config,
                 &discourse,
                 &backup_filename,
                 local_path.as_deref(),
+                force,
             ),
 
             BackupCommand::Push {
@@ -846,12 +861,27 @@ fn main() -> Result<()> {
                 discourse,
                 theme_id,
                 local_path,
-            } => commands::theme::theme_pull(&config, &discourse, theme_id, local_path.as_deref()),
+                force,
+            } => commands::theme::theme_pull(
+                &config,
+                &discourse,
+                theme_id,
+                local_path.as_deref(),
+                force,
+            ),
             ThemeCommand::Push {
                 discourse,
                 local_path,
                 theme_id,
-            } => commands::theme::theme_push(&config, &discourse, &local_path, theme_id),
+                yes,
+            } => commands::theme::theme_push(
+                &config,
+                &discourse,
+                &local_path,
+                theme_id,
+                dry_run,
+                yes,
+            ),
             ThemeCommand::Duplicate {
                 discourse,
                 theme_id,
@@ -888,11 +918,13 @@ fn main() -> Result<()> {
                     discourse,
                     theme_id,
                     local_path,
+                    force,
                 } => commands::theme::theme_setting_pull(
                     &config,
                     &discourse,
                     theme_id,
                     local_path.as_deref(),
+                    force,
                 ),
                 ThemeSettingCommand::Push {
                     discourse,
@@ -949,18 +981,21 @@ fn main() -> Result<()> {
                     theme_id,
                     field,
                     local_path,
+                    force,
                 } => commands::theme::theme_field_pull(
                     &config,
                     &discourse,
                     theme_id,
                     &field,
                     local_path.as_deref(),
+                    force,
                 ),
                 ThemeFieldCommand::Push {
                     discourse,
                     theme_id,
                     field,
                     local_path,
+                    yes,
                 } => commands::theme::theme_field_push(
                     &config,
                     &discourse,
@@ -968,6 +1003,7 @@ fn main() -> Result<()> {
                     &field,
                     &local_path,
                     dry_run,
+                    yes,
                 ),
             },
             ThemeCommand::Asset { command } => match command {
@@ -1067,6 +1103,7 @@ fn main() -> Result<()> {
                     local_path,
                     changed_only,
                     category,
+                    force,
                 },
         } => commands::setting::pull_settings(
             &config,
@@ -1074,6 +1111,7 @@ fn main() -> Result<()> {
             &local_path,
             changed_only,
             category.as_deref(),
+            force,
         ),
 
         Commands::Setting {
@@ -1082,6 +1120,7 @@ fn main() -> Result<()> {
                     discourse,
                     local_path,
                     reset_unlisted,
+                    yes,
                 },
         } => commands::setting::push_settings(
             &config,
@@ -1089,6 +1128,7 @@ fn main() -> Result<()> {
             &local_path,
             reset_unlisted,
             dry_run,
+            yes,
         ),
 
         Commands::Setting {
@@ -1187,7 +1227,14 @@ fn main() -> Result<()> {
                 discourse,
                 post_id,
                 local_path,
-            } => commands::post::post_pull(&config, &discourse, post_id, local_path.as_deref()),
+                force,
+            } => commands::post::post_pull(
+                &config,
+                &discourse,
+                post_id,
+                local_path.as_deref(),
+                force,
+            ),
             PostCommand::Push {
                 discourse,
                 post_id,
@@ -1216,12 +1263,14 @@ fn main() -> Result<()> {
             TagCommand::Pull {
                 discourse,
                 local_path,
-            } => commands::tag::tag_pull(&config, &discourse, &local_path),
+                force,
+            } => commands::tag::tag_pull(&config, &discourse, &local_path, force),
             TagCommand::Push {
                 discourse,
                 local_path,
                 prune,
-            } => commands::tag::tag_push(&config, &discourse, &local_path, prune, dry_run),
+                yes,
+            } => commands::tag::tag_push(&config, &discourse, &local_path, prune, dry_run, yes),
             TagCommand::Rename {
                 discourse,
                 old_name,

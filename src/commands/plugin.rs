@@ -4,7 +4,7 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{ensure_api_credentials, render_shell_template, select_discourse};
 use crate::commands::update::run_ssh_command;
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
@@ -101,7 +101,7 @@ pub fn plugin_install(
                 "missing DSC_SSH_PLUGIN_INSTALL_CMD for plugin install; set DSC_SSH_PLUGIN_INSTALL_CMD to your install command"
             )
         })?;
-    let command = render_template(&template, &[("url", url), ("name", url)]);
+    let command = render_shell_template(&template, &[("url", url), ("name", url)]);
     if dry_run {
         println!("[dry-run] would run on {}: {}", target, command);
         return Ok(());
@@ -128,7 +128,7 @@ pub fn plugin_remove(
                 "missing DSC_SSH_PLUGIN_REMOVE_CMD for plugin remove; set DSC_SSH_PLUGIN_REMOVE_CMD to your remove command"
             )
         })?;
-    let command = render_template(&template, &[("name", name), ("url", name)]);
+    let command = render_shell_template(&template, &[("name", name), ("url", name)]);
     if dry_run {
         println!("[dry-run] would run on {}: {}", target, command);
         return Ok(());
@@ -146,12 +146,4 @@ fn ssh_target(discourse: &DiscourseConfig) -> String {
         .ssh_host
         .clone()
         .unwrap_or_else(|| discourse.name.clone())
-}
-
-fn render_template(template: &str, replacements: &[(&str, &str)]) -> String {
-    let mut out = template.to_string();
-    for (key, value) in replacements {
-        out = out.replace(&format!("{{{}}}", key), value);
-    }
-    out
 }

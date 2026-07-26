@@ -6,8 +6,8 @@ use crate::api::DiscourseClient;
 use crate::cli::OutputFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
 use crate::config::Config;
+use crate::utils::create_atomic_output;
 use anyhow::{Context, Result, anyhow};
-use std::fs;
 use std::io;
 use std::path::Path;
 
@@ -168,15 +168,17 @@ pub fn backup_pull(
     discourse_name: &str,
     backup_filename: &str,
     local_path: Option<&Path>,
+    force: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
 
+    let backup_filename = validate_backup_filename(backup_filename)?;
     let url = format!("{}/admin/backups/{}", client.baseurl(), backup_filename);
     // Backup downloads can legitimately take minutes for large archives;
     // bypass the standard per-request timeout by using the raw client.
-    let response = client
+    let mut response = client
         .raw_client()
         .get(&url)
         .send()
@@ -194,22 +196,32 @@ pub fn backup_pull(
         Some(p) => p.to_path_buf(),
         None => Path::new(backup_filename).to_path_buf(),
     };
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("creating directory {}", parent.display()))?;
-    }
-
+    let mut output = create_atomic_output(&dest, force, true)?;
     let bytes = response
-        .bytes()
-        .with_context(|| format!("reading backup response from {}", url))?;
-    fs::write(&dest, &bytes).with_context(|| format!("writing {}", dest.display()))?;
+        .copy_to(output.file_mut())
+        .with_context(|| format!("streaming backup response from {}", url))?;
+    output.commit()?;
     println!(
         "Backup {} pulled to {} ({} bytes)",
         backup_filename,
         dest.display(),
-        bytes.len()
+        bytes
     );
     Ok(())
+}
+
+fn validate_backup_filename(filename: &str) -> Result<&str> {
+    let filename = filename.trim();
+    if filename.is_empty()
+        || filename == "."
+        || filename == ".."
+        || filename
+            .chars()
+            .any(|ch| !(ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-')))
+    {
+        return Err(anyhow!("invalid backup filename: {}", filename));
+    }
+    Ok(filename)
 }
 
 /// Pull the backup array out of the list response. `GET /admin/backups.json`

@@ -50,22 +50,23 @@ tag_groups:
 ## dsc tag push
 
 ```text
-dsc tag push <discourse> <path> [--prune]
+dsc tag push <discourse> <path> [--prune] [--dry-run] [--yes]
 ```
 
 Reads a taxonomy file and reconciles server state toward it.
 
 - **Default (upsert)**: creates missing tags/groups, updates changed ones, never deletes.
-- **`--prune`**: additionally deletes tags and tag groups present on the server but absent from the file.
+- **`--prune`**: additionally deletes tags and tag groups present on the server but absent from the file. Because deleting the wrong tags is destructive, `--prune` requires a *complete* taxonomy snapshot - one pulled with an admin key, so tag groups were readable - and refuses to run otherwise. When the plan contains any deletion, the push also requires `--yes` after you review it with `--dry-run`.
 - Idempotent: a push with no file change is a no-op.
 - Supports `--dry-run` (`-n`) to preview the plan without sending writes.
+- `--yes`: confirm a plan that deletes tags or groups (see `--prune`). Not needed for upsert-only plans.
 
 Tag groups require an admin API key. If not accessible, group reconciliation is skipped with a warning. Permissions in the file use group names; `dsc` resolves the numeric group IDs required by the Discourse API.
 
 ```bash
 dsc -n tag push myforum tags.yaml          # dry-run: show plan
 dsc tag push myforum tags.yaml             # apply upserts
-dsc tag push myforum tags.yaml --prune     # full sync (deletes extras)
+dsc tag push myforum tags.yaml --prune --yes  # full sync (deletes extras; --yes confirms)
 ```
 
 ## dsc tag rename

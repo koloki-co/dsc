@@ -56,14 +56,14 @@ If `<local-path>` is omitted, the file is written to the current directory named
 ## dsc theme push
 
 ```
-dsc theme push <discourse> <json-path> [<theme-id>]
+dsc theme push <discourse> <json-path> [<theme-id>] [--dry-run] [--yes]
 ```
 
 Pushes a local JSON theme file to a Discourse instance.
 
-- If `<theme-id>` is supplied, updates the existing theme and prints the ID.
-- If the JSON file contains an `id` field and no `<theme-id>` argument is given, updates that theme.
-- Otherwise creates a new theme and prints the new ID.
+- If `<theme-id>` is supplied, updates that existing theme. Updating a live theme is destructive (it upserts the theme's fields), so it requires `--yes`; review the plan with `--dry-run` (`-n`) first. Prints the ID on success.
+- If the JSON file contains an `id` field, `dsc` refuses to guess: pass that ID explicitly as `<theme-id>` to update, or remove the `id` to create a new theme. This prevents a file pulled from one forum from silently overwriting a same-numbered theme on another.
+- Otherwise (no `<theme-id>`, no `id` in the file) creates a new theme and prints the new ID.
 
 ## dsc theme duplicate
 

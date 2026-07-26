@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, json_page_path};
 use super::error::http_error;
 use super::models::{
     CategoriesResponse, CategoryDefinition, CategoryDefinitionsResponse, CategoryInfo,
@@ -11,13 +11,41 @@ use super::models::{
 use anyhow::{Context, Result, anyhow};
 use reqwest::StatusCode;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 impl DiscourseClient {
     /// Fetch a category by ID (topics list included).
     pub fn fetch_category(&self, category_id: u64) -> Result<CategoryResponse> {
         let path = format!("/c/{}.json", category_id);
-        let response = self.get(&path)?;
+        let mut body = self.fetch_category_page(&path, category_id)?;
+        let mut seen_paths = HashSet::new();
+        let mut seen_topics: HashSet<u64> = body
+            .topic_list
+            .topics
+            .iter()
+            .map(|topic| topic.id)
+            .collect();
+        let mut next = body.topic_list.more_topics_url.take();
+
+        while let Some(raw_path) = next {
+            if !seen_paths.insert(raw_path.clone()) {
+                return Err(anyhow!("category pagination loop detected: {}", raw_path));
+            }
+            let path = json_page_path(&raw_path)?;
+            let mut page = self.fetch_category_page(&path, category_id)?;
+            for topic in page.topic_list.topics.drain(..) {
+                if seen_topics.insert(topic.id) {
+                    body.topic_list.topics.push(topic);
+                }
+            }
+            next = page.topic_list.more_topics_url.take();
+        }
+
+        Ok(body)
+    }
+
+    fn fetch_category_page(&self, path: &str, category_id: u64) -> Result<CategoryResponse> {
+        let response = self.get(path)?;
         let status = response.status();
         let text = response.text().context("reading category response body")?;
         if !status.is_success() {

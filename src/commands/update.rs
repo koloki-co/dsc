@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::api::{DiscourseClient, VersionInfo};
-use crate::commands::common::{ensure_api_credentials, missing_config};
+use crate::commands::common::{ensure_api_credentials, missing_config, validate_ssh_target};
 use crate::commands::update_log::{self, LogKind};
 use crate::config::{Config, DiscourseConfig, find_discourse};
 use crate::utils::color_discourse_label;
@@ -708,20 +708,6 @@ fn ssh_strict_host_key_checking() -> Option<String> {
     } else {
         Some(value.to_string())
     }
-}
-
-fn validate_ssh_target(target: &str) -> Result<()> {
-    let trimmed = target.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow!("ssh target is empty"));
-    }
-    if trimmed.starts_with('-') {
-        return Err(anyhow!("ssh target cannot start with '-': {}", target));
-    }
-    if trimmed.chars().any(|ch| ch.is_whitespace()) {
-        return Err(anyhow!("ssh target cannot contain whitespace: {}", target));
-    }
-    Ok(())
 }
 
 fn ssh_probe(target: &str) -> Result<bool> {
