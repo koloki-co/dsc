@@ -5,6 +5,16 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.12.1] - 2026-07-27
+
+### CI
+
+- Add Homebrew to PATH in the formula-publish step ([f643fbc](https://github.com/pacharanero/dsc/commit/f643fbc531541abdaba6afaabffd0a82a82cd979))
+
+### Features
+
+- **category**: Compare two live category definitions ([cac3a34](https://github.com/pacharanero/dsc/commit/cac3a3498b64c21cfe2c9f186184a46d3244f4cd), [a19278d](https://github.com/pacharanero/dsc/commit/a19278db0edb38546cadc2f5a84980c440080a87))
+
 ## [0.12.0] - 2026-07-26
 
 ### Bug fixes
@@ -768,5 +778,4 @@ Releases are grouped from conventional-commit messages by [git-cliff](https://gi
 - Add completions e2e and refresh scripts ([333d2bb](https://github.com/pacharanero/dsc/commit/333d2bb2c76de5f84c2cf838da7c25b4750fbd01))
 
 ## [0.1.1] - 2026-01-30
-
 
