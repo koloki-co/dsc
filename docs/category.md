@@ -153,6 +153,23 @@ Notes:
 - `description` is read from the plain-text form; on write, Discourse re-cooks it as the category's "About" topic excerpt (settles a moment after a create).
 - When `def push` creates a category whose `parent` is itself brand-new in the same file, run the push twice (or create the parent first) - a parent is resolved against categories that already exist on the server.
 
+## dsc category diff
+
+Compare the stable, editable definition fields of two explicitly selected live categories:
+
+```bash
+dsc category diff forum-a general forum-b announcements
+dsc category diff forum-a 12 forum-b 37 --format json
+```
+
+```text
+dsc category diff <discourse-a> <category-a> <discourse-b> <category-b>
+```
+
+Each category resolves independently by `id`, `slug`, or `name`, so the categories may have different names or slugs. The diff reports only changed definition fields from the same surface as `category show/get/set`; it excludes server-specific IDs and volatile usage counts. `--format json|yaml` preserves booleans, numbers, arrays, and permission maps as native values rather than display strings.
+
+Aliases: `df`.
+
 ## dsc category rename
 
 Rename a category, preserving its topics. Uses a safe `PUT /categories/{id}.json` by the resolved category id - the recommended path when a `categories.yaml` entry has no `id`, since `def push` can't tell a rename from a delete+create in that case (see the note above).

@@ -37,7 +37,7 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 
 
 - [ ] ⭐ **R29 - `dsc render` template placeholder substitution** - render local Markdown template files against per-forum variables from `dsc.toml` (`[template.vars]` globals, `[discourse.template]` per-forum, built-in `forum_baseurl`/`forum_name`/`forum_fullname`), so anonymised content templates are ready to push without manual find-and-replace. `--render` flag on `topic new`/`push`/`reply`/`category push` applies the same inline. Tera 2.0 engine. Driver: 24-template content-templates library in the discourses workspace. Spec: [template-rendering](commands/template-rendering.md).
-- [~] ⭐ **R11 - `category` definition sync Phase 2/3** - Phase 1 shipped the blocking round-trip (`category def pull/push`, `category show/get/set`) for category definitions: description, permissions, position, topic template, and tag rules. `category rename` (safe id-based rename, mirrors `tag rename`) has shipped. Remaining work: list `--append`/`--remove`, `required_tag_groups`, prune, and `def diff`. Spec: [category-definition-sync](commands/category-definition-sync.md).
+- [~] ⭐ **R11 - `category` definition sync Phase 2/3** - Phase 1 shipped the blocking round-trip (`category def pull/push`, `category show/get/set`) for category definitions: description, permissions, position, topic template, and tag rules. `category rename` (safe id-based rename) has shipped; explicit live `category diff` is implemented. Remaining work: list `--append`/`--remove`, `required_tag_groups`, and prune. Spec: [category-definition-sync](commands/category-definition-sync.md).
 
 ### New command surfaces
 

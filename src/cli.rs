@@ -1019,6 +1019,25 @@ pub enum CategoryCommand {
         /// comma-separated list; for permissions use `group:level,...`.
         value: String,
     },
+    /// Compare two live category definitions.
+    ///
+    /// Each category resolves independently by id, slug, or name. The diff
+    /// reports only stable, editable definition fields; server-specific ids
+    /// and volatile usage counts are excluded.
+    #[command(visible_alias = "df")]
+    Diff {
+        /// First Discourse name.
+        discourse_a: String,
+        /// Category on the first Discourse: ID, slug, or name.
+        category_a: String,
+        /// Second Discourse name.
+        discourse_b: String,
+        /// Category on the second Discourse: ID, slug, or name.
+        category_b: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
     /// Rename a category, preserving its topics.
     ///
     /// Uses a safe `PUT /categories/{id}` by resolved id — the recommended

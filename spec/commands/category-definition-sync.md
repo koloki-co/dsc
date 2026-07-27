@@ -415,8 +415,16 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   categories, topic-count disclosure in `--dry-run`, refuse if the file's entry
   count drops to zero. Deleting categories is destructive and rare; ship only
   if a real need appears.
-- [ ] `dsc category def diff <a> <b>` — diff two category files (mirrors
-  `setting diff`).
+- [x] `dsc category diff <discourse-a> <category-a> <discourse-b> <category-b>`
+  — compare two explicitly selected live category definitions. **Status:
+  implemented (unreleased).** Each category resolves independently by
+  id/slug/name, so no cross-forum identity inference is needed and categories
+  with different names/slugs can be compared deliberately. Reports only
+  differing stable definition fields; excludes server-specific IDs and
+  volatile usage counts. Text output is human-readable; JSON/YAML retain native
+  booleans, numbers, lists, and permission maps. `src/commands/category_def.rs`
+  (`category_diff`, `diff_entries`, `load_category_diff_side`); unit-tested and
+  smoke-tested against the disposable live demo forum.
 - [ ] Cross-forum `category def copy` (today `category copy` sends only the 4
   basic fields; a full-definition copy falls out of pull→push once `id` is
   stripped/portability is handled — but see Out of scope).

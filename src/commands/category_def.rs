@@ -501,6 +501,122 @@ pub fn category_def_push(
     Ok(())
 }
 
+// ─── Diff (compare two live category definitions) ─────────────────────────────
+
+struct CategoryDiffSide {
+    label: String,
+    entry: CategoryDefEntry,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+struct CategoryDiffRow {
+    field: String,
+    a: Option<Value>,
+    b: Option<Value>,
+}
+
+fn load_category_diff_side(
+    config: &Config,
+    discourse_name: &str,
+    category: &str,
+) -> Result<CategoryDiffSide> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+    let entry = resolve_entry(&client, category)?;
+    Ok(CategoryDiffSide {
+        label: format!("{} / {}", discourse.name, entry.name),
+        entry,
+    })
+}
+
+/// Compare the stable, editable definition fields of two resolved categories.
+/// Server-specific ids and volatile usage fields are deliberately excluded.
+fn diff_entries(a: &CategoryDefEntry, b: &CategoryDefEntry) -> Result<Vec<CategoryDiffRow>> {
+    let mut rows = Vec::new();
+    for field in VALID_FIELDS {
+        let (_, va) = entry_field(a, field)?;
+        let (_, vb) = entry_field(b, field)?;
+        if va != vb {
+            rows.push(CategoryDiffRow {
+                field: (*field).to_string(),
+                a: (!va.is_null()).then_some(va),
+                b: (!vb.is_null()).then_some(vb),
+            });
+        }
+    }
+    Ok(rows)
+}
+
+fn fmt_diff_value(v: &Option<Value>) -> String {
+    match v {
+        Some(Value::String(s)) if s.is_empty() => "\"\"".to_string(),
+        Some(Value::String(s)) => s.clone(),
+        Some(value) => value.to_string(),
+        None => "(unset)".to_string(),
+    }
+}
+
+fn print_category_diff(
+    rows: &[CategoryDiffRow],
+    label_a: &str,
+    label_b: &str,
+    format: ListFormat,
+) -> Result<()> {
+    match format {
+        ListFormat::Text => {
+            if rows.is_empty() {
+                println!("{} and {}: no differences.", label_a, label_b);
+                return Ok(());
+            }
+            println!(
+                "{} differing definition field{} between {} and {}:",
+                rows.len(),
+                if rows.len() == 1 { "" } else { "s" },
+                label_a,
+                label_b
+            );
+            for row in rows {
+                println!("  {}", row.field);
+                println!("    {}: {}", label_a, fmt_diff_value(&row.a));
+                println!("    {}: {}", label_b, fmt_diff_value(&row.b));
+            }
+        }
+        ListFormat::Json => {
+            let payload = json!({
+                "a": label_a,
+                "b": label_b,
+                "differences": rows,
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        }
+        ListFormat::Yaml => {
+            let payload = json!({
+                "a": label_a,
+                "b": label_b,
+                "differences": rows,
+            });
+            print!("{}", serde_yaml::to_string(&payload)?);
+        }
+    }
+    Ok(())
+}
+
+/// Compare two explicitly selected live category definitions.
+pub fn category_diff(
+    config: &Config,
+    discourse_a: &str,
+    category_a: &str,
+    discourse_b: &str,
+    category_b: &str,
+    format: ListFormat,
+) -> Result<()> {
+    let a = load_category_diff_side(config, discourse_a, category_a)?;
+    let b = load_category_diff_side(config, discourse_b, category_b)?;
+    let rows = diff_entries(&a.entry, &b.entry)?;
+    print_category_diff(&rows, &a.label, &b.label, format)
+}
+
 // ─── Commands: show / get / set ───────────────────────────────────────────────
 
 fn find_def<'a>(defs: &'a [CategoryDefinition], category: &str) -> Result<&'a CategoryDefinition> {
@@ -1048,5 +1164,80 @@ mod tests {
         let mut e = entry("Child");
         e.parent = Some("nope".to_string());
         assert!(entry_to_params(&e, &BTreeMap::new()).is_err());
+    }
+
+    #[test]
+    fn diff_finds_no_rows_for_identical_categories() {
+        let mut e = entry("General");
+        e.slug = Some("general".to_string());
+        e.color = Some("ABABAB".to_string());
+        assert!(diff_entries(&e, &e).unwrap().is_empty());
+    }
+
+    #[test]
+    fn diff_flags_a_changed_string_field() {
+        let mut ea = entry("General");
+        ea.slug = Some("general".to_string());
+        ea.color = Some("ABABAB".to_string());
+        let mut eb = ea.clone();
+        eb.color = Some("FF0000".to_string());
+        let rows = diff_entries(&ea, &eb).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].field, "color");
+        assert_eq!(rows[0].a, Some(json!("ABABAB")));
+        assert_eq!(rows[0].b, Some(json!("FF0000")));
+    }
+
+    #[test]
+    fn diff_reports_name_and_slug_changes_between_explicit_categories() {
+        let mut ea = entry("General");
+        ea.slug = Some("general".to_string());
+        let mut eb = entry("Announcements");
+        eb.slug = Some("announcements".to_string());
+        let rows = diff_entries(&ea, &eb).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].field, "name");
+        assert_eq!(rows[1].field, "slug");
+    }
+
+    #[test]
+    fn diff_preserves_native_json_types() {
+        let mut ea = entry("General");
+        ea.read_restricted = Some(false);
+        ea.minimum_required_tags = Some(1);
+        ea.allowed_tags = Some(vec!["one".to_string()]);
+        let mut eb = ea.clone();
+        eb.read_restricted = Some(true);
+        eb.minimum_required_tags = Some(2);
+        eb.allowed_tags = Some(vec!["one".to_string(), "two".to_string()]);
+
+        let rows = diff_entries(&ea, &eb).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].a, Some(json!(false)));
+        assert_eq!(rows[0].b, Some(json!(true)));
+        assert_eq!(rows[1].a, Some(json!(["one"])));
+        assert_eq!(rows[1].b, Some(json!(["one", "two"])));
+        assert_eq!(rows[2].a, Some(json!(1)));
+        assert_eq!(rows[2].b, Some(json!(2)));
+    }
+
+    #[test]
+    fn diff_ignores_unset_fields_on_both_sides() {
+        // Neither side sets `description` - not a difference, just both unset.
+        let ea = entry("General");
+        let eb = ea.clone();
+        assert!(diff_entries(&ea, &eb).unwrap().is_empty());
+    }
+
+    #[test]
+    fn diff_represents_a_field_unset_on_one_side_as_none() {
+        let mut ea = entry("General");
+        ea.description = Some("Welcome".to_string());
+        let eb = entry("General");
+        let rows = diff_entries(&ea, &eb).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].field, "description");
+        assert_eq!(rows[0].a, Some(json!("Welcome")));
+        assert_eq!(rows[0].b, None);
     }
 }
