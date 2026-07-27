@@ -16,7 +16,7 @@ use crate::utils::atomic_write;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -501,115 +501,64 @@ pub fn category_def_push(
     Ok(())
 }
 
-// ─── Diff (compare two category-definition sources) ───────────────────────────
+// ─── Diff (compare two live category definitions) ─────────────────────────────
 
-/// A canonical, source-agnostic snapshot of category definitions used by
-/// `diff_entries`, keyed by slug (falling back to name) since `id` is
-/// server-specific and not meaningful across two different forums.
-struct CatDiffSource {
+struct CategoryDiffSide {
     label: String,
-    entries: BTreeMap<String, CategoryDefEntry>,
-}
-
-fn diff_key(e: &CategoryDefEntry) -> String {
-    e.slug.clone().unwrap_or_else(|| e.name.clone())
+    entry: CategoryDefEntry,
 }
 
 #[derive(Debug, Serialize, PartialEq)]
-struct CatDiffRow {
-    category: String,
+struct CategoryDiffRow {
     field: String,
-    a: Option<String>,
-    b: Option<String>,
+    a: Option<Value>,
+    b: Option<Value>,
 }
 
-/// Resolve a source string to a canonical category-definition snapshot. A
-/// source is treated as a file if it points to an existing file or has a
-/// `.yaml`/`.yml`/`.json` extension; otherwise it is treated as a Discourse
-/// name and fetched live (same detection rule as `dsc setting diff`).
-fn load_def_diff_source(config: &Config, src: &str) -> Result<CatDiffSource> {
-    let path = Path::new(src);
-    let looks_like_file = path.is_file()
-        || matches!(
-            path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase),
-            Some(ref ext) if ext == "yaml" || ext == "yml" || ext == "json"
-        );
-    let (label, entries) = if looks_like_file {
-        let content =
-            fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let file: CategoriesFile = if is_json_path(path) {
-            serde_json::from_str(&content).context("parsing categories JSON")?
-        } else {
-            serde_yaml::from_str(&content).context("parsing categories YAML")?
-        };
-        (path.display().to_string(), file.categories)
-    } else {
-        let discourse = select_discourse(config, Some(src))?;
-        ensure_api_credentials(discourse)?;
-        let client = DiscourseClient::new(discourse)?;
-        let defs = client.fetch_category_definitions()?;
-        let id_to_slug = id_to_slug_map(&defs);
-        let entries = defs.iter().map(|d| def_to_entry(d, &id_to_slug)).collect();
-        (discourse.name.clone(), entries)
-    };
-    Ok(CatDiffSource {
-        label,
-        entries: entries.into_iter().map(|e| (diff_key(&e), e)).collect(),
+fn load_category_diff_side(
+    config: &Config,
+    discourse_name: &str,
+    category: &str,
+) -> Result<CategoryDiffSide> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+    let entry = resolve_entry(&client, category)?;
+    Ok(CategoryDiffSide {
+        label: format!("{} / {}", discourse.name, entry.name),
+        entry,
     })
 }
 
-/// Pure diff of two resolved snapshots: one row per category present on only
-/// one side, plus one row per differing field for categories present on both.
-fn diff_entries(a: &CatDiffSource, b: &CatDiffSource) -> Result<Vec<CatDiffRow>> {
-    let mut keys: BTreeSet<String> = a.entries.keys().cloned().collect();
-    keys.extend(b.entries.keys().cloned());
-
+/// Compare the stable, editable definition fields of two resolved categories.
+/// Server-specific ids and volatile usage fields are deliberately excluded.
+fn diff_entries(a: &CategoryDefEntry, b: &CategoryDefEntry) -> Result<Vec<CategoryDiffRow>> {
     let mut rows = Vec::new();
-    for key in keys {
-        match (a.entries.get(&key), b.entries.get(&key)) {
-            (Some(_), None) => rows.push(CatDiffRow {
-                category: key,
-                field: "(category)".to_string(),
-                a: Some("present".to_string()),
-                b: None,
-            }),
-            (None, Some(_)) => rows.push(CatDiffRow {
-                category: key,
-                field: "(category)".to_string(),
-                a: None,
-                b: Some("present".to_string()),
-            }),
-            (Some(ea), Some(eb)) => {
-                for field in VALID_FIELDS {
-                    let (ta, va) = entry_field(ea, field)?;
-                    let (tb, vb) = entry_field(eb, field)?;
-                    if va == vb {
-                        continue;
-                    }
-                    rows.push(CatDiffRow {
-                        category: key.clone(),
-                        field: (*field).to_string(),
-                        a: (!va.is_null()).then_some(ta),
-                        b: (!vb.is_null()).then_some(tb),
-                    });
-                }
-            }
-            (None, None) => unreachable!("key came from at least one side's map"),
+    for field in VALID_FIELDS {
+        let (_, va) = entry_field(a, field)?;
+        let (_, vb) = entry_field(b, field)?;
+        if va != vb {
+            rows.push(CategoryDiffRow {
+                field: (*field).to_string(),
+                a: (!va.is_null()).then_some(va),
+                b: (!vb.is_null()).then_some(vb),
+            });
         }
     }
     Ok(rows)
 }
 
-fn fmt_diff_opt(v: &Option<String>) -> String {
+fn fmt_diff_value(v: &Option<Value>) -> String {
     match v {
-        Some(s) if s.is_empty() => "\"\"".to_string(),
-        Some(s) => s.clone(),
-        None => "(absent)".to_string(),
+        Some(Value::String(s)) if s.is_empty() => "\"\"".to_string(),
+        Some(Value::String(s)) => s.clone(),
+        Some(value) => value.to_string(),
+        None => "(unset)".to_string(),
     }
 }
 
-fn print_def_diff(
-    rows: &[CatDiffRow],
+fn print_category_diff(
+    rows: &[CategoryDiffRow],
     label_a: &str,
     label_b: &str,
     format: ListFormat,
@@ -621,21 +570,16 @@ fn print_def_diff(
                 return Ok(());
             }
             println!(
-                "{} differing field{} between {} and {}:",
+                "{} differing definition field{} between {} and {}:",
                 rows.len(),
                 if rows.len() == 1 { "" } else { "s" },
                 label_a,
                 label_b
             );
-            let mut last_category = String::new();
             for row in rows {
-                if row.category != last_category {
-                    println!("  {}:", row.category);
-                    last_category = row.category.clone();
-                }
-                println!("    {}", row.field);
-                println!("      {}: {}", label_a, fmt_diff_opt(&row.a));
-                println!("      {}: {}", label_b, fmt_diff_opt(&row.b));
+                println!("  {}", row.field);
+                println!("    {}: {}", label_a, fmt_diff_value(&row.a));
+                println!("    {}: {}", label_b, fmt_diff_value(&row.b));
             }
         }
         ListFormat::Json => {
@@ -658,17 +602,19 @@ fn print_def_diff(
     Ok(())
 }
 
-/// Compare category definitions between two sources (mirrors `setting diff`).
-pub fn category_def_diff(
+/// Compare two explicitly selected live category definitions.
+pub fn category_diff(
     config: &Config,
-    source: &str,
-    target: &str,
+    discourse_a: &str,
+    category_a: &str,
+    discourse_b: &str,
+    category_b: &str,
     format: ListFormat,
 ) -> Result<()> {
-    let a = load_def_diff_source(config, source)?;
-    let b = load_def_diff_source(config, target)?;
-    let rows = diff_entries(&a, &b)?;
-    print_def_diff(&rows, &a.label, &b.label, format)
+    let a = load_category_diff_side(config, discourse_a, category_a)?;
+    let b = load_category_diff_side(config, discourse_b, category_b)?;
+    let rows = diff_entries(&a.entry, &b.entry)?;
+    print_category_diff(&rows, &a.label, &b.label, format)
 }
 
 // ─── Commands: show / get / set ───────────────────────────────────────────────
@@ -1220,74 +1166,78 @@ mod tests {
         assert!(entry_to_params(&e, &BTreeMap::new()).is_err());
     }
 
-    fn diff_source(label: &str, entries: Vec<CategoryDefEntry>) -> CatDiffSource {
-        CatDiffSource {
-            label: label.to_string(),
-            entries: entries.into_iter().map(|e| (diff_key(&e), e)).collect(),
-        }
-    }
-
     #[test]
-    fn diff_key_prefers_slug_over_name() {
-        let mut e = entry("General Discussion");
-        e.slug = Some("general".to_string());
-        assert_eq!(diff_key(&e), "general");
-    }
-
-    #[test]
-    fn diff_key_falls_back_to_name() {
-        let e = entry("General");
-        assert_eq!(diff_key(&e), "General");
-    }
-
-    #[test]
-    fn diff_finds_no_rows_for_identical_sources() {
+    fn diff_finds_no_rows_for_identical_categories() {
         let mut e = entry("General");
         e.slug = Some("general".to_string());
         e.color = Some("ABABAB".to_string());
-        let a = diff_source("a.yaml", vec![e.clone()]);
-        let b = diff_source("b.yaml", vec![e]);
-        assert!(diff_entries(&a, &b).unwrap().is_empty());
+        assert!(diff_entries(&e, &e).unwrap().is_empty());
     }
 
     #[test]
-    fn diff_flags_a_changed_field() {
+    fn diff_flags_a_changed_string_field() {
         let mut ea = entry("General");
         ea.slug = Some("general".to_string());
         ea.color = Some("ABABAB".to_string());
         let mut eb = ea.clone();
         eb.color = Some("FF0000".to_string());
-        let a = diff_source("a.yaml", vec![ea]);
-        let b = diff_source("b.yaml", vec![eb]);
-        let rows = diff_entries(&a, &b).unwrap();
+        let rows = diff_entries(&ea, &eb).unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].category, "general");
         assert_eq!(rows[0].field, "color");
-        assert_eq!(rows[0].a.as_deref(), Some("ABABAB"));
-        assert_eq!(rows[0].b.as_deref(), Some("FF0000"));
+        assert_eq!(rows[0].a, Some(json!("ABABAB")));
+        assert_eq!(rows[0].b, Some(json!("FF0000")));
     }
 
     #[test]
-    fn diff_flags_category_only_on_one_side() {
-        let mut e = entry("Only In A");
-        e.slug = Some("only-in-a".to_string());
-        let a = diff_source("a.yaml", vec![e]);
-        let b = diff_source("b.yaml", vec![]);
-        let rows = diff_entries(&a, &b).unwrap();
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].category, "only-in-a");
-        assert_eq!(rows[0].a.as_deref(), Some("present"));
-        assert_eq!(rows[0].b, None);
+    fn diff_reports_name_and_slug_changes_between_explicit_categories() {
+        let mut ea = entry("General");
+        ea.slug = Some("general".to_string());
+        let mut eb = entry("Announcements");
+        eb.slug = Some("announcements".to_string());
+        let rows = diff_entries(&ea, &eb).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].field, "name");
+        assert_eq!(rows[1].field, "slug");
+    }
+
+    #[test]
+    fn diff_preserves_native_json_types() {
+        let mut ea = entry("General");
+        ea.read_restricted = Some(false);
+        ea.minimum_required_tags = Some(1);
+        ea.allowed_tags = Some(vec!["one".to_string()]);
+        let mut eb = ea.clone();
+        eb.read_restricted = Some(true);
+        eb.minimum_required_tags = Some(2);
+        eb.allowed_tags = Some(vec!["one".to_string(), "two".to_string()]);
+
+        let rows = diff_entries(&ea, &eb).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].a, Some(json!(false)));
+        assert_eq!(rows[0].b, Some(json!(true)));
+        assert_eq!(rows[1].a, Some(json!(["one"])));
+        assert_eq!(rows[1].b, Some(json!(["one", "two"])));
+        assert_eq!(rows[2].a, Some(json!(1)));
+        assert_eq!(rows[2].b, Some(json!(2)));
     }
 
     #[test]
     fn diff_ignores_unset_fields_on_both_sides() {
         // Neither side sets `description` - not a difference, just both unset.
-        let mut ea = entry("General");
-        ea.slug = Some("general".to_string());
+        let ea = entry("General");
         let eb = ea.clone();
-        let a = diff_source("a.yaml", vec![ea]);
-        let b = diff_source("b.yaml", vec![eb]);
-        assert!(diff_entries(&a, &b).unwrap().is_empty());
+        assert!(diff_entries(&ea, &eb).unwrap().is_empty());
+    }
+
+    #[test]
+    fn diff_represents_a_field_unset_on_one_side_as_none() {
+        let mut ea = entry("General");
+        ea.description = Some("Welcome".to_string());
+        let eb = entry("General");
+        let rows = diff_entries(&ea, &eb).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].field, "description");
+        assert_eq!(rows[0].a, Some(json!("Welcome")));
+        assert_eq!(rows[0].b, None);
     }
 }

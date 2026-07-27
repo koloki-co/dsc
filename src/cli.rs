@@ -1019,6 +1019,25 @@ pub enum CategoryCommand {
         /// comma-separated list; for permissions use `group:level,...`.
         value: String,
     },
+    /// Compare two live category definitions.
+    ///
+    /// Each category resolves independently by id, slug, or name. The diff
+    /// reports only stable, editable definition fields; server-specific ids
+    /// and volatile usage counts are excluded.
+    #[command(visible_alias = "df")]
+    Diff {
+        /// First Discourse name.
+        discourse_a: String,
+        /// Category on the first Discourse: ID, slug, or name.
+        category_a: String,
+        /// Second Discourse name.
+        discourse_b: String,
+        /// Category on the second Discourse: ID, slug, or name.
+        category_b: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
     /// Rename a category, preserving its topics.
     ///
     /// Uses a safe `PUT /categories/{id}` by resolved id — the recommended
@@ -1058,26 +1077,6 @@ pub enum CategoryDefCommand {
         /// Local categories.yaml (or .json) file.
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
-    },
-    /// Compare category definitions between two sources.
-    ///
-    /// Each source can be a Discourse name (live fetch) or a path to a
-    /// snapshot file produced by `dsc category def pull`. Sources are
-    /// detected the same way as `dsc setting diff`: an existing file, or a
-    /// `.yaml`/`.yml`/`.json` extension, is treated as a file; otherwise as a
-    /// Discourse name. Categories are matched across sources by slug (falling
-    /// back to name), since `id` is server-specific.
-    #[command(visible_alias = "df")]
-    Diff {
-        /// First source: Discourse name or categories file path.
-        #[arg(value_parser = tilde_path_string, value_hint = ValueHint::AnyPath)]
-        source: String,
-        /// Second source: Discourse name or categories file path.
-        #[arg(value_parser = tilde_path_string, value_hint = ValueHint::AnyPath)]
-        target: String,
-        /// Output format.
-        #[arg(long, short = 'f', value_enum, default_value = "text")]
-        format: ListFormat,
     },
 }
 
@@ -2421,7 +2420,7 @@ mod tests {
 
     #[test]
     fn every_path_argument_has_a_completion_hint() {
-        assert_eq!(count_path_hints(&Cli::command()), 45);
+        assert_eq!(count_path_hints(&Cli::command()), 43);
     }
 
     #[test]

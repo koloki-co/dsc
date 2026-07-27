@@ -443,12 +443,22 @@ fn main() -> Result<()> {
                     &local_path,
                     dry_run,
                 ),
-                CategoryDefCommand::Diff {
-                    source,
-                    target,
-                    format,
-                } => commands::category_def::category_def_diff(&config, &source, &target, format),
             },
+
+            CategoryCommand::Diff {
+                discourse_a,
+                category_a,
+                discourse_b,
+                category_b,
+                format,
+            } => commands::category_def::category_diff(
+                &config,
+                &discourse_a,
+                &category_a,
+                &discourse_b,
+                &category_b,
+                format,
+            ),
 
             CategoryCommand::Show {
                 discourse,
