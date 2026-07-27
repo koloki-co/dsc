@@ -1059,6 +1059,26 @@ pub enum CategoryDefCommand {
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
     },
+    /// Compare category definitions between two sources.
+    ///
+    /// Each source can be a Discourse name (live fetch) or a path to a
+    /// snapshot file produced by `dsc category def pull`. Sources are
+    /// detected the same way as `dsc setting diff`: an existing file, or a
+    /// `.yaml`/`.yml`/`.json` extension, is treated as a file; otherwise as a
+    /// Discourse name. Categories are matched across sources by slug (falling
+    /// back to name), since `id` is server-specific.
+    #[command(visible_alias = "df")]
+    Diff {
+        /// First source: Discourse name or categories file path.
+        #[arg(value_parser = tilde_path_string, value_hint = ValueHint::AnyPath)]
+        source: String,
+        /// Second source: Discourse name or categories file path.
+        #[arg(value_parser = tilde_path_string, value_hint = ValueHint::AnyPath)]
+        target: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2401,7 +2421,7 @@ mod tests {
 
     #[test]
     fn every_path_argument_has_a_completion_hint() {
-        assert_eq!(count_path_hints(&Cli::command()), 43);
+        assert_eq!(count_path_hints(&Cli::command()), 45);
     }
 
     #[test]

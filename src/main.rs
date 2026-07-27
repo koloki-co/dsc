@@ -443,6 +443,11 @@ fn main() -> Result<()> {
                     &local_path,
                     dry_run,
                 ),
+                CategoryDefCommand::Diff {
+                    source,
+                    target,
+                    format,
+                } => commands::category_def::category_def_diff(&config, &source, &target, format),
             },
 
             CategoryCommand::Show {

@@ -415,8 +415,15 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   categories, topic-count disclosure in `--dry-run`, refuse if the file's entry
   count drops to zero. Deleting categories is destructive and rare; ship only
   if a real need appears.
-- [ ] `dsc category def diff <a> <b>` — diff two category files (mirrors
-  `setting diff`).
+- [x] `dsc category def diff <a> <b>` — diff two category definition sources
+  (mirrors `setting diff`). **Status: implemented (unreleased).** Each side
+  can be a `categories.yaml`/`.json` file or a Discourse name (live fetch);
+  detection matches `setting diff`. Categories are matched across sources by
+  slug (falling back to name) since `id` is server-specific; a category
+  present on only one side is reported as such, otherwise each differing
+  definition field is reported with both values. `src/commands/category_def.rs`
+  (`category_def_diff`, `diff_entries`, `load_def_diff_source`); unit-tested
+  (no live test, matching `setting diff`'s coverage).
 - [ ] Cross-forum `category def copy` (today `category copy` sends only the 4
   basic fields; a full-definition copy falls out of pull→push once `id` is
   stripped/portability is handled — but see Out of scope).
