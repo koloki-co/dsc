@@ -26,6 +26,35 @@ use tempfile::TempDir;
 
 // ─── mock Discourse ───────────────────────────────────────────────────────────
 
+fn webhook_list_body(path: &str) -> String {
+    let offset = path
+        .split_once('?')
+        .and_then(|(_, query)| {
+            query.split('&').find_map(|pair| {
+                pair.split_once("offset=")
+                    .and_then(|(_, value)| value.parse::<u64>().ok())
+            })
+        })
+        .unwrap_or(0);
+    let ids: Vec<u64> = match offset {
+        0 => (1..=50).collect(),
+        50 => vec![51],
+        _ => Vec::new(),
+    };
+    let web_hooks = ids
+        .into_iter()
+        .map(|id| {
+            format!(
+                r#"{{"id":{id},"payload_url":"https://user:url-canary@example.test/hooks/{id}","content_type":1,"active":true,"wildcard_web_hook":true,"secret":"secret-canary","verify_certificate":true,"last_delivery_status":3,"category_ids":[],"group_ids":[],"tags":[],"web_hook_event_types":[]}}"#
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        r#"{{"web_hooks":[{web_hooks}],"extras":{{"default_event_types":[201,202,203,204]}},"total_rows_web_hooks":51,"load_more_web_hooks":"/admin/api/web_hooks.json?limit=50&offset=50"}}"#
+    )
+}
+
 /// Canned GET bodies, shaped just well enough that each command reaches its
 /// dry-run decision point instead of erroring on a malformed response.
 fn get_body(path: &str) -> String {
@@ -40,6 +69,9 @@ fn get_body(path: &str) -> String {
     }
     if p == "/about.json" {
         return r#"{"about":{"version":"3.0.0","installed_version":"3.0.0"}}"#.to_string();
+    }
+    if p == "/admin/api/web_hooks.json" {
+        return webhook_list_body(path);
     }
     if p.starts_with("/t/") && p.ends_with("/posts.json") {
         return format!(r#"{{"post_stream":{{"posts":[{post}]}}}}"#);
@@ -375,6 +407,20 @@ const CASES: &[Case] = &[
         true,
     ),
     ("api-key revoke", &["api-key", "revoke", "mock", "1"], true),
+    (
+        "webhook create",
+        &[
+            "webhook",
+            "create",
+            "mock",
+            "https://user:url-canary@example.test/hook",
+            "--secret",
+            "secret-canary",
+        ],
+        true,
+    ),
+    ("webhook delete", &["webhook", "delete", "mock", "1"], true),
+    ("webhook ping", &["webhook", "ping", "mock", "1"], true),
     ("backup create", &["backup", "create", "mock"], true),
     (
         "backup restore",
@@ -555,6 +601,13 @@ fn dry_run_never_issues_a_mutating_request() {
                 output.lines().take(2).collect::<Vec<_>>().join(" | ")
             ));
         }
+        if *label == "webhook create"
+            && (output.contains("secret-canary") || output.contains("url-canary"))
+        {
+            failures.push(format!(
+                "{label}: leaked a secret or URL credential in dry-run output: {output}"
+            ));
+        }
     }
 
     assert!(
@@ -647,7 +700,41 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "user info",
     "user list",
     "version",
+    "webhook list",
 ];
+
+#[test]
+fn webhook_output_never_emits_secrets_or_url_credentials() {
+    let (baseurl, _log) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = dir.path().join("dsc.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{baseurl}\"\napikey = \"mock-key\"\napi_username = \"tester\"\n"
+        ),
+    )
+    .expect("write config");
+
+    for args in [
+        &["webhook", "list", "mock"] as &[&str],
+        &["webhook", "list", "mock", "--format", "json"],
+        &["webhook", "list", "mock", "--format", "yaml"],
+    ] {
+        let (output, ok) = run_dsc(args, &config);
+        assert!(ok, "webhook list failed: {output}");
+        assert!(!output.contains("secret-canary"), "secret leaked: {output}");
+        assert!(
+            !output.contains("url-canary"),
+            "URL credential leaked: {output}"
+        );
+    }
+
+    let (json, ok) = run_dsc(&["webhook", "list", "mock", "--format", "json"], &config);
+    assert!(ok, "webhook JSON list failed: {json}");
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&json).expect("webhook JSON");
+    assert_eq!(rows.len(), 51, "webhook list should follow offset pages");
+}
 
 fn leaf_commands(cmd: &clap::Command, prefix: &str, out: &mut BTreeSet<String>) {
     let subs: Vec<_> = cmd

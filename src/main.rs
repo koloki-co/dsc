@@ -39,6 +39,14 @@ fn map_activity_format(f: ActivityFormatArg) -> ActivityFormat {
     }
 }
 
+/// Map the CLI's symbolic content type to Discourse's integer encoding.
+fn map_webhook_content_type(content_type: WebhookContentTypeArg) -> u8 {
+    match content_type {
+        WebhookContentTypeArg::Json => 1,
+        WebhookContentTypeArg::Form => 2,
+    }
+}
+
 /// Dispatch a palette subcommand. Shared by the top-level `dsc palette`
 /// (deprecated) and the canonical `dsc theme palette`.
 fn run_palette(config: &dsc::config::Config, command: PaletteCommand) -> Result<()> {
@@ -631,6 +639,41 @@ fn main() -> Result<()> {
             ApiKeyCommand::Revoke { discourse, key_id } => {
                 commands::api_key::api_key_revoke(&config, &discourse, key_id, dry_run)
             }
+        },
+
+        Commands::Webhook { command } => match command {
+            WebhookCommand::List { discourse, format } => {
+                commands::webhook::webhook_list(&config, &discourse, format)
+            }
+            WebhookCommand::Create {
+                discourse,
+                payload_url,
+                content_type,
+                secret,
+                active,
+                verify_certificate,
+                format,
+            } => commands::webhook::webhook_create(
+                &config,
+                &discourse,
+                &payload_url,
+                map_webhook_content_type(content_type),
+                secret.as_deref(),
+                active,
+                verify_certificate,
+                format,
+                dry_run,
+            ),
+            WebhookCommand::Delete {
+                discourse,
+                webhook_id,
+                format,
+            } => commands::webhook::webhook_delete(&config, &discourse, webhook_id, format, dry_run),
+            WebhookCommand::Ping {
+                discourse,
+                webhook_id,
+                format,
+            } => commands::webhook::webhook_ping(&config, &discourse, webhook_id, format, dry_run),
         },
 
         Commands::Invite { command } => match command {
