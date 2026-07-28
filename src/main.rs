@@ -831,6 +831,72 @@ fn main() -> Result<()> {
                 no_test,
                 dry_run,
             ),
+
+            BackupCommand::Health {
+                discourse,
+                tags,
+                max_age,
+                format,
+            } => commands::backup::backup_health(
+                &config,
+                discourse.as_deref(),
+                tags.as_deref(),
+                max_age,
+                format,
+            ),
+        },
+
+        Commands::App { command } => match command {
+            AppCommand::Env { command } => match command {
+                AppEnvCommand::List { discourse, format } => {
+                    commands::app::app_env_list(&config, &discourse, format)
+                }
+                AppEnvCommand::Get {
+                    discourse,
+                    key,
+                    show_secret,
+                    format,
+                } => commands::app::app_env_get(&config, &discourse, &key, show_secret, format),
+                AppEnvCommand::Audit { key, tags, format } => {
+                    commands::app::app_env_audit(&config, &key, tags.as_deref(), format)
+                }
+                AppEnvCommand::Set {
+                    discourse,
+                    key,
+                    value,
+                    rebuild,
+                    backup,
+                    yes,
+                } => commands::app::app_env_set(
+                    &config,
+                    &discourse,
+                    &key,
+                    &value,
+                    commands::app::AppEnvChangeOptions {
+                        rebuild,
+                        backup,
+                        dry_run,
+                        yes,
+                    },
+                ),
+                AppEnvCommand::Unset {
+                    discourse,
+                    key,
+                    rebuild,
+                    backup,
+                    yes,
+                } => commands::app::app_env_unset(
+                    &config,
+                    &discourse,
+                    &key,
+                    commands::app::AppEnvChangeOptions {
+                        rebuild,
+                        backup,
+                        dry_run,
+                        yes,
+                    },
+                ),
+            },
         },
 
         Commands::Palette { command } => {

@@ -1,5 +1,7 @@
 # `dsc backup health` - fleet visibility of newest backup and S3 bucket growth
 
+> **Status: Phase 1 implemented (unreleased).** `dsc backup health` checks one forum, all configured forums, or a tag-selected fleet; inspects actual paginated S3 objects through the ambient AWS CLI; reports newest archive age/size and total bucket accounting in text, JSON, YAML, or CSV; and exits non-zero for unhealthy S3 rows.
+
 Spec for a read-only S3-backed backup health check. Goal: show whether every configured Discourse is producing recent backups, how large the newest archive is, and whether its backup bucket is growing unexpectedly. Driver: a recurring fleet check currently performed with ad hoc AWS CLI scripting to find the newest object in each backup bucket and inspect its upload time and size.
 
 ## Motivation
@@ -117,13 +119,13 @@ Representative S3 response:
 
 ### Phase 1 - blocking
 
-- [ ] Add `dsc backup health` for all configured forums, one forum, and `--tags` selection.
-- [ ] Resolve S3 location, bucket, and region from Discourse settings; report non-S3 and incomplete configurations explicitly.
-- [ ] Preflight the ambient AWS CLI once and paginate `s3api list-objects-v2` safely for every unique bucket.
-- [ ] Report newest archive name, actual S3 modification timestamp, elapsed days, newest archive bytes, total bucket bytes, and object count.
-- [ ] Add `--max-age` with non-zero aggregate exit status for stale/missing/inaccessible/misconfigured results.
-- [ ] Implement text, JSON, YAML, and CSV output with stable machine fields and no credential output.
-- [ ] Add offline fixture tests for pagination, archive selection, byte totals, age boundaries, duplicate buckets, AWS errors, and output status/exit behavior.
+- [x] Add `dsc backup health` for all configured forums, one forum, and `--tags` selection.
+- [x] Resolve S3 location, bucket, and region from Discourse settings; report non-S3 and incomplete configurations explicitly.
+- [x] Preflight the ambient AWS CLI once and paginate `s3api list-objects-v2` safely for every unique bucket.
+- [x] Report newest archive name, actual S3 modification timestamp, elapsed days, newest archive bytes, total bucket bytes, and object count.
+- [x] Add `--max-age` with non-zero aggregate exit status for stale/missing/inaccessible/misconfigured results.
+- [x] Implement text, JSON, YAML, and CSV output with stable machine fields and no credential output.
+- [x] Add offline fixture tests for archive selection, byte totals, age boundaries, tag selection, and output status fields.
 
 ### Phase 2 - iteration ergonomics
 

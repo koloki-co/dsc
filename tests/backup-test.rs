@@ -28,3 +28,52 @@ fn backup_list() {
     let output = run_dsc(&["backup", "list", &test.name], &config_path);
     assert!(output.status.success(), "backup list failed");
 }
+
+#[test]
+fn backup_health_reports_unreachable_forum_in_structured_output() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "offline-health"
+baseurl = "not-a-url"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(
+        &["backup", "health", "offline-health", "--format", "json"],
+        &config_path,
+    );
+    assert!(
+        !output.status.success(),
+        "unreachable forum must be unhealthy"
+    );
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).expect("health JSON");
+    assert_eq!(rows[0]["discourse"], "offline-health");
+    assert_eq!(rows[0]["status"], "unknown");
+}
+
+#[test]
+fn backup_health_rejects_discourse_and_tags_together() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "forum"
+baseurl = "https://forum.example"
+apikey = "secret"
+api_username = "system"
+tags = ["production"]
+"#,
+    );
+    let output = run_dsc(
+        &["backup", "health", "forum", "--tags", "production"],
+        &config_path,
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("cannot pass <discourse> together with --tags")
+    );
+}

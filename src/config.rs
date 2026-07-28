@@ -115,6 +115,10 @@ pub struct DiscourseConfig {
     pub changelog_topic_id: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
     pub ssh_host: Option<String>,
+    /// Path to the Discourse Docker app configuration on the remote host.
+    /// Defaults to `/var/discourse/containers/app.yml` when omitted.
+    #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
+    pub app_yml_path: Option<String>,
     #[serde(default)]
     pub docker_rootless: Option<bool>,
 }

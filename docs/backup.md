@@ -2,6 +2,29 @@
 
 Create, list, download, restore, and set up off-site (S3) backups.
 
+## dsc backup health
+
+```text
+dsc backup health [<discourse>] [--tags <tag1,tag2,...>] [--max-age <days>] [--format text|json|yaml|csv]
+```
+
+Checks actual S3 objects rather than Discourse's backup catalogue. With no `<discourse>`, checks every configured forum; use `--tags` to select a fleet subset. Every row reports the latest S3 backup archive, its age, its size, total bucket size, and total object count. Forums using local backups are reported as `NOT_S3`.
+
+The default `--max-age 2` marks a forum `STALE` when its latest archive is over two whole days old. `MISSING`, `STALE`, `MISCONFIGURED`, `INACCESSIBLE`, or `UNKNOWN` rows make the command exit non-zero after printing all selected rows, making it suitable for monitoring.
+
+```bash
+# Check every configured forum
+dsc backup health
+
+# Investigate one forum with a one-day freshness threshold
+dsc backup health myforum --max-age 1
+
+# Export a production fleet report for automation
+dsc backup health --tags production --format json
+```
+
+Requires the [`aws` CLI](https://docs.aws.amazon.com/cli/) and its normal ambient credential chain. The existing single-bucket backup IAM policy already grants the required `s3:ListBucket` permission. This command is read-only: it never creates backups, changes settings, or deletes objects.
+
 ## dsc backup create
 
 ```

@@ -215,6 +215,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: BackupCommand,
     },
+    /// Inspect Docker app.yml environment variables over SSH.
+    #[command(after_help = "Examples:
+  dsc app env list myforum
+  dsc app env get myforum DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE
+  dsc app env audit DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE --tags production")]
+    App {
+        #[command(subcommand)]
+        command: AppCommand,
+    },
     /// List/pull/push color palettes.
     #[command(visible_alias = "pal")]
     #[command(after_help = "Examples (now lives under `dsc theme palette`):
@@ -1209,6 +1218,109 @@ pub enum BackupCommand {
         /// Skip the verification backup after provisioning.
         #[arg(long)]
         no_test: bool,
+    },
+    /// Check recent S3 backup age and bucket growth across configured forums.
+    #[command(visible_alias = "check")]
+    #[command(after_help = "Examples:
+  dsc backup health
+  dsc backup health myforum --max-age 1
+  dsc backup health --tags production -f json")]
+    Health {
+        /// Optional Discourse name. Omit to check every configured forum.
+        discourse: Option<String>,
+        /// Filter by tags (comma/semicolon separated, match-any).
+        #[arg(long, value_name = "tag1,tag2")]
+        tags: Option<String>,
+        /// Maximum acceptable whole days since the latest S3 backup.
+        #[arg(long, default_value_t = 2)]
+        max_age: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: OutputFormat,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(next_display_order = None)]
+pub enum AppCommand {
+    /// Manage the `env:` mapping in a Discourse Docker app.yml.
+    Env {
+        #[command(subcommand)]
+        command: AppEnvCommand,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(next_display_order = None)]
+pub enum AppEnvCommand {
+    /// List non-secret Docker environment variable names.
+    #[command(visible_alias = "ls")]
+    List {
+        /// Discourse name.
+        discourse: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Read one Docker environment variable, redacting likely secrets by default.
+    #[command(visible_alias = "g")]
+    Get {
+        /// Discourse name.
+        discourse: String,
+        /// Environment variable name.
+        key: String,
+        /// Reveal a likely-secret value. Not available to fleet audit.
+        #[arg(long)]
+        show_secret: bool,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Compare one non-secret Docker environment variable across configured forums.
+    #[command(visible_alias = "a")]
+    Audit {
+        /// Environment variable name.
+        key: String,
+        /// Filter by tags (comma/semicolon separated, match-any).
+        #[arg(long, value_name = "tag1,tag2")]
+        tags: Option<String>,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Set one scalar Docker environment variable, preserving other app.yml content.
+    Set {
+        /// Discourse name.
+        discourse: String,
+        /// Environment variable name.
+        key: String,
+        /// New value.
+        value: String,
+        /// Rebuild the app container after changing app.yml.
+        #[arg(long)]
+        rebuild: bool,
+        /// Skip the timestamped remote backup. Backups are enabled by default.
+        #[arg(long, action = ArgAction::SetFalse, default_value_t = true)]
+        backup: bool,
+        /// Confirm a live write and optional rebuild.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+    /// Remove one scalar Docker environment variable, preserving other app.yml content.
+    Unset {
+        /// Discourse name.
+        discourse: String,
+        /// Environment variable name.
+        key: String,
+        /// Rebuild the app container after changing app.yml.
+        #[arg(long)]
+        rebuild: bool,
+        /// Skip the timestamped remote backup. Backups are enabled by default.
+        #[arg(long, action = ArgAction::SetFalse, default_value_t = true)]
+        backup: bool,
+        /// Confirm a live write and optional rebuild.
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 }
 

@@ -1,5 +1,7 @@
 # `dsc app env` - inspect and safely manage Docker `app.yml` environment
 
+> **Status: Phases 1 and 2 implemented (unreleased).** `dsc app env list|get|audit|set|unset` reads and safely edits a constrained scalar `env:` mapping over SSH, uses an optional per-forum `app_yml_path`, and applies conservative secret redaction.
+
 Spec for reading, auditing, and eventually changing the `env:` section of a self-hosted Discourse Docker install's `containers/app.yml` over SSH. Goal: make fleet configuration observable and controlled without manually logging into every host. Driver: Digital Health Discourse hit an admin API rate limit while `dsc tag pull` ran; the immediate setting to inspect or raise is `DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE`.
 
 ## Motivation
@@ -46,16 +48,16 @@ The request surfaced on 2026-07-14 while a read-only `dsc tag pull dhi-discourse
 
 ### Phase 1 - blocking: inspect and audit
 
-- [ ] `app env list`, `get`, and fleet `audit` over SSH.
-- [ ] `app_yml_path` config field with the standard path as its documented default.
-- [ ] Conservative secret-key detection and redaction; structured output and empty-value behaviour.
-- [ ] Unit tests for parsing representative `env:` blocks and redaction; SSH integration test against a fixture file.
+- [x] `app env list`, `get`, and fleet `audit` over SSH.
+- [x] `app_yml_path` config field with the standard path as its documented default.
+- [x] Conservative secret-key detection and redaction; structured output and empty-value behaviour.
+- [x] Unit tests for parsing representative `env:` blocks and redaction. A disposable SSH-host integration fixture remains a live-test infrastructure follow-up.
 
 ### Phase 2 - controlled environment edits
 
-- [ ] Constrained text-preserving edit of a scalar `env:` mapping; reject unsupported YAML forms rather than reserialising and losing comments, anchors, or unrelated sections.
-- [ ] Atomic write, timestamped backup, post-write re-read/hash verification, dry-run plan, and `--rebuild` integration with the rebuild lock.
-- [ ] `set`/`unset` integration tests that restore the fixture/remote file in teardown.
+- [x] Constrained text-preserving edit of a scalar `env:` mapping; reject unsupported YAML forms rather than reserialising and losing comments, anchors, or unrelated sections.
+- [x] Atomic write, timestamped backup, post-write re-read verification, dry-run plan, and `--rebuild` integration with the rebuild lock.
+- [x] Unit coverage for set/unset edits and rejection of unsupported syntax. A disposable SSH-host integration fixture remains a live-test infrastructure follow-up.
 
 ### Phase 3 - deliberately separate follow-up
 

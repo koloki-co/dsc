@@ -30,7 +30,7 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 
 ### Docker app configuration ⭐
 
-- [ ] ⭐ **R28 - `dsc app env` inspect, audit, and safe set** - read environment-variable names and non-secret values from Docker `app.yml`, audit one key across matching forums, then add guarded scalar edits with backup, dry-run, and optional rebuild. Driver: inspecting or raising `DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE` across the owned fleet. Spec: [app-environment](commands/app-environment.md).
+- [~] ⭐ **R28 - `dsc app env` inspect, audit, and safe set** - Phase 1 ships read-only `list|get|audit` over SSH with secret redaction and optional `app_yml_path`; guarded scalar edits with backup, dry-run, and optional rebuild remain. Driver: inspecting or raising `DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE` across the owned fleet. Spec: [app-environment](commands/app-environment.md).
 
 ### Content sync
 

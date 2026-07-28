@@ -83,6 +83,7 @@ nav:
   - Site admin:
       - setting: setting.md
       - backup: backup.md
+      - app: app.md
       - theme: theme.md
       - plugin: plugin.md
       - palette: palette.md
