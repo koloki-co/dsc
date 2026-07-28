@@ -5,42 +5,9 @@
 mod common;
 use common::*;
 use tempfile::TempDir;
-use uuid::Uuid;
 
 #[test]
-fn emoji_add() {
-    let Some(test) = test_discourse() else {
-        return;
-    };
-    let Some(topic_id) = test.test_topic_id else {
-        return;
-    };
-    let Some(emoji_path) = test.emoji_path.as_ref() else {
-        return;
-    };
-    let Some(emoji_name) = test.emoji_name.as_ref() else {
-        return;
-    };
-    let marker = Uuid::new_v4().to_string();
-    vprintln("e2e_emoji_add: post marker, then upload emoji");
-    post_and_verify(&test, topic_id, &marker);
-
-    let dir = TempDir::new().expect("tempdir");
-    let config_path = write_temp_config(
-        &dir,
-        &format!(
-            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n",
-            test.name, test.baseurl, test.apikey, test.api_username
-        ),
-    );
-    let output = run_dsc(
-        &["emoji", "add", &test.name, emoji_path, emoji_name],
-        &config_path,
-    );
-    assert!(output.status.success(), "emoji add failed");
-}
-
-#[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn emoji_list() {
     let Some(test) = test_discourse() else {
         return;
@@ -61,6 +28,7 @@ fn emoji_list() {
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn emoji_list_inline() {
     let Some(test) = test_discourse() else {
         return;

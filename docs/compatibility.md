@@ -34,4 +34,4 @@ The minimum supported Rust version (MSRV) is Rust 1.95.0. It is declared in `Car
 
 `dsc` supports the current upstream stable Discourse release on a best-effort, no-SLA basis. At the time this contract was written (July 2026), the supported release is `2026.7.0-latest`; older Discourse releases may work but are not supported. The Discourse admin API is not formally versioned, so report failures with `dsc version <forum>` output and the command used.
 
-Live endpoint observations exist for Discourse 3.x (March 2026), `2026.6.0-latest`, and `2026.7.0-latest`. They are recorded in the relevant command specs and are not a complete compatibility matrix. The planned live-test isolation work will make this validation reproducible.
+Live endpoint observations exist for Discourse 3.x (March 2026), `2026.6.0-latest`, and `2026.7.0-latest`. They are recorded in the relevant command specs and are not a complete compatibility matrix. The isolated `s/test-live` compatibility runner was validated twice against `2026.7.0-latest` (`216dc56395c9c678c36e772a8bbf3ed04b1e7fcb`) on 2026-07-27, including concurrent-run refusal and forced-failure cleanup.

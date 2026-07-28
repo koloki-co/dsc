@@ -22,7 +22,6 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 
 ### Contract, documentation, and launch package
 
-- [ ] **R36 - Isolate live compatibility tests** - make tests that contact Discourse explicit opt-in, disposable-resource based, serialised where needed, and cleanup-safe; retain offline tests as the ordinary local/CI gate.
 - [ ] **R3 - Record an asciinema** (~30s) of the pull → edit → push → diff loop; embed in README.
 - [ ] **R5 - Pre-circulate the Meta post** to a couple of Discourse regulars before posting.
 - [ ] **R2 - Cut `v1.0.0`** from a fresh, clean, synchronised worktree after this checklist passes, with a release rehearsal (`s/test-fmt-clippy`, docs build, `cargo audit`, `cargo publish --dry-run`) and generated changelog review.
@@ -47,9 +46,11 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 
 ### Admin depth (demand-driven)
 
+- [ ] ⭐ **R40 - `dsc explorer`** - list, inspect, and run saved Data Explorer queries with typed JSON/YAML parameters, structured results, and CSV export; excludes raw SQL and query mutation until a governed definition-sync workflow is specified. Driver: Data Explorer is bundled core and is the practical diagnostic surface for data absent from the admin API. Spec: [explorer](commands/explorer.md).
 - [ ] **R39 - Emoji groups and bulk transfer** - investigate the new Discourse admin API for custom emoji group assignment and ZIP/CSV bulk import/export. If the API is available, add portable `dsc emoji` pull/push or import/export commands with manifest validation and dry-run support. Pinned picker groups are already configurable through the `emoji_picker_pinned_groups` site setting. Driver: [Discourse's July 2026 emoji groups and bulk import/export release](https://meta.discourse.org/t/pinned-emoji-groups-and-bulk-import-export-of-custom-emojis/408280).
 - [ ] **R16 - `dsc report <name> [--period]`** - dashboard reports such as signups, DAU, posts, and likes; distinct from `analytics`.
 - [ ] **R17 - `dsc webhook list|create|delete|ping`** - basic webhook administration.
+- [ ] ⭐ **R30 - `dsc notify who|skipped`** - read-only forensic inspection of `TopicUser`, `CategoryUser`, `TagUser`, and `SkippedEmailLog` records to answer "who is watching this topic and why did they get an email" without server or Data Explorer access. Driver: production notification cascade incident where the admin could not diagnose why specific users received emails for a dormant topic. Spec: [notification-forensics](commands/notification-forensics.md).
 
 ### Cross-forum (the multi-install headline)
 
@@ -66,7 +67,7 @@ Speculative; build only on real demand. None are required for 1.0.
 - [ ] **R24 - MCP server mode** - `dsc mcp serve` exposing commands as MCP tools. Overlaps `discourse-bawmedical-mcp` - consolidate vs coexist.
 - [ ] **R25 - TUI** - `dsc tui` for interactive browsing. Big scope.
 - [ ] **R26 - Config federation** - multiple config files + include-directives, for teams.
-- [ ] **R27 - Discourse User API** - `dsc login` key-exchange for non-admin / scoped-bot auth; likely renames `api-key` → `admin-key`. Widens the *audience*, not the *capability* (most value needs admin scope regardless).
+- [ ] **R27 - Discourse User API authentication** - add the user-approved device-code `dsc login/logout` flow and a per-forum User API auth profile after R36 provides isolated live compatibility tests. Initial candidate surface: read/search/pull, notifications, own PMs, uploads/invites, and content the authorizing user may create or edit; moderator/admin compatibility follows only after a disposable live endpoint/role spike. Existing Admin API auth remains supported with no silent privilege fallback. Spec: [user-api-authentication](commands/user-api-authentication.md).
 
 ## Out of scope / removed
 

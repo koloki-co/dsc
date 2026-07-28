@@ -590,6 +590,7 @@ mod tests {
             slug: Some("hello-world".to_string()),
             posts_count: None,
             category_id: None,
+            deleted_at: None,
             post_stream: PostStream { posts, stream },
         }
     }
@@ -608,6 +609,7 @@ mod tests {
             raw: raw.map(|s| s.to_string()),
             updated_at: None,
             created_at: created_at.map(|s| s.to_string()),
+            deleted_at: None,
         }
     }
 
@@ -638,6 +640,7 @@ mod tests {
             slug: Some("my-slug".to_string()),
             posts_count: None,
             category_id: None,
+            deleted_at: None,
             post_stream: PostStream::default(),
         };
         assert_eq!(topic_display_title(&t2, 42), "my-slug");
@@ -648,6 +651,7 @@ mod tests {
             slug: None,
             posts_count: None,
             category_id: None,
+            deleted_at: None,
             post_stream: PostStream::default(),
         };
         assert_eq!(topic_display_title(&t3, 42), "topic-42");

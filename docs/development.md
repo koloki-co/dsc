@@ -36,33 +36,36 @@ The full CI-mirroring gate (fmt + clippy `-D warnings` + the complete test suite
 s/test-fmt-clippy
 ```
 
-Live compatibility tests require an explicit opt-in and an absolute path to a credential file. They run serially and may mutate their configured disposable resources, so point them only at an isolated test forum:
+Live compatibility tests are structurally ignored by ordinary Cargo runs. They require an explicit opt-in and an absolute path to a dedicated credential file. The runner validates the file, acquires a cross-process lock, runs one test thread, recovers stale marked resources, and verifies cleanup afterward:
 
 ```bash
 DSC_LIVE_TESTS=1 TEST_DSC_CONFIG=/absolute/path/to/live-test.toml s/test-live
 ```
 
-Add `DSC_TEST_VERBOSE=1` before that command for test diagnostics. Ordinary `cargo test`, CI, and `s/test-fmt-clippy` never contact Discourse.
+The runner uses `--nocapture`; add `DSC_TEST_VERBOSE=1` for additional per-command diagnostics. Ordinary `cargo test`, CI, and `s/test-fmt-clippy` do not execute tests that contact Discourse. Do not bypass the runner with direct `cargo test -- --ignored`.
 
 The live-test configuration uses the shape below:
 
 ```toml
+version = 1
+
 [[discourse]]
 name = "myforum"
 baseurl = "https://forum.example.com"
 apikey = "<admin api key>"
 api_username = "system"
+disposable = true                # required safety acknowledgement
 changelog_topic_id = 123        # optional unless testing update changelog posting
 test_topic_id = 456             # topic used by e2e topic tests
 test_category_id = 789          # category used by e2e category tests
 test_color_scheme_id = 321      # palette used by e2e palette tests
-emoji_path = "./smile.png"     # optional; enables emoji add test
-emoji_name = "smile"
-test_plugin_url = "https://github.com/discourse/discourse-reactions"
-test_plugin_name = "discourse-reactions"
-test_theme_url = "https://github.com/discourse/discourse-brand-header"
-test_theme_name = "discourse-brand-header"
+test_group_id = 654             # group used by read/dry-run tests
+test_theme_id = 987             # theme used by read/dry-run tests
+ssh_enabled = false             # when true, ssh_host and changelog_topic_id are required
+backup_enabled = false          # enables read-only backup list coverage
 ```
+
+All five `test_*_id` fixtures are required and must belong to this disposable forum. The configured API user must be an administrator, and the forum must set `can_permanently_delete = true`; cleanup soft-deletes marked resources, waits out Discourse's five-minute same-admin safety window when necessary, and then verifies permanent deletion. On Unix the file must be mode 0600 or stricter: `chmod 600 /absolute/path/to/live-test.toml`. Backup creation/restore, custom emoji upload, and other mutations without reliable cleanup are deliberately excluded from this runner. See the [R36 live-test specification](https://github.com/pacharanero/dsc/blob/main/spec/live-compatibility-tests.md) for the complete safety and coverage contract.
 
 ## Shell completions
 

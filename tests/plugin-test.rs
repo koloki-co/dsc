@@ -4,10 +4,10 @@
 
 mod common;
 use common::*;
-use std::process::Command;
 use tempfile::TempDir;
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn plugin_list() {
     let Some(test) = test_discourse() else {
         return;
@@ -27,54 +27,59 @@ fn plugin_list() {
 
 #[test]
 fn plugin_install_remove() {
-    let Some(test) = test_discourse() else {
-        return;
-    };
-    if test.ssh_enabled != Some(true) {
-        return;
-    }
-    let Some(url) = test.test_plugin_url.as_ref() else {
-        return;
-    };
-    let Some(name) = test.test_plugin_name.as_ref() else {
-        return;
-    };
-    vprintln("e2e_plugin_install_remove: install/remove plugin");
-    let ssh_host_line = test
-        .ssh_host
-        .as_ref()
-        .map(|host| format!("ssh_host = \"{}\"\n", host))
-        .unwrap_or_default();
+    const PLUGIN_URL: &str = "https://example.invalid/test-plugin.git";
+    const PLUGIN_NAME: &str = "test-plugin";
+
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
         &dir,
-        &format!(
-            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n{}",
-            test.name, test.baseurl, test.apikey, test.api_username, ssh_host_line
-        ),
+        r#"[[discourse]]
+name = "example"
+baseurl = "https://example.invalid"
+apikey = "fake-api-key"
+api_username = "fake-api-user"
+ssh_host = "ssh.example.invalid"
+"#,
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_dsc"))
-        .arg("-c")
-        .arg(&config_path)
-        .arg("plugin")
-        .arg("install")
-        .arg(&test.name)
-        .arg(url)
-        .env("DSC_SSH_PLUGIN_INSTALL_CMD", "echo plugin install {url}")
-        .output()
-        .expect("run plugin install");
-    assert!(output.status.success(), "plugin install failed");
+    // SAFETY: this integration-test process has only one non-ignored test, and
+    // both variables are set before it spawns any child process.
+    unsafe {
+        std::env::set_var("DSC_SSH_PLUGIN_INSTALL_CMD", "echo plugin install {url}");
+        std::env::set_var("DSC_SSH_PLUGIN_REMOVE_CMD", "echo plugin remove {name}");
+    }
 
-    let output = Command::new(env!("CARGO_BIN_EXE_dsc"))
-        .arg("-c")
-        .arg(&config_path)
-        .arg("plugin")
-        .arg("remove")
-        .arg(&test.name)
-        .arg(name)
-        .env("DSC_SSH_PLUGIN_REMOVE_CMD", "echo plugin remove {name}")
-        .output()
-        .expect("run plugin remove");
-    assert!(output.status.success(), "plugin remove failed");
+    let output = run_dsc(
+        &["-n", "plugin", "install", "example", PLUGIN_URL],
+        &config_path,
+    );
+    assert!(
+        output.status.success(),
+        "plugin install --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[dry-run]")
+            && stdout.contains("ssh.example.invalid")
+            && stdout.contains(PLUGIN_URL),
+        "expected plugin install dry-run preview, got: {stdout}"
+    );
+
+    let output = run_dsc(
+        &["-n", "plugin", "remove", "example", PLUGIN_NAME],
+        &config_path,
+    );
+    assert!(
+        output.status.success(),
+        "plugin remove --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[dry-run]")
+            && stdout.contains("ssh.example.invalid")
+            && stdout.contains(PLUGIN_NAME),
+        "expected plugin remove dry-run preview, got: {stdout}"
+    );
 }

@@ -7,6 +7,7 @@ use common::*;
 use tempfile::TempDir;
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn notification_list_returns_a_json_array_without_mutating_the_forum() {
     let Some(test) = test_discourse() else {
         return;
@@ -55,21 +56,19 @@ fn notification_list_returns_a_json_array_without_mutating_the_forum() {
 
 #[test]
 fn notification_read_dry_run_does_not_mutate_the_forum() {
-    let Some(test) = test_discourse() else {
-        return;
-    };
-    vprintln("e2e_notification_read: dry-run mark-all-read never sends the request");
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
         &dir,
-        &format!(
-            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n",
-            test.name, test.baseurl, test.apikey, test.api_username
-        ),
+        r#"[[discourse]]
+name = "example"
+baseurl = "https://example.invalid"
+apikey = "fake-api-key"
+api_username = "fake-api-user"
+"#,
     );
 
     let output = run_dsc(
-        &["--dry-run", "notification", "read", &test.name, "--all"],
+        &["--dry-run", "notification", "read", "example", "--all"],
         &config_path,
     );
     assert!(

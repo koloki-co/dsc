@@ -4,12 +4,12 @@
 
 mod common;
 use common::*;
-use dsc::api::DiscourseClient;
-use std::fs;
+use std::fs::{self, FileTimes, OpenOptions};
+use std::time::{Duration, SystemTime};
 use tempfile::TempDir;
-use uuid::Uuid;
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn topic_pull() {
     let Some(test) = test_discourse() else {
         return;
@@ -17,9 +17,7 @@ fn topic_pull() {
     let Some(topic_id) = test.test_topic_id else {
         return;
     };
-    let marker = Uuid::new_v4().to_string();
-    vprintln("e2e_topic_pull: post marker, then pull topic");
-    post_and_verify(&test, topic_id, &marker);
+    vprintln("e2e_topic_pull: pull topic");
 
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
@@ -39,22 +37,25 @@ fn topic_pull() {
         ],
         &config_path,
     );
-    assert!(output.status.success(), "topic pull failed");
+    assert!(
+        output.status.success(),
+        "topic pull failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn topic_push() {
     let Some(test) = test_discourse() else {
         return;
     };
-    let Some(topic_id) = test.test_topic_id else {
-        return;
-    };
-    let marker = Uuid::new_v4().to_string();
-    vprintln("e2e_topic_push: write file, then push topic");
+    let disposable = create_disposable_topic(&test, "topic-push");
+    vprintln("e2e_topic_push: write file, then push disposable topic");
     let dir = TempDir::new().expect("tempdir");
     let file_path = dir.path().join("push.md");
-    fs::write(&file_path, format!("# E2E Push\n\n{}", marker)).expect("write file");
+    let body = format!("# E2E Push\n\n{}", disposable.marker);
+    fs::write(&file_path, &body).expect("write file");
 
     let config_path = write_temp_config(
         &dir,
@@ -68,37 +69,55 @@ fn topic_push() {
             "topic",
             "push",
             &test.name,
-            &topic_id.to_string(),
+            &disposable.id.to_string(),
             file_path.to_str().unwrap(),
+            "--no-bump",
+            "--skip-revision",
         ],
         &config_path,
     );
-    assert!(output.status.success(), "topic push failed");
-    let config = to_config(&test);
-    let client = DiscourseClient::new(&config).expect("client");
-    let topic = client.fetch_topic(topic_id, true).expect("topic");
-    let found = topic.post_stream.posts.iter().any(|post| {
-        post.raw
-            .as_ref()
-            .map(|raw| raw.contains(&marker))
-            .unwrap_or(false)
-    });
-    assert!(found, "marker not found after push");
+    assert!(
+        output.status.success(),
+        "topic push failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let remote = disposable
+        .client
+        .fetch_topic(disposable.id, true)
+        .expect("topic");
+    let remote_body = remote
+        .post_stream
+        .posts
+        .first()
+        .and_then(|post| post.raw.as_deref())
+        .expect("topic OP has raw content");
+    assert_eq!(remote_body, body, "marker body not applied after push");
+    if std::env::var("DSC_LIVE_TEST_FORCE_FAILURE").as_deref() == Ok("topic_push") {
+        panic!("forced failure after topic creation for cleanup verification");
+    }
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn topic_sync() {
     let Some(test) = test_discourse() else {
         return;
     };
-    let Some(topic_id) = test.test_topic_id else {
-        return;
-    };
-    let marker = Uuid::new_v4().to_string();
-    vprintln("e2e_topic_sync: write file, then sync");
+    let disposable = create_disposable_topic(&test, "topic-sync");
+    vprintln("e2e_topic_sync: write file, then sync disposable topic");
     let dir = TempDir::new().expect("tempdir");
     let file_path = dir.path().join("sync.md");
-    fs::write(&file_path, format!("# E2E Sync\n\n{}", marker)).expect("write file");
+    let body = format!("# E2E Sync\n\n{}", disposable.marker);
+    fs::write(&file_path, &body).expect("write file");
+    OpenOptions::new()
+        .write(true)
+        .open(&file_path)
+        .expect("open sync file")
+        .set_times(
+            FileTimes::new()
+                .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(4_102_444_800)),
+        )
+        .expect("set deterministic newer mtime");
 
     let config_path = write_temp_config(
         &dir,
@@ -112,41 +131,38 @@ fn topic_sync() {
             "topic",
             "sync",
             &test.name,
-            &topic_id.to_string(),
+            &disposable.id.to_string(),
             file_path.to_str().unwrap(),
             "--yes",
         ],
         &config_path,
     );
-    assert!(output.status.success(), "topic sync failed");
-    let config = to_config(&test);
-    let client = DiscourseClient::new(&config).expect("client");
-    let topic = client.fetch_topic(topic_id, true).expect("topic");
-    let found = topic.post_stream.posts.iter().any(|post| {
-        post.raw
-            .as_ref()
-            .map(|raw| raw.contains(&marker))
-            .unwrap_or(false)
-    });
-    assert!(found, "marker not found after sync");
+    assert!(
+        output.status.success(),
+        "topic sync failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let remote = disposable
+        .client
+        .fetch_topic(disposable.id, true)
+        .expect("topic");
+    let remote_body = remote
+        .post_stream
+        .posts
+        .first()
+        .and_then(|post| post.raw.as_deref())
+        .expect("topic OP has raw content");
+    assert_eq!(remote_body, body, "marker body not applied after sync");
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn topic_title_roundtrip() {
     let Some(test) = test_discourse() else {
         return;
     };
-    let Some(topic_id) = test.test_topic_id else {
-        return;
-    };
-    vprintln("e2e_topic_title_roundtrip: rename topic, verify, restore");
-    let config = to_config(&test);
-    let client = DiscourseClient::new(&config).expect("client");
-    let original = client
-        .fetch_topic(topic_id, false)
-        .expect("fetch topic")
-        .title
-        .expect("topic has a title");
+    let disposable = create_disposable_topic(&test, "topic-title-roundtrip");
+    vprintln("e2e_topic_title_roundtrip: rename disposable topic and verify");
 
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
@@ -156,9 +172,15 @@ fn topic_title_roundtrip() {
             test.name, test.baseurl, test.apikey, test.api_username
         ),
     );
-    let marker = format!("DSC E2E Title {}", Uuid::new_v4());
+    let title = format!("DSC E2E Title {}", disposable.marker);
     let output = run_dsc(
-        &["topic", "title", &test.name, &topic_id.to_string(), &marker],
+        &[
+            "topic",
+            "title",
+            &test.name,
+            &disposable.id.to_string(),
+            &title,
+        ],
         &config_path,
     );
     assert!(
@@ -166,32 +188,83 @@ fn topic_title_roundtrip() {
         "topic title failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let now = client
-        .fetch_topic(topic_id, false)
+    let now = disposable
+        .client
+        .fetch_topic(disposable.id, false)
         .expect("re-fetch topic")
         .title
         .unwrap_or_default();
-    assert_eq!(now, marker, "title was not applied");
+    assert_eq!(now, title, "marker title was not applied");
+}
 
-    // Restore the original title so the test leaves no trace.
-    let restore = run_dsc(
+#[test]
+#[ignore = "live compatibility test; run through s/test-live"]
+fn topic_deleted_list_and_restore() {
+    let Some(test) = test_discourse() else {
+        return;
+    };
+    let disposable = create_disposable_topic(&test, "topic-deleted-list");
+    vprintln("e2e_topic_deleted_list_and_restore: delete, list, and restore disposable topic");
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n",
+            test.name, test.baseurl, test.apikey, test.api_username
+        ),
+    );
+
+    let deleted = run_dsc(
+        &["topic", "delete", &test.name, &disposable.id.to_string()],
+        &config_path,
+    );
+    assert!(
+        deleted.status.success(),
+        "topic delete failed: {}",
+        String::from_utf8_lossy(&deleted.stderr)
+    );
+
+    let listed = run_dsc(
         &[
             "topic",
-            "title",
+            "list",
             &test.name,
-            &topic_id.to_string(),
-            &original,
+            "--deleted",
+            &disposable.marker,
+            "--format",
+            "json",
         ],
         &config_path,
     );
     assert!(
-        restore.status.success(),
-        "restoring original title failed: {}",
-        String::from_utf8_lossy(&restore.stderr)
+        listed.status.success(),
+        "deleted-topic list failed: {}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let topics: serde_json::Value =
+        serde_json::from_slice(&listed.stdout).expect("deleted-topic list JSON");
+    assert!(
+        topics
+            .as_array()
+            .expect("deleted-topic list array")
+            .iter()
+            .any(|topic| topic["id"].as_u64() == Some(disposable.id)),
+        "deleted topic was not listed"
+    );
+
+    let restored = run_dsc(
+        &["topic", "restore", &test.name, &disposable.id.to_string()],
+        &config_path,
+    );
+    assert!(
+        restored.status.success(),
+        "topic restore failed: {}",
+        String::from_utf8_lossy(&restored.stderr)
     );
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn topic_tags_dry_run() {
     let Some(test) = test_discourse() else {
         return;
@@ -233,35 +306,22 @@ fn topic_tags_dry_run() {
 
 #[test]
 fn topic_reply_dry_run_previews_without_posting() {
-    let Some(test) = test_discourse() else {
-        return;
-    };
-    let Some(topic_id) = test.test_topic_id else {
-        return;
-    };
-    vprintln("e2e_topic_reply_dry_run: -n must preview, not post (issue #20)");
+    let topic_id = 12345;
+    vprintln("topic_reply_dry_run: -n must return before network access (issue #20)");
     let dir = TempDir::new().expect("tempdir");
     let file_path = dir.path().join("reply.md");
     fs::write(&file_path, "A dry-run reply that must NOT be posted.").expect("write file");
     let config_path = write_temp_config(
         &dir,
-        &format!(
-            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n",
-            test.name, test.baseurl, test.apikey, test.api_username
-        ),
+        "[[discourse]]\nname = \"offline\"\nbaseurl = \"https://example.invalid\"\napikey = \"unused\"\napi_username = \"system\"\n",
     );
-
-    let config = to_config(&test);
-    let client = DiscourseClient::new(&config).expect("client");
-    let before = client.fetch_topic(topic_id, false).expect("topic");
-    let count_before = before.post_stream.stream.len();
 
     let output = run_dsc(
         &[
             "-n",
             "topic",
             "reply",
-            &test.name,
+            "offline",
             &topic_id.to_string(),
             file_path.to_str().unwrap(),
         ],
@@ -280,13 +340,5 @@ fn topic_reply_dry_run_previews_without_posting() {
     assert!(
         !stdout.contains("Replied to topic"),
         "dry-run must not print a success line, got: {stdout}"
-    );
-
-    // And it must not actually post.
-    let after = client.fetch_topic(topic_id, false).expect("topic");
-    assert_eq!(
-        after.post_stream.stream.len(),
-        count_before,
-        "dry-run must not change the post count"
     );
 }

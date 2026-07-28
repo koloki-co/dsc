@@ -6,9 +6,39 @@ use crate::cli::OutputFormat;
 use crate::commands::common::{fetch_fullname_from_url, open_url, parse_tags};
 use crate::config::{Config, DiscourseConfig, save_config};
 use anyhow::{Context, Result};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
+
+/// Public list representation. Keep this explicit so config credentials can
+/// never appear merely because a new field is added to `DiscourseConfig`.
+#[derive(Serialize)]
+struct DiscourseListEntry<'a> {
+    name: &'a str,
+    baseurl: &'a str,
+    fullname: Option<&'a str>,
+    api_username: Option<&'a str>,
+    tags: Option<&'a [String]>,
+    changelog_topic_id: Option<u64>,
+    ssh_host: Option<&'a str>,
+    docker_rootless: Option<bool>,
+}
+
+impl<'a> From<&'a DiscourseConfig> for DiscourseListEntry<'a> {
+    fn from(discourse: &'a DiscourseConfig) -> Self {
+        Self {
+            name: &discourse.name,
+            baseurl: &discourse.baseurl,
+            fullname: discourse.fullname.as_deref(),
+            api_username: discourse.api_username.as_deref(),
+            tags: discourse.tags.as_deref(),
+            changelog_topic_id: discourse.changelog_topic_id,
+            ssh_host: discourse.ssh_host.as_deref(),
+            docker_rootless: discourse.docker_rootless,
+        }
+    }
+}
 
 pub fn list_tidy(config_path: &Path, config: &mut Config) -> Result<()> {
     // Capture missing fields based on the loaded config *before* we insert placeholders.
@@ -151,11 +181,15 @@ pub fn list_discourses(
             }
         }
         OutputFormat::Json => {
-            let raw = serde_json::to_string_pretty(&filtered)?;
+            let entries: Vec<DiscourseListEntry<'_>> =
+                filtered.iter().copied().map(Into::into).collect();
+            let raw = serde_json::to_string_pretty(&entries)?;
             println!("{}", raw);
         }
         OutputFormat::Yaml => {
-            let raw = serde_yaml::to_string(&filtered)?;
+            let entries: Vec<DiscourseListEntry<'_>> =
+                filtered.iter().copied().map(Into::into).collect();
+            let raw = serde_yaml::to_string(&entries)?;
             println!("{}", raw);
         }
         OutputFormat::Csv => {

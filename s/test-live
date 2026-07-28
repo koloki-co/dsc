@@ -6,8 +6,8 @@
 
 # Run the real-Discourse compatibility suite only when the caller has
 # deliberately supplied an absolute, readable configuration file. The test
-# harness consumes both variables, and the single test thread avoids collisions
-# on the configured disposable resources.
+# harness consumes both variables. A cross-process lock and one libtest thread
+# prevent concurrent mutation of the configured disposable resources.
 
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -22,4 +22,104 @@ if [[ "${TEST_DSC_CONFIG:-}" != /* || ! -r "$TEST_DSC_CONFIG" ]]; then
   exit 2
 fi
 
-cargo test -- --test-threads=1 "$@"
+if ! command -v realpath >/dev/null 2>&1; then
+  echo "s/test-live requires realpath to canonicalize the config lock." >&2
+  exit 2
+fi
+config_path=$(realpath "$TEST_DSC_CONFIG")
+lock_id=$(printf '%s' "$config_path" | cksum | cut -d' ' -f1)
+state_root="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/dsc-live-tests-$(id -u)"
+if ! mkdir -m 700 "$state_root" 2>/dev/null && [[ ! -d "$state_root" || ! -O "$state_root" ]]; then
+  echo "Cannot create a private live-test state directory: $state_root" >&2
+  exit 2
+fi
+lock_dir="$state_root/$lock_id.lock"
+state_file="$state_root/$lock_id.resources"
+
+if ! mkdir -m 700 "$lock_dir" 2>/dev/null; then
+  owner="unknown"
+  if [[ -r "$lock_dir/pid" ]]; then
+    owner=$(<"$lock_dir/pid")
+  fi
+  if [[ "$owner" =~ ^[0-9]+$ ]] && kill -0 "$owner" 2>/dev/null; then
+    echo "Live tests already hold the lock for this config (PID $owner): $lock_dir" >&2
+  elif [[ "$owner" =~ ^[0-9]+$ ]]; then
+    echo "A stale live-test lock exists for PID $owner: $lock_dir" >&2
+    echo "Verify that no live test is running, then remove that directory manually." >&2
+  else
+    echo "A live-test lock exists without a readable owner: $lock_dir" >&2
+    echo "Another runner may still be publishing its PID; refusing to steal the lock." >&2
+  fi
+  exit 2
+fi
+
+cleanup_complete=0
+cleanup_lock() {
+  rm -f "$lock_dir/pid"
+  rmdir "$lock_dir" 2>/dev/null || true
+  if [[ "$cleanup_complete" -eq 1 ]]; then
+    rm -f "$state_file"
+  fi
+}
+trap cleanup_lock EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+printf '%s\n' "$$" > "$lock_dir/pid"
+touch "$state_file"
+
+export TEST_DSC_CONFIG="$config_path"
+export DSC_LIVE_TEST_RUNNER=1
+export DSC_LIVE_TEST_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+export DSC_LIVE_TEST_STATE="$state_file"
+
+suite_listing=$(cargo test -- --ignored --list "$@")
+substantive_listing=${suite_listing//live_configuration_is_valid: test/}
+substantive_listing=${substantive_listing//live_cleanup_is_complete: test/}
+if [[ "$substantive_listing" != *": test"* ]]; then
+  echo "No ignored live compatibility test matches the supplied filter." >&2
+  exit 2
+fi
+
+DSC_LIVE_TEST_PHASE=preflight cargo test \
+  --test live-harness-test live_configuration_is_valid -- \
+  --exact --ignored --nocapture --test-threads=1
+
+suite_pid=""
+interrupted_status=0
+interrupt_suite() {
+  interrupted_status="$2"
+  if [[ -n "$suite_pid" ]] && kill -0 "$suite_pid" 2>/dev/null; then
+    kill -s "$1" -- "-$suite_pid" 2>/dev/null || true
+  fi
+}
+trap 'interrupt_suite HUP 129' HUP
+trap 'interrupt_suite INT 130' INT
+trap 'interrupt_suite TERM 143' TERM
+
+set -m
+DSC_LIVE_TEST_PHASE=suite cargo test -- \
+  --ignored --nocapture --test-threads=1 "$@" &
+suite_pid=$!
+set +e
+wait "$suite_pid"
+test_status=$?
+set -e
+set +m
+suite_pid=""
+
+cleanup_status=0
+DSC_LIVE_TEST_PHASE=postflight cargo test \
+  --test live-harness-test live_cleanup_is_complete -- \
+  --exact --ignored --nocapture --test-threads=1 || cleanup_status=$?
+if [[ "$cleanup_status" -eq 0 ]]; then
+  cleanup_complete=1
+fi
+if [[ "$interrupted_status" -ne 0 ]]; then
+  test_status="$interrupted_status"
+fi
+
+if [[ "$test_status" -ne 0 ]]; then
+  exit "$test_status"
+fi
+exit "$cleanup_status"

@@ -8,21 +8,25 @@ use dsc::api::DiscourseClient;
 use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
-use uuid::Uuid;
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn update() {
     let Some(test) = test_discourse() else {
         return;
     };
     if test.ssh_enabled != Some(true) {
+        eprintln!("[live:skip] update requires ssh_enabled = true");
         return;
     }
     vprintln("e2e_update: update + changelog post");
     let Some(topic_id) = test.changelog_topic_id else {
+        eprintln!("[live:skip] update requires changelog_topic_id");
         return;
     };
-    let marker = Uuid::new_v4().to_string();
+    let marker = live_test_marker("update");
+    let client = DiscourseClient::new(&to_config(&test)).expect("client");
+    let _cleanup = DeletePostsByMarkerOnDrop::new(&test, topic_id, &marker);
     let ssh_host_line = test
         .ssh_host
         .as_ref()
@@ -57,26 +61,29 @@ fn update() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let client = DiscourseClient::new(&to_config(&test)).expect("client");
     let post_id = extract_test_post_id(&output).expect("update test should report its post ID");
-    let _cleanup = DeletePostOnDrop::new(client.clone(), post_id);
     let found = wait_for_post_marker(&client, post_id, &marker);
     assert!(found, "marker not found on changelog");
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn update_all() {
     let Some(test) = test_discourse() else {
         return;
     };
     if test.ssh_enabled != Some(true) {
+        eprintln!("[live:skip] update_all requires ssh_enabled = true");
         return;
     }
     vprintln("e2e_update_all: update all + changelog post");
     let Some(topic_id) = test.changelog_topic_id else {
+        eprintln!("[live:skip] update_all requires changelog_topic_id");
         return;
     };
-    let marker = Uuid::new_v4().to_string();
+    let marker = live_test_marker("update-all");
+    let client = DiscourseClient::new(&to_config(&test)).expect("client");
+    let _cleanup = DeletePostsByMarkerOnDrop::new(&test, topic_id, &marker);
     let ssh_host_line = test
         .ssh_host
         .as_ref()
@@ -111,9 +118,7 @@ fn update_all() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-    let client = DiscourseClient::new(&to_config(&test)).expect("client");
     let post_id = extract_test_post_id(&output).expect("update all test should report its post ID");
-    let _cleanup = DeletePostOnDrop::new(client.clone(), post_id);
     let found = wait_for_post_marker(&client, post_id, &marker);
     assert!(found, "marker not found on changelog");
 }

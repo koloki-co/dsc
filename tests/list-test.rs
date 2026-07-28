@@ -20,6 +20,49 @@ fn list() {
 }
 
 #[test]
+fn list_structured_formats_never_expose_api_keys() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "private"
+baseurl = "https://private.example"
+fullname = "Private forum"
+apikey = "never-print-this-secret"
+api_username = "system"
+tags = ["production"]
+changelog_topic_id = 42
+ssh_host = "host.example"
+docker_rootless = true
+"#,
+    );
+
+    for format in ["json", "yaml"] {
+        let output = run_dsc(&["list", "--format", format], &config_path);
+        assert!(output.status.success(), "list --format {format} failed");
+
+        let raw = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !raw.contains("apikey") && !raw.contains("never-print-this-secret"),
+            "list --format {format} exposed an API key:\n{raw}"
+        );
+        for expected in [
+            "private",
+            "https://private.example",
+            "Private forum",
+            "system",
+            "production",
+            "host.example",
+        ] {
+            assert!(
+                raw.contains(expected),
+                "list --format {format} omitted {expected:?}:\n{raw}"
+            );
+        }
+    }
+}
+
+#[test]
 fn list_filters_by_tags() {
     vprintln("e2e_list_tags: filtering by tags");
     let dir = TempDir::new().expect("tempdir");
@@ -138,6 +181,7 @@ baseurl = ""
 [[discourse]]
 name = "a"
 baseurl = "https://a.example"
+fullname = "A forum"
 apikey = "abc"
 api_username = "user"
 tags = ["t1"]

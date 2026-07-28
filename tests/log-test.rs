@@ -7,6 +7,7 @@ use common::*;
 use tempfile::TempDir;
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn log_staff_returns_a_json_array_without_mutating_the_forum() {
     let Some(test) = test_discourse() else {
         return;

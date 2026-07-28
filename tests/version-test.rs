@@ -51,6 +51,7 @@ fn own_version_does_not_resolve_config() {
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn version_forum_reports_discourse_version_and_commit() {
     let Some(test) = test_discourse() else {
         return;

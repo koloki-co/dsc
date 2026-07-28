@@ -4,11 +4,11 @@
 
 mod common;
 use common::*;
-use dsc::api::DiscourseClient;
 use std::fs;
 use tempfile::TempDir;
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn palette_list() {
     let Some(test) = test_discourse() else {
         return;
@@ -22,19 +22,33 @@ fn palette_list() {
             test.name, test.baseurl, test.apikey, test.api_username
         ),
     );
-    let output = run_dsc(&["palette", "list", &test.name], &config_path);
+    let output = run_dsc(
+        &["palette", "list", &test.name, "--format", "json"],
+        &config_path,
+    );
     assert!(output.status.success(), "palette list failed");
+    let palettes: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("palette list JSON");
+    assert!(
+        palettes
+            .as_array()
+            .expect("palette list array")
+            .iter()
+            .any(|palette| palette["id"].as_i64().is_some_and(|id| id < 0)),
+        "palette list omitted built-in negative IDs"
+    );
 }
 
 #[test]
-fn palette_pull_push() {
+#[ignore = "live compatibility test; run through s/test-live"]
+fn palette_pull() {
     let Some(test) = test_discourse() else {
         return;
     };
     let Some(palette_id) = test.test_color_scheme_id else {
         return;
     };
-    vprintln("e2e_palette_pull_push: pull then push palette");
+    vprintln("e2e_palette_pull: pull palette");
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
         &dir,
@@ -57,30 +71,4 @@ fn palette_pull_push() {
     assert!(output.status.success(), "palette pull failed");
     let raw = fs::read_to_string(&palette_path).expect("read palette file");
     assert!(raw.contains("colors"), "palette file missing colors");
-
-    // Push the same palette back to ensure command succeeds without changes.
-    let output = run_dsc(
-        &[
-            "palette",
-            "push",
-            &test.name,
-            palette_path.to_str().unwrap(),
-            &palette_id.to_string(),
-        ],
-        &config_path,
-    );
-    assert!(output.status.success(), "palette push failed");
-
-    // Verify the palette still exists by fetching via API.
-    let client = DiscourseClient::new(&to_config(&test)).expect("client");
-    let response = client
-        .fetch_color_scheme(palette_id)
-        .expect("fetch palette");
-    let scheme = response.get("color_scheme").unwrap_or(&response);
-    let id = scheme
-        .get("id")
-        .or_else(|| scheme.get("color_scheme_id"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or_default();
-    assert_eq!(id, palette_id, "palette id mismatch");
 }

@@ -8,6 +8,7 @@ use std::fs;
 use tempfile::TempDir;
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn sar_creates_bundle() {
     let Some(test) = test_discourse() else {
         return;

@@ -42,6 +42,8 @@ pub struct TopicResponse {
     pub posts_count: Option<u64>,
     #[serde(default)]
     pub category_id: Option<u64>,
+    #[serde(default)]
+    pub deleted_at: Option<String>,
     pub post_stream: PostStream,
 }
 
@@ -71,6 +73,8 @@ pub struct Post {
     pub updated_at: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
+    #[serde(default)]
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

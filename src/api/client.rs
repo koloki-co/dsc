@@ -111,7 +111,7 @@ impl DiscourseClient {
 
     pub(crate) fn delete_builder(&self, path: &str) -> Result<RequestBuilder> {
         let url = format!("{}{}", self.baseurl, path);
-        Ok(self.client.delete(url))
+        Ok(self.client.delete(url).timeout(REQUEST_TIMEOUT))
     }
 
     /// Send a request, retrying up to 5 times on HTTP 429 responses.

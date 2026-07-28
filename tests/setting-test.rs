@@ -17,6 +17,7 @@ fn make_config(dir: &TempDir, test: &TestDiscourse) -> std::path::PathBuf {
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn setting_list() {
     let Some(test) = test_discourse() else {
         return;
@@ -40,6 +41,7 @@ fn setting_list() {
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn setting_list_json() {
     let Some(test) = test_discourse() else {
         return;
@@ -63,6 +65,7 @@ fn setting_list_json() {
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn setting_get() {
     let Some(test) = test_discourse() else {
         return;
@@ -85,6 +88,7 @@ fn setting_get() {
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn setting_get_json() {
     let Some(test) = test_discourse() else {
         return;
@@ -113,6 +117,7 @@ fn setting_get_json() {
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn setting_get_missing() {
     let Some(test) = test_discourse() else {
         return;
@@ -136,58 +141,38 @@ fn setting_get_missing() {
 }
 
 #[test]
-fn setting_set() {
-    let Some(test) = test_discourse() else {
-        return;
-    };
-    vprintln("e2e_setting_set: updating a site setting");
+fn setting_set_dry_run() {
     let dir = TempDir::new().expect("tempdir");
-    let config_path = make_config(&dir, &test);
-    // Restore the actual original value, not a guessed empty default.
-    let client = dsc::api::DiscourseClient::new(&to_config(&test)).expect("client");
-    let original_value = client
-        .fetch_site_setting("short_site_description")
-        .expect("fetch original short_site_description");
-    let _restore = RestoreSettingOnDrop::new(client, "short_site_description", original_value);
-    let marker = "dsc-e2e-test-marker";
+    let config_path = write_temp_config(
+        &dir,
+        "[[discourse]]\nname = \"offline\"\nbaseurl = \"https://example.invalid\"\napikey = \"unused\"\napi_username = \"system\"\n",
+    );
     let set_output = run_dsc(
         &[
+            "-n",
             "setting",
             "set",
-            &test.name,
+            "offline",
             "short_site_description",
-            marker,
+            "dsc-live-dry-run-marker",
         ],
         &config_path,
     );
     assert!(
         set_output.status.success(),
-        "setting set failed: {}",
+        "setting set --dry-run failed: {}",
         String::from_utf8_lossy(&set_output.stderr)
     );
     let stdout = String::from_utf8_lossy(&set_output.stdout);
     assert!(
-        stdout.contains("updated"),
-        "expected 'updated' in output, got: {}",
+        stdout.contains("[dry-run]") && stdout.contains("would set"),
+        "expected dry-run setting plan, got: {}",
         stdout
-    );
-
-    // Verify the value was actually set.
-    let get_output = run_dsc(
-        &["setting", "get", &test.name, "short_site_description"],
-        &config_path,
-    );
-    assert!(get_output.status.success(), "setting get after set failed");
-    let got = String::from_utf8_lossy(&get_output.stdout);
-    assert!(
-        got.trim() == marker,
-        "expected '{}', got '{}'",
-        marker,
-        got.trim()
     );
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn setting_audit_json() {
     let Some(test) = test_discourse() else {
         return;

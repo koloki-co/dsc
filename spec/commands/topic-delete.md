@@ -1,6 +1,6 @@
 # `dsc topic delete` - delete, purge, and restore topics by topic ID
 
-> **Status: implemented (unreleased).** `dsc topic delete` / `rm` soft-deletes one or more topics by topic ID, honours global `--dry-run`, and supports `--purge` / `--permanent` for permanent deletion. `dsc topic restore` restores a soft-deleted topic via `PUT /t/{id}/recover`. `dsc topic list --deleted [query]` discovers restorable topic IDs via Discourse search (`status:deleted`).
+> **Status: implemented (unreleased).** `dsc topic delete` / `rm` soft-deletes one or more topics by topic ID, honours global `--dry-run`, and supports `--purge` / `--permanent` for eligible permanent deletion. `dsc topic restore` restores a soft-deleted topic via `PUT /t/{id}/recover`. `dsc topic list --deleted [query]` discovers restorable topic IDs via Discourse's deleted topic-list filter.
 
 Spec for deleting a topic by its topic ID. Driver: real-world use archiving house-property records out of a private Discourse - two topics were pulled locally with `dsc topic pull --full` and then needed to be deleted from the forum.
 
@@ -22,9 +22,9 @@ dsc topic list <discourse> --deleted [query] [--format text|json|yaml]
 - **`dsc topic delete` / `rm`** - deletes whole topics via `DELETE /t/{id}.json`. By default this is a soft-delete.
 - **Batch deletion** - accepts multiple topic IDs and prints one line per topic.
 - **`--dry-run`** - fetches each topic first and prints the title/post count plus the planned delete; sends nothing.
-- **`--purge` / `--permanent`** - sends `DELETE /t/{id}.json?permanent=true` for irreversible deletion.
+- **`--purge` / `--permanent`** - sends `DELETE /t/{id}.json?force_destroy=true` for irreversible deletion of an eligible soft-deleted topic.
 - **`dsc topic restore`** - recovers a soft-deleted topic via `PUT /t/{id}/recover.json`. This is useful enough to ship with delete: soft-delete is the default, so a first-class undo path belongs next to it.
-- **`dsc topic list --deleted [query]`** - discovers deleted topic IDs for restore. It uses Discourse search with `status:deleted`; optional `query` terms narrow the result set. General topic search remains `dsc search`.
+- **`dsc topic list --deleted [query]`** - discovers deleted topic IDs for restore. It paginates Discourse's `status=deleted` topic list, verifies each candidate, and applies optional query terms locally. General topic search remains `dsc search`.
 
 ## Reference: API calls observed in the field
 
@@ -56,6 +56,8 @@ Notes:
 - A 404 returns `{"errors":["The requested URL or resource could not be found."],"error_type":"not_found",...}`.
 - A 403 returns `["BAD CSRF"]` when the key is passed as query params (`?api_key=...&api_username=...`) rather than headers. The header form works; `dsc` already uses headers internally so this is just a note for anyone hand-testing with `curl`.
 
+Permanent deletion uses `force_destroy=true`, not `permanent=true`. Current Discourse additionally requires `can_permanently_delete = true`, an administrator, an already soft-deleted topic, and either a different deleting administrator or expiry of the five-minute same-admin safety window. `GET /posts/{first_post_id}/permanently_delete_check.json` reports eligibility and the reason while blocked.
+
 ### Restore and deleted-topic discovery
 
 Confirmed from Discourse routes (`config/routes.rb`, main branch):
@@ -70,14 +72,14 @@ PUT /t/:topic_id/recover  → topics#recover
 PUT /t/{topic_id}/recover.json
 ```
 
-For discovery, there is no separate topic-trash list endpoint in the public route surface. The most natural user-facing command is therefore a small wrapper around Discourse search:
+For discovery, Discourse's topic-list query supports a deleted status filter:
 
 ```text
-GET /search.json?q=status%3Adeleted
-GET /search.json?q=<query>+status%3Adeleted
+GET /latest.json?status=deleted&per_page=100
+GET /latest.json?status=deleted&category=<id>&no_subcategories=true&per_page=100
 ```
 
-This keeps the mental model simple: `topic list --deleted` answers "what IDs can I restore?", while `dsc search` remains the general search command.
+`dsc` follows `topic_list.more_topics_url`, directly fetches each candidate to verify its root `deleted_at` field, and applies optional query terms locally to title and slug. Full-text `/search.json` does not support a `deleted` status operator; `status:deleted` there is only a literal search term. This keeps the mental model simple: `topic list --deleted` answers "what IDs can I restore?", while `dsc search` remains the general search command.
 
 ### Related gap: post IDs in `--full` output
 
@@ -93,7 +95,7 @@ While not required for this spec (topic deletion uses the topic ID directly), th
 
 ### Phase 2 - iteration ergonomics
 
-- [x] `--purge` / `--permanent` for permanent deletion (`permanent=true`).
+- [x] `--purge` / `--permanent` for eligible permanent deletion (`force_destroy=true`).
 - [x] Batch deletion: `dsc topic delete <discourse> <id1> <id2> ...`.
 
 ### Restore/discovery follow-up shipped with the same work

@@ -829,7 +829,7 @@ pub enum TopicCommand {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
-    /// Delete one or more topics by topic ID. Soft-delete by default; `--purge` permanently deletes.
+    /// Delete one or more topics by topic ID. Soft-delete by default; `--purge` force-destroys an eligible deleted topic.
     #[command(visible_alias = "rm")]
     Delete {
         /// Discourse name.
@@ -838,7 +838,7 @@ pub enum TopicCommand {
         topic_id: u64,
         /// Additional topic IDs to delete.
         topic_ids: Vec<u64>,
-        /// Permanently delete instead of soft-deleting to the trash.
+        /// Force-destroy a topic that is already eligible for permanent deletion.
         #[arg(long, visible_alias = "permanent")]
         purge: bool,
     },
@@ -1233,7 +1233,8 @@ pub enum PaletteCommand {
         /// Discourse name.
         discourse: String,
         /// Palette ID.
-        palette_id: u64,
+        #[arg(allow_negative_numbers = true)]
+        palette_id: i64,
         /// Destination file path (auto-derived when omitted).
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
@@ -1250,7 +1251,8 @@ pub enum PaletteCommand {
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
         /// Palette ID to update (creates a new palette when omitted).
-        palette_id: Option<u64>,
+        #[arg(allow_negative_numbers = true)]
+        palette_id: Option<i64>,
     },
 }
 
@@ -2421,6 +2423,22 @@ mod tests {
     #[test]
     fn every_path_argument_has_a_completion_hint() {
         assert_eq!(count_path_hints(&Cli::command()), 43);
+    }
+
+    #[test]
+    fn palette_pull_accepts_negative_builtin_id() {
+        let cli = Cli::try_parse_from(["dsc", "theme", "palette", "pull", "forum", "-2"])
+            .expect("negative built-in palette ID parses");
+        let Commands::Theme {
+            command:
+                ThemeCommand::Palette {
+                    command: PaletteCommand::Pull { palette_id, .. },
+                },
+        } = cli.command
+        else {
+            panic!("expected theme palette pull command");
+        };
+        assert_eq!(palette_id, -2);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 Lists all Discourse installs known to dsc, optionally filtered by tags.
 
-```
+```text
 dsc list [--format <format>] [--tags <tag1,tag2,...>] [--open] [--verbose]
 ```
 
@@ -17,6 +17,8 @@ dsc list [--format <format>] [--tags <tag1,tag2,...>] [--open] [--verbose]
 - `yaml`
 - `csv`
 - `urls` — one base URL per line, useful for piping
+
+Structured output includes non-secret configuration metadata but never includes API keys or other secret credential values.
 
 ## Flags
 

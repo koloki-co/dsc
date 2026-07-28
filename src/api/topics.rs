@@ -6,6 +6,7 @@ use super::client::{DiscourseClient, json_page_path};
 use super::error::http_error;
 use super::models::{CreatePostResponse, TopicResponse};
 use anyhow::{Context, Result, anyhow};
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
@@ -18,6 +19,8 @@ pub struct PostInfo {
     pub post_number: Option<u64>,
     #[serde(default)]
     pub raw: Option<String>,
+    #[serde(default)]
+    pub deleted_at: Option<String>,
 }
 
 /// Side-effect controls for a post edit (`PUT /posts/{id}.json`). The default
@@ -62,6 +65,32 @@ pub struct DeletedTopicSummary {
     pub category_id: Option<u64>,
     #[serde(default)]
     pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeletedTopicListResponse {
+    topic_list: DeletedTopicList,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeletedTopicList {
+    topics: Vec<DeletedTopicRow>,
+    #[serde(default)]
+    more_topics_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeletedTopicRow {
+    id: u64,
+    title: String,
+    #[serde(default)]
+    slug: String,
+    #[serde(default)]
+    posts_count: u64,
+    #[serde(default)]
+    category_id: Option<u64>,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
 }
 
 impl DiscourseClient {
@@ -146,13 +175,9 @@ impl DiscourseClient {
         Ok(topic)
     }
 
-    /// Soft-delete or permanently delete a topic by ID (`DELETE /t/{id}`).
-    pub fn delete_topic(&self, topic_id: u64, permanent: bool) -> Result<()> {
-        let path = if permanent {
-            format!("/t/{}.json?permanent=true", topic_id)
-        } else {
-            format!("/t/{}.json", topic_id)
-        };
+    /// Soft-delete or force-destroy a topic by ID (`DELETE /t/{id}`).
+    pub fn delete_topic(&self, topic_id: u64, force_destroy: bool) -> Result<()> {
+        let path = delete_topic_path(topic_id, force_destroy);
         let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         let text = response
@@ -162,6 +187,23 @@ impl DiscourseClient {
             return Err(http_error("delete topic request", status, &text));
         }
         Ok(())
+    }
+
+    /// Return true only when an administrator can no longer fetch the topic.
+    pub fn topic_is_absent(&self, topic_id: u64) -> Result<bool> {
+        let path = format!("/t/{topic_id}.json");
+        let response = self.get(&path)?;
+        let status = response.status();
+        let text = response
+            .text()
+            .context("reading topic absence-check response")?;
+        if matches!(status, StatusCode::NOT_FOUND | StatusCode::GONE) {
+            return Ok(true);
+        }
+        if status.is_success() {
+            return Ok(false);
+        }
+        Err(http_error("topic absence-check request", status, &text))
     }
 
     /// Recover a soft-deleted topic by ID (`PUT /t/{id}/recover`).
@@ -178,21 +220,89 @@ impl DiscourseClient {
         Ok(())
     }
 
-    /// List soft-deleted topics via Discourse search (`status:deleted`).
+    /// List soft-deleted topics via Discourse's topic-list status filter.
     pub fn list_deleted_topics(&self, query: Option<&str>) -> Result<Vec<DeletedTopicSummary>> {
-        let q = deleted_topics_query(query);
-        let hits = self.search_topics(&q)?;
-        Ok(hits
-            .into_iter()
-            .map(|hit| DeletedTopicSummary {
-                id: hit.id,
-                title: hit.title,
-                slug: hit.slug,
-                posts_count: hit.posts_count,
-                category_id: hit.category_id,
-                tags: hit.tags,
-            })
-            .collect())
+        self.list_deleted_topics_filtered(query, None)
+    }
+
+    /// List soft-deleted topics in one category for live-test cleanup.
+    pub fn list_deleted_topics_in_category(
+        &self,
+        category_id: u64,
+    ) -> Result<Vec<DeletedTopicSummary>> {
+        self.list_deleted_topics_filtered(None, Some(category_id))
+    }
+
+    fn list_deleted_topics_filtered(
+        &self,
+        query: Option<&str>,
+        category_id: Option<u64>,
+    ) -> Result<Vec<DeletedTopicSummary>> {
+        let initial_path = match category_id {
+            Some(category_id) => format!(
+                "/latest.json?status=deleted&category={category_id}&no_subcategories=true&per_page=100"
+            ),
+            None => "/latest.json?status=deleted&per_page=100".to_string(),
+        };
+        let mut deleted = Vec::new();
+        let mut seen_topics = HashSet::new();
+        let mut seen_paths = HashSet::new();
+        let mut next = Some(initial_path);
+
+        while let Some(raw_path) = next {
+            if !seen_paths.insert(raw_path.clone()) {
+                return Err(anyhow!(
+                    "deleted-topic pagination loop detected: {raw_path}"
+                ));
+            }
+            let path = json_page_path(&raw_path)?;
+            let response = self.get(&path)?;
+            let status = response.status();
+            let text = response
+                .text()
+                .context("reading deleted-topic list response")?;
+            if !status.is_success() {
+                return Err(http_error("deleted-topic list request", status, &text));
+            }
+            let page: DeletedTopicListResponse =
+                serde_json::from_str(&text).context("parsing deleted-topic list response")?;
+            next = page.topic_list.more_topics_url;
+
+            for row in page.topic_list.topics {
+                if !seen_topics.insert(row.id) {
+                    continue;
+                }
+                let topic = self.fetch_topic(row.id, false)?;
+                if topic.deleted_at.is_none() {
+                    return Err(anyhow!(
+                        "deleted-topic filter returned active topic {}; the API user may lack permission to view deleted topics",
+                        row.id
+                    ));
+                }
+                if let Some(category_id) = category_id
+                    && topic.category_id != Some(category_id)
+                {
+                    return Err(anyhow!(
+                        "deleted-topic filter returned topic {} from category {:?}, expected category {category_id}",
+                        row.id,
+                        topic.category_id
+                    ));
+                }
+                if !deleted_topic_matches(&row, query) {
+                    continue;
+                }
+                deleted.push(DeletedTopicSummary {
+                    id: row.id,
+                    title: row.title,
+                    slug: row.slug,
+                    posts_count: row.posts_count,
+                    category_id: row.category_id,
+                    tags: row.tags,
+                });
+            }
+        }
+
+        Ok(deleted)
     }
 
     /// Fetch a post by ID and return its raw content.
@@ -213,9 +323,59 @@ impl DiscourseClient {
         Ok(info)
     }
 
+    /// Check whether an already soft-deleted post or its topic can now be
+    /// force-destroyed. For a topic, pass the first post's ID.
+    pub fn permanent_delete_check(&self, post_id: u64) -> Result<(bool, Option<String>)> {
+        #[derive(Deserialize)]
+        struct CheckResponse {
+            can_permanently_delete: bool,
+            #[serde(default)]
+            reason: Option<String>,
+        }
+
+        let path = format!("/posts/{post_id}/permanently_delete_check.json");
+        let response = self.get(&path)?;
+        let status = response.status();
+        let text = response
+            .text()
+            .context("reading permanent-delete check response")?;
+        if !status.is_success() {
+            return Err(http_error("permanent-delete check request", status, &text));
+        }
+        let check: CheckResponse =
+            serde_json::from_str(&text).context("parsing permanent-delete check response")?;
+        Ok((check.can_permanently_delete, check.reason))
+    }
+
     /// Soft-delete a post by ID (DELETE /posts/:id.json).
     pub fn delete_post(&self, post_id: u64) -> Result<()> {
-        let path = format!("/posts/{}.json", post_id);
+        self.delete_post_with_force(post_id, false)
+    }
+
+    /// Force-destroy an already soft-deleted post by ID.
+    pub fn permanently_delete_post(&self, post_id: u64) -> Result<()> {
+        self.delete_post_with_force(post_id, true)
+    }
+
+    /// Return true only when an administrator can no longer fetch the post.
+    pub fn post_is_absent(&self, post_id: u64) -> Result<bool> {
+        let path = format!("/posts/{post_id}.json");
+        let response = self.get(&path)?;
+        let status = response.status();
+        let text = response
+            .text()
+            .context("reading post absence-check response")?;
+        if matches!(status, StatusCode::NOT_FOUND | StatusCode::GONE) {
+            return Ok(true);
+        }
+        if status.is_success() {
+            return Ok(false);
+        }
+        Err(http_error("post absence-check request", status, &text))
+    }
+
+    fn delete_post_with_force(&self, post_id: u64, force_destroy: bool) -> Result<()> {
+        let path = delete_post_path(post_id, force_destroy);
         let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         if !status.is_success() {
@@ -417,13 +577,29 @@ impl DiscourseClient {
     }
 }
 
-/// Build a Discourse search query for soft-deleted topics, preserving any
-/// user-supplied narrowing terms while ensuring `status:deleted` is present.
-fn deleted_topics_query(query: Option<&str>) -> String {
-    match query.map(str::trim).filter(|q| !q.is_empty()) {
-        Some(q) if q.contains("status:deleted") => q.to_string(),
-        Some(q) => format!("{} status:deleted", q),
-        None => "status:deleted".to_string(),
+fn deleted_topic_matches(topic: &DeletedTopicRow, query: Option<&str>) -> bool {
+    let Some(query) = query.map(str::trim).filter(|query| !query.is_empty()) else {
+        return true;
+    };
+    let haystack = format!("{} {}", topic.title, topic.slug).to_lowercase();
+    query
+        .split_whitespace()
+        .all(|term| haystack.contains(&term.to_lowercase()))
+}
+
+fn delete_topic_path(topic_id: u64, force_destroy: bool) -> String {
+    if force_destroy {
+        format!("/t/{topic_id}.json?force_destroy=true")
+    } else {
+        format!("/t/{topic_id}.json")
+    }
+}
+
+fn delete_post_path(post_id: u64, force_destroy: bool) -> String {
+    if force_destroy {
+        format!("/posts/{post_id}.json?force_destroy=true")
+    } else {
+        format!("/posts/{post_id}.json")
     }
 }
 
@@ -443,25 +619,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn deleted_topics_query_defaults_to_status_deleted() {
-        assert_eq!(deleted_topics_query(None), "status:deleted");
-        assert_eq!(deleted_topics_query(Some("  ")), "status:deleted");
+    fn deleted_topic_query_matches_title_and_slug_terms() {
+        let topic = DeletedTopicRow {
+            id: 1,
+            title: "House Archive".to_string(),
+            slug: "property-records".to_string(),
+            posts_count: 1,
+            category_id: Some(2),
+            tags: None,
+        };
+        assert!(deleted_topic_matches(&topic, None));
+        assert!(deleted_topic_matches(&topic, Some("house records")));
+        assert!(deleted_topic_matches(&topic, Some("PROPERTY")));
+        assert!(!deleted_topic_matches(&topic, Some("house missing")));
     }
 
     #[test]
-    fn deleted_topics_query_adds_status_deleted_to_terms() {
+    fn deleted_topic_list_rejects_missing_topics_array() {
+        let response = serde_json::json!({ "topic_list": {} });
+        assert!(serde_json::from_value::<DeletedTopicListResponse>(response).is_err());
+    }
+
+    #[test]
+    fn permanent_deletion_uses_force_destroy_parameter() {
+        assert_eq!(delete_topic_path(42, true), "/t/42.json?force_destroy=true");
         assert_eq!(
-            deleted_topics_query(Some("house archive")),
-            "house archive status:deleted"
+            delete_post_path(84, true),
+            "/posts/84.json?force_destroy=true"
         );
     }
 
     #[test]
-    fn deleted_topics_query_does_not_duplicate_status_deleted() {
-        assert_eq!(
-            deleted_topics_query(Some("status:deleted category:staff")),
-            "status:deleted category:staff"
-        );
+    fn soft_deletion_omits_force_destroy_parameter() {
+        assert_eq!(delete_topic_path(42, false), "/t/42.json");
+        assert_eq!(delete_post_path(84, false), "/posts/84.json");
     }
 
     #[test]

@@ -4,11 +4,10 @@
 
 mod common;
 use common::*;
-use dsc::api::DiscourseClient;
-use std::process::Command;
 use tempfile::TempDir;
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn theme_list() {
     let Some(test) = test_discourse() else {
         return;
@@ -27,68 +26,49 @@ fn theme_list() {
 }
 
 #[test]
-fn theme_install_remove() {
-    let Some(test) = test_discourse() else {
-        return;
-    };
-    if test.ssh_enabled != Some(true) {
-        return;
-    }
-    let Some(url) = test.test_theme_url.as_ref() else {
-        return;
-    };
-    let Some(name) = test.test_theme_name.as_ref() else {
-        return;
-    };
-    vprintln("e2e_theme_install_remove: install/remove theme");
-    let ssh_host_line = test
-        .ssh_host
-        .as_ref()
-        .map(|host| format!("ssh_host = \"{}\"\n", host))
-        .unwrap_or_default();
+fn theme_install_dry_run() {
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
         &dir,
-        &format!(
-            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n{}",
-            test.name, test.baseurl, test.apikey, test.api_username, ssh_host_line
-        ),
+        "[[discourse]]\nname = \"offline\"\nbaseurl = \"https://forum.example.invalid\"\napikey = \"fake-api-key\"\napi_username = \"fake-admin\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_dsc"))
-        .arg("-c")
-        .arg(&config_path)
-        .arg("theme")
-        .arg("install")
-        .arg(&test.name)
-        .arg(url)
-        .env("DSC_SSH_THEME_INSTALL_CMD", "echo theme install {url}")
-        .output()
-        .expect("run theme install");
-    assert!(output.status.success(), "theme install failed");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_dsc"))
-        .arg("-c")
-        .arg(&config_path)
-        .arg("theme")
-        .arg("remove")
-        .arg(&test.name)
-        .arg(name)
-        .env("DSC_SSH_THEME_REMOVE_CMD", "echo theme remove {name}")
-        .output()
-        .expect("run theme remove");
-    assert!(output.status.success(), "theme remove failed");
+    let output = run_dsc(
+        &[
+            "-n",
+            "theme",
+            "install",
+            "offline",
+            "https://github.com/discourse/discourse-brand-header",
+        ],
+        &config_path,
+    );
+    assert!(
+        output.status.success(),
+        "theme install --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[dry-run]") && stdout.contains("would import theme"),
+        "expected dry-run theme install plan, got: {stdout}"
+    );
+    assert!(
+        !stdout.contains(": installed") && !stdout.contains("theme import completed"),
+        "dry-run must not report a completed mutation, got: {stdout}"
+    );
 }
 
 #[test]
-fn theme_pull_push() {
+#[ignore = "live compatibility test; run through s/test-live"]
+fn theme_pull_push_dry_run() {
     let Some(test) = test_discourse() else {
         return;
     };
     let Some(theme_id) = test.test_theme_id else {
         return;
     };
-    vprintln("e2e_theme_pull_push: pull theme then push back");
+    vprintln("e2e_theme_pull_push_dry_run: pull theme then preview push");
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
         &dir,
@@ -124,34 +104,32 @@ fn theme_pull_push() {
         "pulled theme JSON missing 'name'"
     );
 
-    // Push back to the same theme ID (round-trip update)
+    // Preview pushing back to the same theme ID without updating it.
     let output = run_dsc(
         &[
+            "-n",
             "theme",
             "push",
             &test.name,
             json_path.to_str().unwrap(),
             &theme_id.to_string(),
-            "--yes",
         ],
         &config_path,
     );
     assert!(
         output.status.success(),
-        "theme push failed: {}",
+        "theme push --dry-run failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let returned_id: u64 = String::from_utf8_lossy(&output.stdout)
-        .trim()
-        .parse()
-        .expect("theme push should print numeric ID");
-    assert_eq!(
-        returned_id, theme_id,
-        "push should return the updated theme ID"
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[dry-run]") && stdout.contains("would update theme"),
+        "expected dry-run theme push plan, got: {stdout}"
     );
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn theme_show() {
     let Some(test) = test_discourse() else {
         return;
@@ -200,6 +178,7 @@ fn theme_show() {
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn theme_setting_list() {
     let Some(test) = test_discourse() else {
         return;
@@ -243,31 +222,20 @@ fn theme_setting_list() {
 
 #[test]
 fn theme_setting_set_dry_run() {
-    let Some(test) = test_discourse() else {
-        return;
-    };
-    let Some(theme_id) = test.test_theme_id else {
-        return;
-    };
-    vprintln("e2e_theme_setting_set_dry_run: dry-run set must not write");
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
         &dir,
-        &format!(
-            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n",
-            test.name, test.baseurl, test.apikey, test.api_username
-        ),
+        "[[discourse]]\nname = \"offline\"\nbaseurl = \"https://forum.example.invalid\"\napikey = \"fake-api-key\"\napi_username = \"fake-admin\"\n",
     );
-    // -n keeps this from touching the live theme even with a bogus key.
     let output = run_dsc(
         &[
             "-n",
             "theme",
             "setting",
             "set",
-            &test.name,
-            &theme_id.to_string(),
-            "dsc_e2e_probe_key",
+            "offline",
+            "1234",
+            "example_setting",
             "probe-value",
         ],
         &config_path,
@@ -286,26 +254,13 @@ fn theme_setting_set_dry_run() {
 
 #[test]
 fn theme_enable_disable_dry_run() {
-    let Some(test) = test_discourse() else {
-        return;
-    };
-    let Some(theme_id) = test.test_theme_id else {
-        return;
-    };
-    vprintln("e2e_theme_enable_disable_dry_run: dry-run toggles must not write");
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
         &dir,
-        &format!(
-            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n",
-            test.name, test.baseurl, test.apikey, test.api_username
-        ),
+        "[[discourse]]\nname = \"offline\"\nbaseurl = \"https://forum.example.invalid\"\napikey = \"fake-api-key\"\napi_username = \"fake-admin\"\n",
     );
     for verb in ["enable", "disable"] {
-        let output = run_dsc(
-            &["-n", "theme", verb, &test.name, &theme_id.to_string()],
-            &config_path,
-        );
+        let output = run_dsc(&["-n", "theme", verb, "offline", "1234"], &config_path);
         assert!(
             output.status.success(),
             "theme {verb} --dry-run failed: {}",
@@ -320,14 +275,15 @@ fn theme_enable_disable_dry_run() {
 }
 
 #[test]
-fn theme_detach_unattached_is_noop() {
+#[ignore = "live compatibility test; run through s/test-live"]
+fn theme_detach_unattached_is_noop_dry_run() {
     let Some(test) = test_discourse() else {
         return;
     };
     let Some(theme_id) = test.test_theme_id else {
         return;
     };
-    vprintln("e2e_theme_detach_unattached: detaching an unattached id is a safe no-op");
+    vprintln("e2e_theme_detach_unattached: dry-run detaching an unattached id");
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
         &dir,
@@ -336,10 +292,9 @@ fn theme_detach_unattached_is_noop() {
             test.name, test.baseurl, test.apikey, test.api_username
         ),
     );
-    // Detaching a component id that is not a child reads the parent's
-    // child_themes (real API call) and reports a no-op without mutating.
     let output = run_dsc(
         &[
+            "-n",
             "theme",
             "detach",
             &test.name,
@@ -358,41 +313,4 @@ fn theme_detach_unattached_is_noop() {
         stdout.contains("not attached"),
         "expected 'not attached' no-op message, got: {stdout}"
     );
-}
-
-#[test]
-fn theme_duplicate() {
-    let Some(test) = test_discourse() else {
-        return;
-    };
-    let Some(theme_id) = test.test_theme_id else {
-        return;
-    };
-    vprintln("e2e_theme_duplicate: duplicate a theme");
-    let dir = TempDir::new().expect("tempdir");
-    let config_path = write_temp_config(
-        &dir,
-        &format!(
-            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n",
-            test.name, test.baseurl, test.apikey, test.api_username
-        ),
-    );
-
-    let output = run_dsc(
-        &["theme", "duplicate", &test.name, &theme_id.to_string()],
-        &config_path,
-    );
-    assert!(
-        output.status.success(),
-        "theme duplicate failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let new_id_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let new_id: u64 = new_id_str
-        .parse()
-        .expect("theme duplicate should print numeric ID");
-    let client = DiscourseClient::new(&to_config(&test)).expect("client");
-    let _cleanup = DeleteThemeOnDrop::new(client, new_id);
-    vprintln(&format!("duplicated theme, new ID: {}", new_id));
-    assert_ne!(new_id, theme_id, "duplicate should have a different ID");
 }

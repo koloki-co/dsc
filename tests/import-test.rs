@@ -14,12 +14,12 @@ fn import_text() {
     vprintln("e2e_import_text: importing from file");
     let dir = TempDir::new().expect("tempdir");
     let import_path = dir.path().join("import.txt");
-    fs::write(&import_path, "https://example.com\n").expect("write import");
+    fs::write(&import_path, "offline-file-test\n").expect("write import");
     let config_path = write_temp_config(&dir, "");
     let output = run_dsc(&["import", import_path.to_str().unwrap()], &config_path);
     assert!(output.status.success(), "import failed");
     let raw = fs::read_to_string(config_path).expect("read config");
-    assert!(raw.contains("example.com"));
+    assert!(raw.contains("offline-file-test"));
 }
 
 #[test]
@@ -38,13 +38,13 @@ fn import_stdin() {
     {
         let stdin = child.stdin.as_mut().expect("stdin");
         stdin
-            .write_all(b"https://example.org\n")
+            .write_all(b"offline-stdin-test\n")
             .expect("write stdin");
     }
     let status = child.wait().expect("wait");
     assert!(status.success(), "import stdin failed");
     let raw = fs::read_to_string(config_path).expect("read config");
-    assert!(raw.contains("example.org"));
+    assert!(raw.contains("offline-stdin-test"));
 }
 
 #[test]

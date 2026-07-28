@@ -32,6 +32,7 @@ pub use groups::AddMembersOutcome;
 pub use invites::InviteResult;
 pub use models::*;
 pub use notifications::{Notification, NotificationFilter, NotificationPage};
+pub(crate) use palettes::color_schemes;
 pub use reports::{AdminReport, ReportPoint};
 pub use search::SearchHit;
 pub use settings::SiteSettingDetail;

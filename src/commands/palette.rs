@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use crate::api::DiscourseClient;
+use crate::api::{DiscourseClient, color_schemes};
 use crate::cli::ListFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
 use crate::config::Config;
@@ -18,14 +18,22 @@ use crate::utils::{atomic_write, normalize_baseurl};
 #[derive(Debug, Serialize, Deserialize)]
 struct PaletteFile {
     #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<u64>,
+    id: Option<i64>,
+    name: String,
+    colors: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pulled: Option<PaletteBaseline>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PaletteBaseline {
     name: String,
     colors: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
 struct PaletteListEntry {
-    id: u64,
+    id: i64,
     name: String,
 }
 
@@ -39,28 +47,23 @@ pub fn palette_list(
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
     let response = client.list_color_schemes()?;
-    let schemes = response
-        .get("color_schemes")
-        .and_then(|v| v.as_array())
-        .cloned()
-        .unwrap_or_default();
-    let entries: Vec<PaletteListEntry> = schemes
-        .into_iter()
+    let entries: Vec<PaletteListEntry> = color_schemes(&response)?
+        .iter()
         .map(|scheme| {
             let id = scheme
                 .get("id")
                 .or_else(|| scheme.get("color_scheme_id"))
-                .and_then(|v| v.as_u64())
-                .unwrap_or_default();
+                .and_then(Value::as_i64)
+                .ok_or_else(|| anyhow!("color scheme is missing a signed integer id"))?;
             let name = scheme
                 .get("name")
                 .or_else(|| scheme.get("color_scheme_name"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown")
                 .to_string();
-            PaletteListEntry { id, name }
+            Ok(PaletteListEntry { id, name })
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     match format {
         ListFormat::Text => {
@@ -87,7 +90,7 @@ pub fn palette_list(
 pub fn palette_pull(
     config: &Config,
     discourse_name: &str,
-    palette_id: u64,
+    palette_id: i64,
     local_path: Option<&Path>,
     force: bool,
 ) -> Result<()> {
@@ -113,12 +116,12 @@ pub fn palette_push(
     config: &Config,
     discourse_name: &str,
     local_path: &Path,
-    palette_id: Option<u64>,
+    palette_id: Option<i64>,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
-    let mut palette = read_palette_file(local_path)?;
+    let palette = read_palette_file(local_path)?;
 
     if palette.colors.is_empty() {
         return Err(anyhow!("palette file contains no colors"));
@@ -126,7 +129,39 @@ pub fn palette_push(
 
     let target_id = palette_id.or(palette.id);
     if let Some(target_id) = target_id {
-        client.update_color_scheme(target_id, Some(&palette.name), &palette.colors)?;
+        ensure_mutable_palette_id(target_id)?;
+        let baseline = palette.pulled.as_ref().ok_or_else(|| {
+            anyhow!(
+                "palette update requires a pulled baseline; run `dsc theme palette pull` again before editing"
+            )
+        })?;
+        if let Some(source_id) = palette.id
+            && source_id != target_id
+        {
+            return Err(anyhow!(
+                "palette file was pulled from id {}; pull palette {target_id} before updating it",
+                source_id
+            ));
+        }
+        let current = palette_from_response(&client.fetch_color_scheme(target_id)?, target_id)?;
+        let mut changed_colors = changed_colors(&palette.colors, &baseline.colors);
+        ensure_no_palette_conflicts(&changed_colors, baseline, &current)?;
+        changed_colors.retain(|name, desired| current.colors.get(name) != Some(desired));
+        let locally_renamed = palette.name != baseline.name;
+        if locally_renamed && current.name != baseline.name && current.name != palette.name {
+            return Err(anyhow!(
+                "palette name changed remotely from '{}' to '{}'; pull again before pushing",
+                baseline.name,
+                current.name
+            ));
+        }
+        let changed_name =
+            (locally_renamed && current.name != palette.name).then_some(palette.name.as_str());
+        if changed_name.is_some() || !changed_colors.is_empty() {
+            client.update_color_scheme(target_id, changed_name, &changed_colors)?;
+        }
+        let refreshed = palette_from_response(&client.fetch_color_scheme(target_id)?, target_id)?;
+        write_palette_file(local_path, &refreshed, true)?;
         let url = format!(
             "{}/admin/customize/colors/{}",
             normalize_baseurl(&discourse.baseurl),
@@ -138,8 +173,11 @@ pub fn palette_push(
             return Err(anyhow!("missing palette name for palette create"));
         }
         let new_id = client.create_color_scheme(&palette.name, &palette.colors)?;
-        palette.id = Some(new_id);
-        write_palette_file(local_path, &palette, true)?;
+        let mut created_with_id = palette;
+        created_with_id.id = Some(new_id);
+        write_palette_file(local_path, &created_with_id, true)?;
+        let created = palette_from_response(&client.fetch_color_scheme(new_id)?, new_id)?;
+        write_palette_file(local_path, &created, true)?;
         let url = format!(
             "{}/admin/customize/colors/{}",
             normalize_baseurl(&discourse.baseurl),
@@ -151,57 +189,106 @@ pub fn palette_push(
     Ok(())
 }
 
-fn palette_from_response(response: &Value, fallback_id: u64) -> Result<PaletteFile> {
+fn palette_from_response(response: &Value, fallback_id: i64) -> Result<PaletteFile> {
     let scheme = response.get("color_scheme").unwrap_or(response);
     let id = scheme
         .get("id")
         .or_else(|| scheme.get("color_scheme_id"))
-        .and_then(|v| v.as_u64())
-        .or_else(|| response.get("id").and_then(|v| v.as_u64()))
+        .and_then(Value::as_i64)
+        .or_else(|| response.get("id").and_then(Value::as_i64))
         .unwrap_or(fallback_id);
     let name = scheme
         .get("name")
         .or_else(|| scheme.get("color_scheme_name"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("palette")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("palette is missing a name"))?
         .to_string();
     let colors_value = scheme
         .get("colors")
         .or_else(|| response.get("colors"))
         .unwrap_or(&Value::Null);
-    let colors = colors_from_value(colors_value);
+    let colors = colors_from_value(colors_value)?;
     if colors.is_empty() {
         return Err(anyhow!("palette is missing color values"));
     }
+    let pulled = PaletteBaseline {
+        name: name.clone(),
+        colors: colors.clone(),
+    };
     Ok(PaletteFile {
         id: Some(id),
         name,
         colors,
+        pulled: Some(pulled),
     })
 }
 
-fn colors_from_value(value: &Value) -> BTreeMap<String, String> {
+fn colors_from_value(value: &Value) -> Result<BTreeMap<String, String>> {
     match value {
         Value::Object(map) => map
             .iter()
-            .filter_map(|(key, value)| value.as_str().map(|val| (key.clone(), val.to_string())))
+            .map(|(key, value)| {
+                let value = value
+                    .as_str()
+                    .ok_or_else(|| anyhow!("palette color '{key}' is not a string"))?;
+                Ok((key.clone(), value.to_string()))
+            })
             .collect(),
         Value::Array(items) => {
             let mut out = BTreeMap::new();
             for item in items {
-                if let Some(name) = item.get("name").and_then(|v| v.as_str())
-                    && let Some(hex) = item
-                        .get("hex")
-                        .and_then(|v| v.as_str())
-                        .or_else(|| item.get("value").and_then(|v| v.as_str()))
-                {
-                    out.insert(name.to_string(), hex.to_string());
-                }
+                let name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("palette color row is missing a name"))?;
+                let hex = item
+                    .get("hex")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.get("value").and_then(Value::as_str))
+                    .ok_or_else(|| anyhow!("palette color '{name}' is missing a hex value"))?;
+                out.insert(name.to_string(), hex.to_string());
             }
-            out
+            Ok(out)
         }
-        _ => BTreeMap::new(),
+        _ => Err(anyhow!("palette colors are not an object or array")),
     }
+}
+
+fn changed_colors(
+    desired: &BTreeMap<String, String>,
+    current: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    desired
+        .iter()
+        .filter(|(name, value)| current.get(*name) != Some(*value))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
+fn ensure_no_palette_conflicts(
+    changed: &BTreeMap<String, String>,
+    baseline: &PaletteBaseline,
+    current: &PaletteFile,
+) -> Result<()> {
+    for (name, desired) in changed {
+        let pulled = baseline.colors.get(name);
+        let remote = current.colors.get(name);
+        if remote != pulled && remote != Some(desired) {
+            return Err(anyhow!(
+                "palette color '{name}' changed remotely; pull again before pushing"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_mutable_palette_id(palette_id: i64) -> Result<()> {
+    if palette_id < 0 {
+        return Err(anyhow!(
+            "built-in palette {palette_id} cannot be updated; create a custom palette instead"
+        ));
+    }
+    Ok(())
 }
 
 fn read_palette_file(path: &Path) -> Result<PaletteFile> {
@@ -228,4 +315,91 @@ fn is_yaml(path: &Path) -> bool {
         path.extension().and_then(|s| s.to_str()),
         Some("yml") | Some("yaml")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        PaletteBaseline, PaletteFile, changed_colors, colors_from_value, ensure_mutable_palette_id,
+        ensure_no_palette_conflicts, palette_from_response,
+    };
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn parses_negative_builtin_palette_id() {
+        let response = json!({
+            "id": -2,
+            "name": "Dark",
+            "colors": [{ "name": "primary", "hex": "FFFFFF" }]
+        });
+        let palette = palette_from_response(&response, -2).unwrap();
+        assert_eq!(palette.id, Some(-2));
+        assert_eq!(palette.colors["primary"], "FFFFFF");
+        assert_eq!(palette.pulled.unwrap().colors["primary"], "FFFFFF");
+    }
+
+    #[test]
+    fn unchanged_resolved_colors_are_not_sent_as_overrides() {
+        let pulled = BTreeMap::from([
+            ("primary".to_string(), "222222".to_string()),
+            ("secondary".to_string(), "FFFFFF".to_string()),
+            ("hover".to_string(), "444444".to_string()),
+        ]);
+        let desired = BTreeMap::from([
+            ("primary".to_string(), "111111".to_string()),
+            ("secondary".to_string(), "FFFFFF".to_string()),
+            ("hover".to_string(), "444444".to_string()),
+        ]);
+        assert_eq!(
+            changed_colors(&desired, &pulled),
+            BTreeMap::from([("primary".to_string(), "111111".to_string())])
+        );
+
+        let refreshed = BTreeMap::from([
+            ("primary".to_string(), "111111".to_string()),
+            ("secondary".to_string(), "FFFFFF".to_string()),
+            ("hover".to_string(), "333333".to_string()),
+        ]);
+        assert!(changed_colors(&refreshed, &refreshed).is_empty());
+    }
+
+    #[test]
+    fn remote_palette_edits_are_not_overwritten() {
+        let baseline = PaletteBaseline {
+            name: "Brand".to_string(),
+            colors: BTreeMap::from([("primary".to_string(), "222222".to_string())]),
+        };
+        let current = PaletteFile {
+            id: Some(1),
+            name: "Brand".to_string(),
+            colors: BTreeMap::from([("primary".to_string(), "333333".to_string())]),
+            pulled: Some(PaletteBaseline {
+                name: "Brand".to_string(),
+                colors: BTreeMap::from([("primary".to_string(), "333333".to_string())]),
+            }),
+        };
+        let changed = BTreeMap::from([("primary".to_string(), "111111".to_string())]);
+        assert!(ensure_no_palette_conflicts(&changed, &baseline, &current).is_err());
+    }
+
+    #[test]
+    fn malformed_color_rows_fail_closed() {
+        let error = colors_from_value(&json!([{ "name": "primary" }])).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "palette color 'primary' is missing a hex value"
+        );
+    }
+
+    #[test]
+    fn built_in_palettes_cannot_be_updated() {
+        assert!(ensure_mutable_palette_id(1).is_ok());
+        assert!(
+            ensure_mutable_palette_id(-1)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be updated")
+        );
+    }
 }

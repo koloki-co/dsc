@@ -13,7 +13,7 @@ List, pull, and push colour palettes (color schemes).
 dsc theme palette list <discourse> [--format text|json|yaml] [--verbose]
 ```
 
-Lists available colour palettes on the specified Discourse. `-v`/`--verbose` includes additional fields where supported.
+Lists available colour palettes on the specified Discourse, including built-in palettes with negative IDs. `-v`/`--verbose` includes additional fields where supported.
 
 ## dsc theme palette pull
 
@@ -21,7 +21,7 @@ Lists available colour palettes on the specified Discourse. `-v`/`--verbose` inc
 dsc theme palette pull <discourse> <palette-id> [<local-path>]
 ```
 
-Exports the specified palette to a local JSON file. If `<local-path>` is omitted, writes `palette-<id>.json` in the current directory.
+Exports the specified palette to a local JSON file. If `<local-path>` is omitted, writes `palette-<id>.json` in the current directory. Discourse returns effective resolved colours rather than identifying which values are stored overrides, so the file is an editable effective-colour snapshot. The `pulled` block records the original name and effective colours used to identify intentional edits; do not edit it. Built-in negative-ID palettes can be pulled but not updated.
 
 ## dsc theme palette push
 
@@ -29,4 +29,4 @@ Exports the specified palette to a local JSON file. If `<local-path>` is omitted
 dsc theme palette push <discourse> <local-path> [<palette-id>]
 ```
 
-Updates the specified palette with the colors in the local file. If `<palette-id>` is omitted, a new palette is created and the file is updated with the new ID.
+Updates the specified custom palette with the colours in the local file. Before updating, `dsc` re-fetches the palette, rejects conflicting remote edits, and sends only values changed from the recorded `pulled` baseline that are not already effective remotely. It then refreshes both the effective snapshot and baseline from Discourse, so repeated pushes do not materialise recalculated inherited colours as overrides. Omitting a colour leaves it unchanged because Discourse has no API operation for deleting an existing colour override. Existing-palette updates from legacy files without a `pulled` block are refused; re-pull before editing. A baseline-free file can still create a new palette when neither the file nor command supplies an ID; the ID is persisted immediately and the refreshed baseline follows.
