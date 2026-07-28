@@ -41,7 +41,8 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 ### New command surfaces
 
 - [ ] **R12 - `dsc chat`** - `chat channels` / `chat send <discourse> <channel> [<file>]` / `chat fetch <channel> [--since …]`. Mirrors the `topic`/`pm` split.
-- [ ] ⭐ **R13 - `backup setup-s3` Phase 2/3** - `--reuse-user` (key rotation), `--use-iam-profile`, `--all`/`--tags`; then a native AWS SDK backend, `--retention` lifecycle, `backup status`. Spec: [backup-s3-setup](commands/backup-s3-setup.md).
+- [ ] ⭐ **R13 - `backup setup-s3` Phase 2/3** - `--reuse-user` (key rotation), `--use-iam-profile`, `--all`/`--tags`; then a native AWS SDK backend and `--retention` lifecycle. Spec: [backup-s3-setup](commands/backup-s3-setup.md).
+- [ ] ⭐ **R41 - `dsc backup health`** - fleet S3 evidence for newest backup timestamp/age, newest archive size, total bucket bytes, and object count, with stale/missing/inaccessible exit status. Driver: recurring manual `aws s3` checks to catch halted backups and unbounded bucket growth. Spec: [backup-health](commands/backup-health.md).
 - [ ] **R14 - `dsc install <name> --host <host>`** - declarative provisioning on a `dsc harden`-prepared box (templated `app.yml`, launcher bootstrap, poll `/about.json`, append to `dsc.toml`). Spec: [install](commands/install.md). Includes the remaining `harden` stage-3 items (timezone/swap/journald/unattended-upgrades/fail2ban/rootless-Docker/ufw - config keys wired, SSH execution + tests remain) and the `ssh_user`/`ssh_port` per-Discourse config fields `install` writes on success.
 
 ### Admin depth (demand-driven)

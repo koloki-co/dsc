@@ -15,7 +15,7 @@ Cross-cutting documents that sit above any single command:
 
 ## Per-command ([commands/](commands/))
 
-One spec per discrete feature or gap, named after the command surface it belongs to and mirroring `src/commands/` and [docs/](../docs/). A single command can own more than one spec when the work arrived in distinct pieces - for example `dsc category` has both [commands/category-workflow.md](commands/category-workflow.md) (the pull/edit/push loop) and [commands/category-definition-sync.md](commands/category-definition-sync.md) (syncing category *definitions*). Specs stay discrete rather than being merged, so each keeps its own driver, field-API reference, and phase checklist. Planned examples include [commands/explorer.md](commands/explorer.md) for Data Explorer query inspection and execution.
+One spec per discrete feature or gap, named after the command surface it belongs to and mirroring `src/commands/` and [docs/](../docs/). A single command can own more than one spec when the work arrived in distinct pieces - for example `dsc category` has both [commands/category-workflow.md](commands/category-workflow.md) (the pull/edit/push loop) and [commands/category-definition-sync.md](commands/category-definition-sync.md) (syncing category *definitions*). Specs stay discrete rather than being merged, so each keeps its own driver, field-API reference, and phase checklist. Planned examples include [commands/explorer.md](commands/explorer.md) for Data Explorer query inspection and execution and [commands/backup-health.md](commands/backup-health.md) for S3 backup health.
 
 ## Conventions
 

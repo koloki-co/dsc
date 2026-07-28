@@ -5,7 +5,7 @@
 > `aws` CLI), set the Discourse S3 settings (using the fixed `update_site_setting`
 > path), optional verification backup, and a complete offline `--dry-run`.
 > Phase 2 (`--reuse-user`, `--use-iam-profile`, `--all`/`--tags`) and Phase 3
-> (native SDK, `--retention`, `backup status`) remain planned.
+> (native SDK, `--retention`, and fleet `backup health`) remain planned.
 
 Spec for one-command setup of off-site Discourse backups on Amazon S3. Goal: replace a ~15-step AWS-console + Discourse-settings runbook with a single `dsc` command. Driver: the Koloki fleet - every self-hosted forum needs off-site backups, and the secure pattern (one bucket + one dedicated single-bucket IAM user per forum) is set up by hand in the AWS console for each one. Production runbook in use since 2023-01.
 
@@ -133,7 +133,7 @@ Caveat (2026-06-24): `dsc setting set` does not persist site settings reliably (
 
 - [ ] Optional native AWS SDK backend (drop the `aws` CLI dependency).
 - [ ] `--retention <days>` lifecycle rule (expire old backups in the bucket).
-- [ ] `dsc backup status <discourse>` - report destination, last backup, bucket object count/size.
+- [ ] `dsc backup health` - fleet report of destination, latest actual S3 object, age, archive size, and total bucket object count/size. Spec: [backup-health](backup-health.md).
 
 ## Backward compatibility
 
