@@ -65,7 +65,7 @@ ssh_enabled = false             # when true, ssh_host and changelog_topic_id are
 backup_enabled = false          # enables read-only backup list coverage
 ```
 
-All five `test_*_id` fixtures are required and must belong to this disposable forum. The configured API user must be an administrator, and the forum must set `can_permanently_delete = true`; cleanup soft-deletes marked resources, waits out Discourse's five-minute same-admin safety window when necessary, and then verifies permanent deletion. On Unix the file must be mode 0600 or stricter: `chmod 600 /absolute/path/to/live-test.toml`. Backup creation/restore, custom emoji upload, and other mutations without reliable cleanup are deliberately excluded from this runner. See the [R36 live-test specification](https://github.com/pacharanero/dsc/blob/main/spec/live-compatibility-tests.md) for the complete safety and coverage contract.
+All five `test_*_id` fixtures are required and must belong to this disposable forum. The configured API user must be an administrator, and the forum must set `can_permanently_delete = true`; cleanup soft-deletes marked resources, waits out Discourse's five-minute same-admin safety window when necessary, and then verifies permanent deletion. On Unix the file must be mode 0600 or stricter: `chmod 600 /absolute/path/to/live-test.toml`. Backup creation/restore, custom emoji upload, and other mutations without reliable cleanup are deliberately excluded from this runner. See the [R36 live-test specification](https://github.com/koloki-co/dsc/blob/main/spec/live-compatibility-tests.md) for the complete safety and coverage contract.
 
 ## Shell completions
 

@@ -26,7 +26,7 @@ When in doubt, file the spec - it captures more context and the author can shrin
 ### Setup
 
 ```bash
-git clone https://github.com/pacharanero/dsc.git
+git clone https://github.com/koloki-co/dsc.git
 cd dsc
 cargo build
 cargo test

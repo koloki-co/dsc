@@ -49,17 +49,17 @@ Exploratory (not committed): `dsc chat`, a TUI, and an MCP server mode. See [spe
 ### Shell installer — Linux and macOS
 
 ```bash
-curl -LsSf https://pacharanero.github.io/dsc/install.sh | sh
+curl -LsSf https://koloki-co.github.io/dsc/install.sh | sh
 ```
 
 Downloads a prebuilt binary for your platform and installs it to `~/.cargo/bin` (or `$CARGO_HOME/bin` if set). Supports `x86_64` and `aarch64` on both Linux and macOS.
 
-This short URL proxies to cargo-dist's real installer on the [latest GitHub release](https://github.com/pacharanero/dsc/releases/latest) — fine for most purposes, but if you'd rather pin to a specific version or audit the script you can fetch it directly from the release assets.
+This short URL proxies to cargo-dist's real installer on the [latest GitHub release](https://github.com/koloki-co/dsc/releases/latest) — fine for most purposes, but if you'd rather pin to a specific version or audit the script you can fetch it directly from the release assets.
 
 ### PowerShell installer — Windows
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://pacharanero.github.io/dsc/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://koloki-co.github.io/dsc/install.ps1 | iex"
 ```
 
 Downloads the Windows `x86_64` binary and installs it to `%CARGO_HOME%\bin`.
@@ -75,7 +75,7 @@ The formula name matches the crate name (`dsc-rs`); the installed binary is stil
 
 ### Windows installer (MSI)
 
-Download `dsc-rs-x86_64-pc-windows-msvc.msi` from the [latest release](https://github.com/pacharanero/dsc/releases/latest) and double-click. The installer is unsigned, so Windows will show a SmartScreen warning the first time — click "More info" → "Run anyway".
+Download `dsc-rs-x86_64-pc-windows-msvc.msi` from the [latest release](https://github.com/koloki-co/dsc/releases/latest) and double-click. The installer is unsigned, so Windows will show a SmartScreen warning the first time — click "More info" → "Run anyway".
 
 ### From crates.io
 
@@ -95,14 +95,14 @@ The crate is published as `dsc-rs` (the `dsc` name was taken), but the installed
 
 ### Direct download
 
-Prebuilt archives for Linux, macOS, and Windows are attached to every [GitHub release](https://github.com/pacharanero/dsc/releases/latest). Download, extract, and drop `dsc` (or `dsc.exe`) anywhere on your `PATH`. Each archive has a sibling `.sha256` file, and `sha256.sum` contains the unified archive, MSI, and source checksum set in `sha256sum -c` compatible format.
+Prebuilt archives for Linux, macOS, and Windows are attached to every [GitHub release](https://github.com/koloki-co/dsc/releases/latest). Download, extract, and drop `dsc` (or `dsc.exe`) anywhere on your `PATH`. Each archive has a sibling `.sha256` file, and `sha256.sum` contains the unified archive, MSI, and source checksum set in `sha256sum -c` compatible format.
 
 ### From source
 
 Requires Rust 1.95.0 or newer (install via [rustup](https://rustup.rs)).
 
 ```bash
-git clone https://github.com/pacharanero/dsc.git
+git clone https://github.com/koloki-co/dsc.git
 cd dsc
 cargo install --path .
 ```
@@ -183,7 +183,7 @@ dsc update myforum
 
 ## Support
 
-For questions about administering Discourse, ask on [Discourse Meta](https://meta.discourse.org). For `dsc` bugs, feature requests, or proposed command surfaces, follow the routes in [Contributing](CONTRIBUTING.md). Security vulnerabilities belong in a private [GitHub Security Advisory](https://github.com/pacharanero/dsc/security/advisories/new) or email, never a public issue.
+For questions about administering Discourse, ask on [Discourse Meta](https://meta.discourse.org). For `dsc` bugs, feature requests, or proposed command surfaces, follow the routes in [Contributing](CONTRIBUTING.md). Security vulnerabilities belong in a private [GitHub Security Advisory](https://github.com/koloki-co/dsc/security/advisories/new) or email, never a public issue.
 
 ## License
 

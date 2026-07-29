@@ -52,7 +52,7 @@ jobs:
       - run: zensical build --clean
 
       # Drop installer proxies at the site root so users can do
-      #   curl -LsSf https://pacharanero.github.io/dsc/install.sh | sh
+      #   curl -LsSf https://koloki-co.github.io/dsc/install.sh | sh
       # instead of the full GitHub-releases URL. The scripts below simply
       # re-fetch cargo-dist's real installer for the latest release, so
       # they never go stale between docs deploys.
@@ -61,18 +61,18 @@ jobs:
           cat > site/install.sh <<'EOF'
           #!/bin/sh
           # dsc installer proxy — fetches the latest cargo-dist installer.
-          # Source: https://github.com/pacharanero/dsc
+          # Source: https://github.com/koloki-co/dsc
           set -eu
           curl --proto '=https' --tlsv1.2 -LsSf \
-            https://github.com/pacharanero/dsc/releases/latest/download/dsc-rs-installer.sh \
+            https://github.com/koloki-co/dsc/releases/latest/download/dsc-rs-installer.sh \
             | sh
           EOF
           chmod +x site/install.sh
 
           cat > site/install.ps1 <<'EOF'
           # dsc installer proxy — fetches the latest cargo-dist installer.
-          # Source: https://github.com/pacharanero/dsc
-          irm https://github.com/pacharanero/dsc/releases/latest/download/dsc-rs-installer.ps1 | iex
+          # Source: https://github.com/koloki-co/dsc
+          irm https://github.com/koloki-co/dsc/releases/latest/download/dsc-rs-installer.ps1 | iex
           EOF
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

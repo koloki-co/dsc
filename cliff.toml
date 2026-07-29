@@ -26,7 +26,7 @@ body = """
 {% for commit in commits %}
 - {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{{ commit.message | upper_first }}\
     {% if commit.breaking %} **[breaking]**{% endif %}\
-    {% if commit.id %} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/pacharanero/dsc/commit/{{ commit.id }})){% endif %}
+    {% if commit.id %} ([{{ commit.id | truncate(length=7, end="") }}](https://github.com/koloki-co/dsc/commit/{{ commit.id }})){% endif %}
 {% endfor %}\
 {% endfor %}\n
 """
@@ -39,7 +39,7 @@ filter_unconventional = true
 split_commits = false
 commit_preprocessors = [
     # Link bare GitHub issue/PR refs.
-    { pattern = '\(#([0-9]+)\)', replace = "([#${1}](https://github.com/pacharanero/dsc/issues/${1}))" },
+    { pattern = '\(#([0-9]+)\)', replace = "([#${1}](https://github.com/koloki-co/dsc/issues/${1}))" },
 ]
 commit_parsers = [
     { message = "^feat", group = "Features" },

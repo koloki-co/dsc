@@ -2,7 +2,7 @@
 
 Community-health snapshot for a Discourse — three sections (growth, activity, health) of metrics chosen so that each one, on its own, tells you something actionable. Designed to fit on a single screen and to pipe cleanly into a journal topic for trend tracking.
 
-The full design rationale lives in [`spec/commands/analytics.md`](https://github.com/pacharanero/dsc/blob/main/spec/commands/analytics.md). This page documents the shipped command and its current limitations.
+The full design rationale lives in [`spec/commands/analytics.md`](https://github.com/koloki-co/dsc/blob/main/spec/commands/analytics.md). This page documents the shipped command and its current limitations.
 
 ## Usage
 
@@ -55,7 +55,7 @@ This command does **not** honour `--dry-run` — it's read-only.
 
 ## Sections
 
-> **v1 status:** the sections below describe every metric the command is designed around, including some that aren't computed yet. v1 implements the per-report metrics directly; the per-user-walk metrics (new contributors, reactivated users, lost regulars, unique posters, top-10 share, returning poster rate, solo-thread rate) print `— (n/i)` in text and `"not_implemented": true` in JSON. See [What v1 actually computes](#what-v1-actually-computes) for the per-metric matrix, and [spec/commands/analytics.md - Implementation follow-ups](https://github.com/pacharanero/dsc/blob/main/spec/commands/analytics.md#implementation-follow-ups) for the design constraints (mainly per-user-walk latency vs gating behind a future `--full` flag).
+> **v1 status:** the sections below describe every metric the command is designed around, including some that aren't computed yet. v1 implements the per-report metrics directly; the per-user-walk metrics (new contributors, reactivated users, lost regulars, unique posters, top-10 share, returning poster rate, solo-thread rate) print `— (n/i)` in text and `"not_implemented": true` in JSON. See [What v1 actually computes](#what-v1-actually-computes) for the per-metric matrix, and [spec/commands/analytics.md - Implementation follow-ups](https://github.com/koloki-co/dsc/blob/main/spec/commands/analytics.md#implementation-follow-ups) for the design constraints (mainly per-user-walk latency vs gating behind a future `--full` flag).
 
 ### Growth
 
@@ -121,7 +121,7 @@ Some metrics are computed straight from Discourse's `/admin/reports/{id}.json` e
 | Returning poster rate | ⏳ stub — needs cross-window per-user comparison |
 | Solo-thread rate | ⏳ stub — needs per-topic reply-count walk |
 
-The stubbed metrics are tracked in [spec/commands/analytics.md - Implementation follow-ups](https://github.com/pacharanero/dsc/blob/main/spec/commands/analytics.md#implementation-follow-ups) and will land in patch releases.
+The stubbed metrics are tracked in [spec/commands/analytics.md - Implementation follow-ups](https://github.com/koloki-co/dsc/blob/main/spec/commands/analytics.md#implementation-follow-ups) and will land in patch releases.
 
 ## Examples
 

@@ -33,7 +33,7 @@ Stages 1 and 2 are individually idempotent within the fresh-box flow — if you 
 
 ## What stage 3 will add
 
-Tracked in [spec/commands/install.md](https://github.com/pacharanero/dsc/blob/main/spec/commands/install.md). Briefly: UTC timezone, time-sync verified, swap file (2 GB by default), journald log cap, unattended security upgrades, fail2ban, rootless Docker (per the Bawmedical playbook — `setcap cap_net_bind_service=ep` on rootlesskit, `loginctl enable-linger`), and `ufw` opened for Discourse's standard ports.
+Tracked in [spec/commands/install.md](https://github.com/koloki-co/dsc/blob/main/spec/commands/install.md). Briefly: UTC timezone, time-sync verified, swap file (2 GB by default), journald log cap, unattended security upgrades, fail2ban, rootless Docker (per the Bawmedical playbook — `setcap cap_net_bind_service=ep` on rootlesskit, `loginctl enable-linger`), and `ufw` opened for Discourse's standard ports.
 
 ## Configuration (`[harden]` block)
 
@@ -56,7 +56,7 @@ mosh                         = false      # opt-in; opens UDP 60000-61000
 # extra_ufw_allow = ["3000/tcp", "192.168.1.0/24"]
 ```
 
-Read [`dsc.example.toml`](https://github.com/pacharanero/dsc/blob/main/dsc.example.toml) for the full annotated block.
+Read [`dsc.example.toml`](https://github.com/koloki-co/dsc/blob/main/dsc.example.toml) for the full annotated block.
 
 ## Why publish a hardening routine?
 
@@ -70,7 +70,7 @@ A reasonable concern: doesn't publishing the exact steps `dsc harden` takes give
 
 **What you gain by publishing:**
 
-- **Auditability.** You can read [`src/commands/harden.rs`](https://github.com/pacharanero/dsc/blob/main/src/commands/harden.rs) before running it as root on a fresh box. The alternative — closed binary with full root — is much worse for trust.
+- **Auditability.** You can read [`src/commands/harden.rs`](https://github.com/koloki-co/dsc/blob/main/src/commands/harden.rs) before running it as root on a fresh box. The alternative — closed binary with full root — is much worse for trust.
 - **Crowd review.** Security researchers can spot mistakes before attackers do. Every major hardening tool is open (ansible-hardening, OpenSCAP, dev-sec.io, CIS, lynis) for exactly this reason.
 - **Reproducibility.** You can rebuild the same posture by hand from the published steps if you don't want the tool.
 
@@ -79,7 +79,7 @@ A reasonable concern: doesn't publishing the exact steps `dsc harden` takes give
 - Every "magic" default is configurable — port, username, swap size, packages, the lot. Power users who want extra obscurity can deviate; defaults stay readable for everyone else.
 - No secrets, backdoor users, or default keys are ever shipped.
 - Every non-obvious step has an inline `// why:` comment so reviewers can reason quickly.
-- Vulnerabilities should be reported privately — see [SECURITY.md](https://github.com/pacharanero/dsc/blob/main/SECURITY.md).
+- Vulnerabilities should be reported privately — see [SECURITY.md](https://github.com/koloki-co/dsc/blob/main/SECURITY.md).
 
 **The one genuinely new risk:** once enough people use `dsc harden`, attackers can fingerprint dsc-hardened boxes (specific port + user + ufw rule combination + sshd algorithm list). For most users this is acceptable — being identifiably-hardened is still safer than being unhardened — but worth knowing so power users can opt out of any default they care about.
 
@@ -108,6 +108,6 @@ dsc harden 192.0.2.1 --pubkey-file ~/.ssh/myserver.pub --new-user ops --ssh-port
 
 ## Related
 
-- [`dsc install`](https://github.com/pacharanero/dsc) — declarative Discourse install on a hardened box. WIP, lands after `dsc harden` is feature-complete.
+- [`dsc install`](https://github.com/koloki-co/dsc) — declarative Discourse install on a hardened box. WIP, lands after `dsc harden` is feature-complete.
 - [`dsc update`](update.md) — runs OS + Discourse rebuilds via SSH. Already shipped; complements `dsc harden` once the box is provisioned.
 - [`dsc config check`](config.md) — verifies API and SSH connectivity for every install in `dsc.toml`. Good first thing to run after `dsc install` adds your new box.
