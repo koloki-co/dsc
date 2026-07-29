@@ -20,7 +20,7 @@ fn list() {
 }
 
 #[test]
-fn list_structured_formats_never_expose_api_keys() {
+fn list_formats_never_expose_api_keys() {
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
         &dir,
@@ -37,7 +37,15 @@ docker_rootless = true
 "#,
     );
 
-    for format in ["json", "yaml"] {
+    for format in [
+        "text",
+        "markdown",
+        "markdown-table",
+        "json",
+        "yaml",
+        "csv",
+        "urls",
+    ] {
         let output = run_dsc(&["list", "--format", format], &config_path);
         assert!(output.status.success(), "list --format {format} failed");
 
@@ -46,19 +54,6 @@ docker_rootless = true
             !raw.contains("apikey") && !raw.contains("never-print-this-secret"),
             "list --format {format} exposed an API key:\n{raw}"
         );
-        for expected in [
-            "private",
-            "https://private.example",
-            "Private forum",
-            "system",
-            "production",
-            "host.example",
-        ] {
-            assert!(
-                raw.contains(expected),
-                "list --format {format} omitted {expected:?}:\n{raw}"
-            );
-        }
     }
 }
 

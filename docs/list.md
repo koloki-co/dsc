@@ -18,7 +18,7 @@ dsc list [--format <format>] [--tags <tag1,tag2,...>] [--open] [--verbose]
 - `csv`
 - `urls` — one base URL per line, useful for piping
 
-Structured output includes non-secret configuration metadata but never includes API keys or other secret credential values.
+Output never includes API keys or other secret credential values in any format. There is deliberately no flag to reveal them; operators who need credentials must access the protected `dsc.toml` directly.
 
 ## Flags
 

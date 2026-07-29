@@ -7,6 +7,7 @@ use anyhow::{Context, Result, anyhow};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -99,7 +100,7 @@ pub struct HardenConfig {
 }
 
 /// Configuration for a single Discourse install.
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone)]
 pub struct DiscourseConfig {
     pub name: String,
     pub baseurl: String,
@@ -121,6 +122,27 @@ pub struct DiscourseConfig {
     pub app_yml_path: Option<String>,
     #[serde(default)]
     pub docker_rootless: Option<bool>,
+}
+
+impl fmt::Debug for DiscourseConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DiscourseConfig")
+            .field("name", &self.name)
+            .field("baseurl", &self.baseurl)
+            .field("fullname", &self.fullname)
+            .field(
+                "apikey",
+                &self.apikey.as_ref().map(|_| "#####REDACTED#####"),
+            )
+            .field("api_username", &self.api_username)
+            .field("tags", &self.tags)
+            .field("changelog_topic_id", &self.changelog_topic_id)
+            .field("ssh_host", &self.ssh_host)
+            .field("app_yml_path", &self.app_yml_path)
+            .field("docker_rootless", &self.docker_rootless)
+            .finish()
+    }
 }
 
 /// Load configuration from a TOML file.
@@ -327,6 +349,20 @@ mod tests {
 
     fn osstr<S: AsRef<OsStr>>(s: S) -> OsString {
         s.as_ref().to_os_string()
+    }
+
+    #[test]
+    fn discourse_config_debug_redacts_api_key() {
+        let discourse = DiscourseConfig {
+            name: "private".to_string(),
+            baseurl: "https://private.example".to_string(),
+            apikey: Some("never-print-this-secret".to_string()),
+            ..DiscourseConfig::default()
+        };
+
+        let debug = format!("{discourse:?}");
+        assert!(debug.contains("#####REDACTED#####"));
+        assert!(!debug.contains("never-print-this-secret"));
     }
 
     #[test]
