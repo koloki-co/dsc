@@ -28,9 +28,9 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 
 ## Planned
 
-### Docker app configuration ⭐
+### Docker app configuration
 
-- [~] ⭐ **R28 - `dsc app env` inspect, audit, and safe set** - Phase 1 ships read-only `list|get|audit` over SSH with secret redaction and optional `app_yml_path`; guarded scalar edits with backup, dry-run, and optional rebuild remain. Driver: inspecting or raising `DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE` across the owned fleet. Spec: [app-environment](commands/app-environment.md).
+- [ ] **R28 - `dsc app` Phase 3 inventory** - low-priority follow-up: consider read-only inventory for selected non-`env:` `app.yml` keys (`templates`, `hooks`, `volumes`) if a concrete fleet need arises. The `app env` inspection, audit, and safe scalar edit workflow is complete. Spec: [app-environment](commands/app-environment.md).
 
 ### Content sync
 
