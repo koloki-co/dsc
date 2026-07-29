@@ -49,7 +49,7 @@ Exploratory (not committed): `dsc chat`, a TUI, and an MCP server mode. See [spe
 ### Shell installer — Linux and macOS
 
 ```bash
-curl -LsSf https://koloki-co.github.io/dsc/install.sh | sh
+curl -LsSf https://dsc.koloki.co/install.sh | sh
 ```
 
 Downloads a prebuilt binary for your platform and installs it to `~/.cargo/bin` (or `$CARGO_HOME/bin` if set). Supports `x86_64` and `aarch64` on both Linux and macOS.
@@ -59,7 +59,7 @@ This short URL proxies to cargo-dist's real installer on the [latest GitHub rele
 ### PowerShell installer — Windows
 
 ```powershell
-powershell -ExecutionPolicy Bypass -c "irm https://koloki-co.github.io/dsc/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://dsc.koloki.co/install.ps1 | iex"
 ```
 
 Downloads the Windows `x86_64` binary and installs it to `%CARGO_HOME%\bin`.

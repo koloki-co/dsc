@@ -52,7 +52,7 @@ jobs:
       - run: zensical build --clean
 
       # Drop installer proxies at the site root so users can do
-      #   curl -LsSf https://koloki-co.github.io/dsc/install.sh | sh
+      #   curl -LsSf https://dsc.koloki.co/install.sh | sh
       # instead of the full GitHub-releases URL. The scripts below simply
       # re-fetch cargo-dist's real installer for the latest release, so
       # they never go stale between docs deploys.
