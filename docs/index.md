@@ -13,7 +13,7 @@ Most functionality uses the Discourse REST API; `dsc update` runs remote rebuild
     One-liner shell installer:
 
     ```bash
-    curl -LsSf https://koloki-co.github.io/dsc/install.sh | sh
+    curl -LsSf https://dsc.koloki.co/install.sh | sh
     ```
 
     Drops a prebuilt binary into `~/.cargo/bin` (or `$CARGO_HOME/bin`).
@@ -33,7 +33,7 @@ Most functionality uses the Discourse REST API; `dsc update` runs remote rebuild
     One-liner:
 
     ```powershell
-    powershell -ExecutionPolicy Bypass -c "irm https://koloki-co.github.io/dsc/install.ps1 | iex"
+    powershell -ExecutionPolicy Bypass -c "irm https://dsc.koloki.co/install.ps1 | iex"
     ```
 
     Drops `dsc.exe` into `%CARGO_HOME%\bin`.

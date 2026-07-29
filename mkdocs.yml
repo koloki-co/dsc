@@ -4,7 +4,7 @@
 
 site_name: dsc
 site_description: Discourse CLI — manage multiple Discourse forums from the terminal.
-site_url: https://koloki-co.github.io/dsc/
+site_url: https://dsc.koloki.co/
 repo_url: https://github.com/koloki-co/dsc
 repo_name: koloki-co/dsc
 edit_uri: edit/main/docs/
