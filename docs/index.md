@@ -13,7 +13,7 @@ Most functionality uses the Discourse REST API; `dsc update` runs remote rebuild
     One-liner shell installer:
 
     ```bash
-    curl -LsSf https://pacharanero.github.io/dsc/install.sh | sh
+    curl -LsSf https://koloki-co.github.io/dsc/install.sh | sh
     ```
 
     Drops a prebuilt binary into `~/.cargo/bin` (or `$CARGO_HOME/bin`).
@@ -33,7 +33,7 @@ Most functionality uses the Discourse REST API; `dsc update` runs remote rebuild
     One-liner:
 
     ```powershell
-    powershell -ExecutionPolicy Bypass -c "irm https://pacharanero.github.io/dsc/install.ps1 | iex"
+    powershell -ExecutionPolicy Bypass -c "irm https://koloki-co.github.io/dsc/install.ps1 | iex"
     ```
 
     Drops `dsc.exe` into `%CARGO_HOME%\bin`.
@@ -42,7 +42,7 @@ Most functionality uses the Discourse REST API; `dsc update` runs remote rebuild
 
     Prefer a graphical installer? Download the `.msi` for
     `x86_64-pc-windows-msvc` from the
-    [latest release](https://github.com/pacharanero/dsc/releases/latest)
+    [latest release](https://github.com/koloki-co/dsc/releases/latest)
     and double-click. Unsigned, so SmartScreen will warn the first
     time — click "More info" → "Run anyway".
 
@@ -63,7 +63,7 @@ Most functionality uses the Discourse REST API; `dsc update` runs remote rebuild
     The crate is named `dsc-rs` (the `dsc` name on crates.io was
     taken); the installed binary is always `dsc`.
 
-See the [project README](https://github.com/pacharanero/dsc#readme) for
+See the [project README](https://github.com/koloki-co/dsc#readme) for
 direct-download archives and other paths in.
 
 ## A minimal config

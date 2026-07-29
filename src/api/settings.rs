@@ -127,7 +127,7 @@ impl DiscourseClient {
 /// (e.g. `title=My+Forum`), not a generic `value=...`. Sending `value=`
 /// silently no-ops - and blanks string settings, since the real field is
 /// then absent. Regression guard for
-/// <https://github.com/pacharanero/dsc/issues/19>.
+/// <https://github.com/koloki-co/dsc/issues/19>.
 fn site_setting_form<'a>(setting: &'a str, value: &'a str) -> [(&'a str, &'a str); 1] {
     [(setting, value)]
 }

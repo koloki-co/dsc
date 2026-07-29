@@ -6,7 +6,7 @@ Please **don't** open a public GitHub issue for security problems.
 
 Use one of:
 
-- **GitHub Security Advisories** — preferred. Open a draft advisory at <https://github.com/pacharanero/dsc/security/advisories/new>. This stays private until coordinated disclosure.
+- **GitHub Security Advisories** — preferred. Open a draft advisory at <https://github.com/koloki-co/dsc/security/advisories/new>. This stays private until coordinated disclosure.
 - **Email** — `info@koloki.co` for issues that don't fit the GitHub flow.
 
 Please include:

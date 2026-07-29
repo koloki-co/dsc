@@ -49,7 +49,7 @@ Snapshot all site settings to a local YAML (or JSON, by extension) file with ful
 - `--changed-only` (`-c`): only include settings whose value differs from default. Produces a manageable file (~50-100 entries) suitable for version control.
 - `--category <cat>`: limit to a single category (e.g. `required`, `email`, `security`).
 
-See [spec/commands/setting-sync.md](https://github.com/pacharanero/dsc/blob/main/spec/commands/setting-sync.md) for the schema and intended workflow.
+See [spec/commands/setting-sync.md](https://github.com/koloki-co/dsc/blob/main/spec/commands/setting-sync.md) for the schema and intended workflow.
 
 ## dsc setting push
 

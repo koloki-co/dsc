@@ -4,9 +4,9 @@
 
 site_name: dsc
 site_description: Discourse CLI — manage multiple Discourse forums from the terminal.
-site_url: https://pacharanero.github.io/dsc/
-repo_url: https://github.com/pacharanero/dsc
-repo_name: pacharanero/dsc
+site_url: https://koloki-co.github.io/dsc/
+repo_url: https://github.com/koloki-co/dsc
+repo_name: koloki-co/dsc
 edit_uri: edit/main/docs/
 
 theme:
@@ -123,4 +123,4 @@ markdown_extensions:
 
 copyright: >-
   Copyright &copy; 2025–2026 Marcus Baw and Koloki Ltd.
-  Source <a href="https://github.com/pacharanero/dsc">pacharanero/dsc</a>.
+  Source <a href="https://github.com/koloki-co/dsc">koloki-co/dsc</a>.
