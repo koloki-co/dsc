@@ -21,13 +21,17 @@ Most state lives behind a `pull` / `push` pair: `topic`, `category`, `post`, `ta
 
 `dsc.toml` entries carry `tags`. Most read commands accept `--tags tag1,tag2` to filter; `dsc setting set --tags <tags> <key> <value>` writes across every matching install. Tag your installs by environment (`production`, `staging`), region, or customer.
 
-## When you hit a gap, file a spec
+## When you find a bug, tweak, or gap
 
-This is the most useful thing you can do. `dsc`'s author is actively shaping the tool around real-world use. Don't open an issue; write a spec.
+Record it in [spec/roadmap.md](spec/roadmap.md), the single list of planned work. `dsc`'s author is actively shaping the tool around real-world use. Do not open an issue for a missing feature; write or update its spec and roadmap entry instead.
+
+- **Bug** - add or update the roadmap entry with the exact command, expected and actual behaviour, and `dsc version`. Fix it directly when feasible.
+- **Tweak or missing feature** - add a roadmap entry with the next unused stable `RXX` code, then add a linked command spec when the request needs design detail.
+- **Real-install driver** - retain the observed API calls, redacted response, and Discourse version in the linked spec.
 
 ### Where to put it
 
-Specs are two-tier (see [spec/README.md](spec/README.md)). A spec for a command or a discrete feature goes under [spec/commands/](spec/commands/), named slug-case after the command surface, mirroring `src/commands/` and [docs/](docs/): `spec/commands/theme-management.md`, `spec/commands/config-path-resolution.md`. Overarching, cross-cutting specs (config schema, CLI design, roadmap) stay at the [spec/](spec/) root. Don't suffix with `-spec.md` for new ones (legacy filenames have it; new ones don't need to). Reference it from [spec/roadmap.md](spec/roadmap.md) under **Planned** if appropriate, assigning the next unused stable `RXX` roadmap code to each actionable item.
+Specs are two-tier (see [spec/README.md](spec/README.md)). A spec for a command or a discrete feature goes under [spec/commands/](spec/commands/), named slug-case after the command surface, mirroring `src/commands/` and [docs/](docs/): `spec/commands/theme-management.md`, `spec/commands/config-path-resolution.md`. Overarching, cross-cutting specs (config schema, CLI design, roadmap) stay at the [spec/](spec/) root. Don't suffix with `-spec.md` for new ones (legacy filenames have it; new ones don't need to). Every actionable request belongs in [spec/roadmap.md](spec/roadmap.md) under **Planned**, with the next unused stable `RXX` code.
 
 ### What makes a spec land fast
 
@@ -107,10 +111,3 @@ redacted. Note the Discourse version you tested against.>
 - Authoring component source (SCSS/JS) - that belongs in the component's own repo.
 - Holding secrets beyond what `dsc.toml` already does (no key-manager integration planned).
 - Wrapping Discourse features that have no admin API (the CLI cannot exceed the API).
-
-## Reporting bugs vs filing specs
-
-- **Bug** = something `dsc` claims to do but does wrong: open a GitHub issue with the exact command, expected vs actual, and `dsc version`.
-- **Gap** = something `dsc` should do but doesn't: write a spec as above.
-
-If you are not sure which it is, write the spec - it captures more context.

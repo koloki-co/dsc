@@ -1,6 +1,6 @@
 # Roadmap
 
-Planned and in-progress work for `dsc`. Shipped history lives in [CHANGELOG.md](../CHANGELOG.md); active field-driven specs (⭐) are indexed in [from-the-field.md](from-the-field.md) and should generally outrank speculative items.
+The single list of planned and in-progress work for `dsc`. Shipped history lives in [CHANGELOG.md](../CHANGELOG.md).
 
 Legend: [x] done, [~] in progress or partially done, [ ] not started. Stable roadmap codes (`R1`, `R2`, …) are never renumbered or reused.
 
@@ -10,9 +10,9 @@ The built surface, grouped - see CHANGELOG for the full per-release detail.
 
 - **Declarative sync** - `setting pull/push/diff`, `tag pull/push`/`rename`, `category pull/push` (front-matter routing, `--dry-run`, `--updates-only`, `--no-bump`/`--skip-revision`), plus `post`/`backup`/`emoji`/`topic` pull/push. Specs: [setting-sync](commands/setting-sync.md), [tag-sync](commands/tag-sync.md), [category-workflow](commands/category-workflow.md).
 - **Theme management (complete)** - settings (incl. `pull/push`), fields (SCSS/HTML), assets (`set/unset`), enable/disable, attach/detach, palettes, `show`, remote `update`, API `install`/`delete`. Spec: [theme-management](commands/theme-management.md).
-- **Compliance / cross-forum** - ⭐ `sar` (GDPR SAR export), `setting audit` (one setting across the fleet). Spec: [subject-access-request](commands/subject-access-request.md).
-- **Content** - ⭐ `topic pull --full`, ⭐ `topic title`/`tags`, ⭐ `topic delete`/`restore`/`list --deleted`, negative-ID user-list fix. Specs: [topic-pull-full-thread](commands/topic-pull-full-thread.md), [topic-title-and-tags](commands/topic-title-and-tags.md), [topic-delete](commands/topic-delete.md), [user-list-negative-ids](commands/user-list-negative-ids.md).
-- **Ops** - `update` (skip-if-current, rootless Docker, parallel), `harden` (PQ-hybrid SSH), ⭐ `backup setup-s3` Phase 1. Spec: [backup-s3-setup](commands/backup-s3-setup.md).
+- **Compliance / cross-forum** - `sar` (GDPR SAR export), `setting audit` (one setting across the fleet). Spec: [subject-access-request](commands/subject-access-request.md).
+- **Content** - `topic pull --full`, `topic title`/`tags`, `topic delete`/`restore`/`list --deleted`, negative-ID user-list fix. Specs: [topic-pull-full-thread](commands/topic-pull-full-thread.md), [topic-title-and-tags](commands/topic-title-and-tags.md), [topic-delete](commands/topic-delete.md), [user-list-negative-ids](commands/user-list-negative-ids.md).
+- **Ops / diagnostics** - `update` (skip-if-current, rootless Docker, parallel), `harden` (PQ-hybrid SSH), `backup setup-s3` Phase 1, saved Data Explorer query inspection/execution. Specs: [backup-s3-setup](commands/backup-s3-setup.md), [explorer](commands/explorer.md).
 - **CLI / distribution** - universal `--format`, `completions install` (+ PowerShell), `man` pages, `version --format`, SIGPIPE-safe piping, config-path resolution, cargo-dist release + git-cliff changelog, `s/version++` one-command release, push/PR CI gate. Specs: [config-path-resolution](commands/config-path-resolution.md), [cli-design](cli-design.md).
 
 
@@ -28,30 +28,34 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 
 ## Planned
 
+### Ops reliability
+
+- [ ] **R42 - `dsc update` failure detection and disk-guard recovery** - two field-observed defects in the shipped `update` workflow. (1) Git writes its fetch summary to stderr on success; `dsc` misreads that as a failed SSH command and aborts before `./launcher rebuild app`, leaving the host rebooted and `discourse_docker` current but Discourse un-upgraded, and writing a false `failed` record. Failure detection must key on exit status, never stderr content. (2) The pre-flight disk guard runs before the update while `./launcher cleanup` runs after it, so a host below the 5G threshold can never recover through `dsc` and must be cleaned manually. Guard should attempt cleanup, re-measure, and only then refuse. Driver: 13-forum fleet run on 2026-07-29 where two forums falsely reported failure and one needed manual `docker rmi` of stale `discourse/base` images to get from 3.9G to 12G free. Spec: [update-failure-detection](commands/update-failure-detection.md).
+
 ### Docker app configuration
 
 - [ ] **R28 - `dsc app` Phase 3 inventory** - low-priority follow-up: consider read-only inventory for selected non-`env:` `app.yml` keys (`templates`, `hooks`, `volumes`) if a concrete fleet need arises. The `app env` inspection, audit, and safe scalar edit workflow is complete. Spec: [app-environment](commands/app-environment.md).
 
 ### Content sync
 
-
-- [ ] ⭐ **R29 - `dsc render` template placeholder substitution** - render local Markdown template files against per-forum variables from `dsc.toml` (`[template.vars]` globals, `[discourse.template]` per-forum, built-in `forum_baseurl`/`forum_name`/`forum_fullname`), so anonymised content templates are ready to push without manual find-and-replace. `--render` flag on `topic new`/`push`/`reply`/`category push` applies the same inline. Tera 2.0 engine. Driver: 24-template content-templates library in the discourses workspace. Spec: [template-rendering](commands/template-rendering.md).
-- [~] ⭐ **R11 - `category` definition sync Phase 2/3** - Phase 1 shipped the blocking round-trip (`category def pull/push`, `category show/get/set`) for category definitions: description, permissions, position, topic template, and tag rules. `category rename` (safe id-based rename) has shipped; explicit live `category diff` is implemented. Remaining work: list `--append`/`--remove`, `required_tag_groups`, and prune. Spec: [category-definition-sync](commands/category-definition-sync.md).
+- [ ] **R44 - `dsc post info`** - read-only lookup from a post ID to minimal metadata and a canonical topic URL, including staff-visible soft-deleted posts and topics. It must return the post ID, topic ID, post number, URL, deletion state, and topic title/slug/category ID without emitting raw post content or author data. Driver: completed Reviewables and staff action logs identify spam posts but do not expose a URL suitable for Discourse AI spam-detector testing. Spec: [post-info](commands/post-info.md).
+- [ ] **R43 - Category content portability** - finish `category` topic-sync portability with `--rewrite-links`; Quote Callouts and plain-blockquote admonition conversion are already implemented. Driver: MkDocs ↔ Discourse category content sync. Spec: [category-workflow](commands/category-workflow.md).
+- [ ] **R29 - `dsc render` template placeholder substitution** - render local Markdown template files against per-forum variables from `dsc.toml` (`[template.vars]` globals, `[discourse.template]` per-forum, built-in `forum_baseurl`/`forum_name`/`forum_fullname`), so anonymised content templates are ready to push without manual find-and-replace. `--render` flag on `topic new`/`push`/`reply`/`category push` applies the same inline. Tera 2.0 engine. Driver: 24-template content-templates library in the discourses workspace. Spec: [template-rendering](commands/template-rendering.md).
+- [~] **R11 - `category` definition sync Phase 2/3** - Phase 1 shipped the blocking round-trip (`category def pull/push`, `category show/get/set`) for category definitions: description, permissions, position, topic template, and tag rules. `category rename` (safe id-based rename) has shipped; explicit live `category diff` is implemented. Remaining work: list `--append`/`--remove`, `required_tag_groups`, and prune. Spec: [category-definition-sync](commands/category-definition-sync.md).
 
 ### New command surfaces
 
 - [ ] **R12 - `dsc chat`** - `chat channels` / `chat send <discourse> <channel> [<file>]` / `chat fetch <channel> [--since …]`. Mirrors the `topic`/`pm` split.
-- [ ] ⭐ **R13 - `backup setup-s3` Phase 2/3** - `--reuse-user` (key rotation), `--use-iam-profile`, `--all`/`--tags`; then a native AWS SDK backend and `--retention` lifecycle. Spec: [backup-s3-setup](commands/backup-s3-setup.md).
-- [ ] ⭐ **R41 - `dsc backup health`** - fleet S3 evidence for newest backup timestamp/age, newest archive size, total bucket bytes, and object count, with stale/missing/inaccessible exit status. Driver: recurring manual `aws s3` checks to catch halted backups and unbounded bucket growth. Spec: [backup-health](commands/backup-health.md).
+- [ ] **R13 - `backup setup-s3` Phase 2/3** - `--reuse-user` (key rotation), `--use-iam-profile`, `--all`/`--tags`; then a native AWS SDK backend and `--retention` lifecycle. Spec: [backup-s3-setup](commands/backup-s3-setup.md).
+- [ ] **R41 - `dsc backup health`** - fleet S3 evidence for newest backup timestamp/age, newest archive size, total bucket bytes, and object count, with stale/missing/inaccessible exit status. Driver: recurring manual `aws s3` checks to catch halted backups and unbounded bucket growth. Spec: [backup-health](commands/backup-health.md).
 - [ ] **R14 - `dsc install <name> --host <host>`** - declarative provisioning on a `dsc harden`-prepared box (templated `app.yml`, launcher bootstrap, poll `/about.json`, append to `dsc.toml`). Spec: [install](commands/install.md). Includes the remaining `harden` stage-3 items (timezone/swap/journald/unattended-upgrades/fail2ban/rootless-Docker/ufw - config keys wired, SSH execution + tests remain) and the `ssh_user`/`ssh_port` per-Discourse config fields `install` writes on success.
 
 ### Admin depth (demand-driven)
 
-- [ ] ⭐ **R40 - `dsc explorer`** - list, inspect, and run saved Data Explorer queries with typed JSON/YAML parameters, structured results, and CSV export; excludes raw SQL and query mutation until a governed definition-sync workflow is specified. Driver: Data Explorer is bundled core and is the practical diagnostic surface for data absent from the admin API. Spec: [explorer](commands/explorer.md).
 - [ ] **R39 - Emoji groups and bulk transfer** - investigate the new Discourse admin API for custom emoji group assignment and ZIP/CSV bulk import/export. If the API is available, add portable `dsc emoji` pull/push or import/export commands with manifest validation and dry-run support. Pinned picker groups are already configurable through the `emoji_picker_pinned_groups` site setting. Driver: [Discourse's July 2026 emoji groups and bulk import/export release](https://meta.discourse.org/t/pinned-emoji-groups-and-bulk-import-export-of-custom-emojis/408280).
 - [ ] **R16 - `dsc report <name> [--period]`** - dashboard reports such as signups, DAU, posts, and likes; distinct from `analytics`.
 - [ ] **R17 - `dsc webhook list|create|delete|ping`** - basic webhook administration.
-- [ ] ⭐ **R30 - `dsc notify who|skipped`** - read-only forensic inspection of `TopicUser`, `CategoryUser`, `TagUser`, and `SkippedEmailLog` records to answer "who is watching this topic and why did they get an email" without server or Data Explorer access. Driver: production notification cascade incident where the admin could not diagnose why specific users received emails for a dormant topic. Spec: [notification-forensics](commands/notification-forensics.md).
+- [ ] **R30 - `dsc notify who|skipped`** - read-only forensic inspection of `TopicUser`, `CategoryUser`, `TagUser`, and `SkippedEmailLog` records to answer "who is watching this topic and why did they get an email" without server or Data Explorer access. Driver: production notification cascade incident where the admin could not diagnose why specific users received emails for a dormant topic. Spec: [notification-forensics](commands/notification-forensics.md).
 
 ### Cross-forum (the multi-install headline)
 
