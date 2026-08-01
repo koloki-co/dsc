@@ -69,7 +69,7 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 
 Speculative; build only on real demand. None are required for 1.0.
 
-- [ ] **R24 - MCP server mode** - `dsc mcp serve` exposing commands as MCP tools. Overlaps `discourse-bawmedical-mcp` - consolidate vs coexist.
+- [ ] **R24 - MCP server mode** - `dsc mcp serve` exposing a curated subset of commands as MCP tools, for clients that cannot spawn a binary. Blocked on one question: whether the official Discourse MCP already accepts an admin API key, since the whole case rests on it not doing so. Decisions already taken if it goes ahead: consolidate `discourse-bawmedical-mcp` into it rather than running two servers, ship the async runtime in a separate `dsc-mcp` crate so the CLI stays synchronous, default to read-only with writes opt-in, and reuse the existing dry-run and confirmation guards rather than re-implementing request building. Spec: [mcp-server-mode](commands/mcp-server-mode.md).
 - [ ] **R25 - TUI** - `dsc tui` for interactive browsing. Big scope.
 - [ ] **R26 - Config federation** - multiple config files + include-directives, for teams.
 - [ ] **R27 - Discourse User API authentication** - add the user-approved device-code `dsc login/logout` flow and a per-forum User API auth profile after R36 provides isolated live compatibility tests. Initial candidate surface: read/search/pull, notifications, own PMs, uploads/invites, and content the authorizing user may create or edit; moderator/admin compatibility follows only after a disposable live endpoint/role spike. Existing Admin API auth remains supported with no silent privilege fallback. Spec: [user-api-authentication](commands/user-api-authentication.md).
