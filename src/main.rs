@@ -1303,6 +1303,60 @@ fn main() -> Result<()> {
             format,
         ),
 
+        Commands::Explorer { command } => match command {
+            ExplorerCommand::List {
+                discourse,
+                filter,
+                order,
+                ascending,
+                format,
+            } => commands::explorer::explorer_list(
+                &config,
+                &discourse,
+                commands::explorer::ExplorerListOptions {
+                    filter: filter.as_deref(),
+                    order: order.map(ExplorerOrderArg::as_str),
+                    ascending,
+                    format,
+                },
+            ),
+            ExplorerCommand::Show {
+                discourse,
+                query_id,
+                export,
+                format,
+            } => commands::explorer::explorer_show(
+                &config,
+                &discourse,
+                query_id,
+                export.as_deref(),
+                format,
+            ),
+            ExplorerCommand::Run {
+                discourse,
+                query_id,
+                params,
+                params_file,
+                csv,
+                explain,
+                limit,
+                format,
+            } => commands::explorer::explorer_run(
+                &config,
+                &discourse,
+                query_id,
+                commands::explorer::ExplorerRunOptions {
+                    params: params.as_deref(),
+                    params_file: params_file.as_deref(),
+                    csv: csv.as_deref(),
+                    explain,
+                    limit,
+                    format,
+                },
+                dry_run,
+            ),
+        },
+
         Commands::Upload {
             discourse,
             file,

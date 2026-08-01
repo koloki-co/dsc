@@ -91,6 +91,7 @@ nav:
       - notification: notification.md
   - Reports:
       - analytics: analytics.md
+      - explorer: explorer.md
   - Provisioning:
       - harden: harden.md
   - Development: development.md

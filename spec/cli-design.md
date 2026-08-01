@@ -11,7 +11,7 @@ Six principles, in rough priority order. When they conflict, the earlier one win
 3. **Plan before you act.** Every mutation can be previewed (`--dry-run`), is idempotent (send only what differs), and reports what it did (a diff/plan, not "done"). Acting on a production forum should never be a surprise.
 4. **Safe by default.** Refuse the dangerous case with a message that teaches the safe one. Never print secrets. Sequence multi-step changes so a failure leaves a clean state.
 5. **Consistent and discoverable.** One ordering, one error shape, one empty-list shape, one flag style - so knowing one command means knowing the next. Every command, flag, and argument has help text; `dsc --help` is the source of truth.
-6. **Field-driven.** Commands come from real use on real forums, carrying captured API signatures, not from speculation. See [from-the-field.md](from-the-field.md) and the ⭐ items in [roadmap.md](roadmap.md).
+6. **Evidence-informed.** When available, real-use evidence and captured API signatures belong in the linked command spec.
 
 ## The surface
 

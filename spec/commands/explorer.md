@@ -1,5 +1,7 @@
 # `dsc explorer` - inspect and run Discourse Data Explorer queries
 
+> **Status: Phases 1 and 2 implemented (unreleased).** `list`, `show`, and `run` use the canonical bundled-plugin routes with safe pagination, typed structured output, parameter files, exact query export, CSV download, explain, limits, filtering, and sorting. Managed query mutation remains deliberately separate.
+
 Spec for the core Discourse Data Explorer plugin. Goal: let an agent or administrator safely discover, inspect, and run existing trusted SQL reports without manually driving the admin UI or leaking the database-wide power of arbitrary SQL authoring. Driver: Data Explorer is now bundled with Discourse and is the practical read-only diagnostic surface for questions that ordinary admin APIs cannot answer, including notification forensics.
 
 ## Motivation
@@ -155,21 +157,21 @@ Discourse declares supported parameter types in SQL comments below `-- [params]`
 
 ### Phase 1 - blocking
 
-- [ ] Add `ExplorerCommand` and `src/commands/explorer.rs` with `list`, `show`, and `run`.
-- [ ] Add typed API client methods for canonical Data Explorer list, show, JSON run, and CSV download routes.
-- [ ] Follow `load_more_queries` safely, deduplicate query IDs, and reject pagination loops or unknown response shapes.
-- [ ] Support negative built-in query IDs in CLI parsing and API methods.
-- [ ] Implement JSON-object parameter input from inline JSON and JSON/YAML files.
-- [ ] Render result columns/rows in text, JSON, and YAML without losing column order or type values.
-- [ ] Add offline API-shape, parameter-validation, pagination, and CLI parsing tests.
-- [ ] Add one ignored disposable-forum live compatibility test that lists and runs a configured known read-only query; extend the live config only after proving a stable fixture query exists.
+- [x] Add `ExplorerCommand` and `src/commands/explorer.rs` with `list`, `show`, and `run`.
+- [x] Add typed API client methods for canonical Data Explorer list, show, JSON run, and CSV download routes.
+- [x] Follow `load_more_queries` safely, deduplicate query IDs, and reject pagination loops or unknown response shapes.
+- [x] Support negative built-in query IDs in CLI parsing and API methods.
+- [x] Implement JSON-object parameter input from inline JSON and JSON/YAML files.
+- [x] Render result columns/rows in text, JSON, and YAML without losing column order or type values.
+- [x] Add offline API-shape, parameter-validation, pagination, and CLI parsing tests.
+- [x] Add one ignored disposable-forum compatibility test that lists and runs bundled read-only query `-1` with a one-row limit when Data Explorer is enabled, or verifies the actionable disabled-plugin diagnostic otherwise.
 
 ### Phase 2 - iteration ergonomics
 
-- [ ] `show --export <file>` exact server export.
-- [ ] `run --csv <file>`, `--explain`, and bounded `--limit`.
-- [ ] Optional `--filter`, `--order`, and `--ascending` mapping to server list parameters.
-- [ ] Friendly parameter help that renders `param_info` before the user must handcraft JSON.
+- [x] `show --export <file>` exact server export.
+- [x] `run --csv <file>`, `--explain`, and bounded `--limit`.
+- [x] Optional `--filter`, `--order`, and `--ascending` mapping to server list parameters.
+- [x] Friendly parameter help that renders `param_info` before the user must handcraft JSON.
 
 ### Phase 3 - managed query definitions, only on real demand
 

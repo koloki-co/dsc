@@ -68,7 +68,7 @@ s/                    # Project scripts: build, test, docs, install, version++
 
 ## Support stance
 
-`dsc` is best-effort, community-driven, no SLA. Issues are triaged when the author has time; field-driven specs (see [spec/from-the-field.md](spec/from-the-field.md)) are prioritised over speculative ones because their use case is verified. If you need a guarantee, hire a contractor.
+`dsc` is best-effort, community-driven, no SLA. Add bugs, tweaks, and missing features to the [roadmap](spec/roadmap.md), the single list of planned work. Include the exact command, expected and actual behaviour, and `dsc version` for a bug; retain real-install evidence in the linked spec where it is useful. If you need a guarantee, hire a contractor.
 
 ## License
 

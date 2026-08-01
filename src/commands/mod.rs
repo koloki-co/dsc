@@ -14,6 +14,7 @@ pub mod common;
 pub mod completions;
 pub mod config;
 pub mod emoji;
+pub mod explorer;
 pub mod group;
 pub mod harden;
 pub mod import;
