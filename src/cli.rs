@@ -396,6 +396,16 @@ pub enum Commands {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: AnalyticsFormat,
     },
+    /// Inspect and run saved Discourse Data Explorer queries.
+    #[command(after_help = "Examples:
+  dsc explorer list myforum
+  dsc explorer show myforum 42
+  dsc explorer run myforum 42 --params '{\"days\":30}'
+  dsc explorer run myforum -1 --csv result.csv")]
+    Explorer {
+        #[command(subcommand)]
+        command: ExplorerCommand,
+    },
     /// Search topics on a Discourse.
     #[command(visible_alias = "s")]
     #[command(after_help = "Examples:
@@ -626,6 +636,12 @@ impl Commands {
                 command: Some(ConfigCommand::Check { .. }),
             } => Some("dsc config check"),
             Commands::Doctor { .. } => Some("dsc doctor"),
+            Commands::Explorer {
+                command:
+                    ExplorerCommand::Show {
+                        export: Some(_), ..
+                    },
+            } => Some("dsc explorer show --export"),
             Commands::Completions { command, dir, .. } => match command {
                 Some(CompletionCommand::Install { .. }) => Some("dsc completions install"),
                 None if dir.is_some() => Some("dsc completions --dir"),
@@ -662,6 +678,104 @@ pub enum UpdateLogFormat {
     Md,
     /// One JSON object per record.
     Json,
+}
+
+#[derive(Subcommand)]
+#[command(next_display_order = None)]
+pub enum ExplorerCommand {
+    /// List accessible saved Data Explorer queries.
+    #[command(visible_alias = "ls")]
+    List {
+        /// Discourse name.
+        discourse: String,
+        /// Filter query names and descriptions.
+        #[arg(long, short = 'q')]
+        filter: Option<String>,
+        /// Server-side sort field.
+        #[arg(long, short = 'o', value_enum)]
+        order: Option<ExplorerOrderArg>,
+        /// Sort ascending rather than descending.
+        #[arg(long, short = 'a', requires = "order")]
+        ascending: bool,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Show one saved query definition and its parameter contract.
+    Show {
+        /// Discourse name.
+        discourse: String,
+        /// Saved query ID. Negative built-in query IDs are valid.
+        #[arg(allow_negative_numbers = true)]
+        query_id: i64,
+        /// Write the server's exact query-definition export to this file.
+        #[arg(
+            long,
+            short = 'e',
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::FilePath,
+            conflicts_with = "format"
+        )]
+        export: Option<PathBuf>,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Run one saved, administrator-controlled Data Explorer query.
+    Run {
+        /// Discourse name.
+        discourse: String,
+        /// Saved query ID. Negative built-in query IDs are valid.
+        #[arg(allow_negative_numbers = true)]
+        query_id: i64,
+        /// Query parameters as one JSON object.
+        #[arg(long, short = 'p', conflicts_with = "params_file")]
+        params: Option<String>,
+        /// Read a JSON or YAML parameter object from a file.
+        #[arg(
+            long,
+            short = 'P',
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::FilePath,
+            conflicts_with = "params"
+        )]
+        params_file: Option<PathBuf>,
+        /// Write the server-generated CSV result atomically.
+        #[arg(
+            long,
+            short = 'c',
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::FilePath,
+            conflicts_with_all = ["format", "explain"]
+        )]
+        csv: Option<PathBuf>,
+        /// Include PostgreSQL's execution plan.
+        #[arg(long, short = 'x')]
+        explain: bool,
+        /// Requested row limit; the server's configured maximum still applies.
+        #[arg(long, short = 'l', value_parser = clap::value_parser!(u32).range(1..))]
+        limit: Option<u32>,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+}
+
+#[derive(ValueEnum, Clone, Copy)]
+pub enum ExplorerOrderArg {
+    Name,
+    Username,
+    LastRunAt,
+}
+
+impl ExplorerOrderArg {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::Username => "username",
+            Self::LastRunAt => "last_run_at",
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -2516,25 +2630,226 @@ mod tests {
     use super::*;
     use clap::CommandFactory;
 
-    fn count_path_hints(command: &clap::Command) -> usize {
-        let here = command
-            .get_arguments()
-            .filter(|arg| {
-                matches!(
+    /// Collect `(command path, command)` for every command in the tree, so the
+    /// policy tests below can name the exact offender instead of asserting a
+    /// count. The clap tree is this crate's registry of commands; cross-cutting
+    /// CLI contracts are enforced by walking it (house-style `testing.md`).
+    fn walk<'a>(cmd: &'a clap::Command, prefix: &str, out: &mut Vec<(String, &'a clap::Command)>) {
+        for sub in cmd.get_subcommands() {
+            if sub.get_name() == "help" {
+                continue;
+            }
+            let path = if prefix.is_empty() {
+                sub.get_name().to_string()
+            } else {
+                format!("{prefix} {}", sub.get_name())
+            };
+            out.push((path.clone(), sub));
+            walk(sub, &path, out);
+        }
+    }
+
+    fn command_tree() -> (clap::Command, ()) {
+        (Cli::command(), ())
+    }
+
+    /// Arguments whose name implies a local filesystem path but which name a
+    /// *remote* resource, so a local-path completion hint would be misleading.
+    const NON_LOCAL_PATH_ARGS: &[(&str, &str)] = &[
+        // `backup push` (alias `restore`) names a backup already on the
+        // Discourse host, so completing local filenames would mislead.
+        ("backup push", "backup_path"),
+    ];
+
+    /// Every argument that looks like a local path must carry a completion
+    /// hint, or shell completion silently stops offering filenames for it.
+    #[test]
+    fn every_path_argument_has_a_completion_hint() {
+        let (root, _) = command_tree();
+        let mut commands = Vec::new();
+        walk(&root, "", &mut commands);
+
+        let looks_like_path = |id: &str| {
+            id.ends_with("_path")
+                || id.ends_with("_file")
+                || matches!(id, "path" | "file" | "dir" | "source" | "csv" | "export")
+        };
+
+        let mut missing = Vec::new();
+        for (path, cmd) in &commands {
+            for arg in cmd.get_arguments() {
+                let id = arg.get_id().as_str();
+                if !looks_like_path(id) {
+                    continue;
+                }
+                if NON_LOCAL_PATH_ARGS.contains(&(path.as_str(), id)) {
+                    continue;
+                }
+                let hinted = matches!(
                     arg.get_value_hint(),
                     ValueHint::AnyPath | ValueHint::FilePath | ValueHint::DirPath
-                )
+                );
+                if !hinted {
+                    missing.push(format!("{path} <{id}>"));
+                }
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "these path-like arguments have no ValueHint, so shell completion \
+             will not offer filenames for them. Add `value_hint = ValueHint::FilePath` \
+             (or DirPath/AnyPath); if the argument names a resource on the server \
+             rather than a local file, add it to NON_LOCAL_PATH_ARGS:\n  {}",
+            missing.join("\n  ")
+        );
+
+        // Guard the guard: an exception for an argument that no longer exists
+        // hides a real gap the next time the surface moves.
+        let stale: Vec<&(&str, &str)> = NON_LOCAL_PATH_ARGS
+            .iter()
+            .filter(|(path, id)| {
+                !commands.iter().any(|(p, cmd)| {
+                    p == path && cmd.get_arguments().any(|a| a.get_id().as_str() == *id)
+                })
             })
-            .count();
-        here + command
-            .get_subcommands()
-            .map(count_path_hints)
-            .sum::<usize>()
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "NON_LOCAL_PATH_ARGS lists arguments that no longer exist: {stale:?}"
+        );
+    }
+
+    /// `cli-design.md`: minimum `text|json|yaml` for every list command.
+    #[test]
+    fn every_list_command_offers_the_standard_formats() {
+        let (root, _) = command_tree();
+        let mut commands = Vec::new();
+        walk(&root, "", &mut commands);
+
+        let mut offenders = Vec::new();
+        for (path, cmd) in &commands {
+            if cmd.get_name() != "list" {
+                continue;
+            }
+            let format = cmd.get_arguments().find(|a| a.get_long() == Some("format"));
+            let Some(format) = format else {
+                offenders.push(format!("{path}: no --format argument"));
+                continue;
+            };
+            let values: Vec<String> = format
+                .get_possible_values()
+                .iter()
+                .map(|v| v.get_name().to_string())
+                .collect();
+            for required in ["text", "json", "yaml"] {
+                if !values.iter().any(|v| v == required) {
+                    offenders.push(format!("{path}: --format is missing `{required}`"));
+                }
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "every list command must offer at least text|json|yaml \
+             (spec/cli-design.md, \"Format-support baseline\"):\n  {}",
+            offenders.join("\n  ")
+        );
+    }
+
+    /// `cli-design.md`: every command has an `after_help` "Examples:" block.
+    /// Enforced per top-level command, which is where the examples live.
+    #[test]
+    fn every_top_level_command_documents_examples() {
+        let root = Cli::command();
+        let mut missing = Vec::new();
+        for sub in root.get_subcommands() {
+            let name = sub.get_name();
+            if name == "help" {
+                continue;
+            }
+            let help = sub
+                .get_after_help()
+                .or_else(|| sub.get_after_long_help())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            if !help.contains("Examples") {
+                missing.push(name.to_string());
+            }
+        }
+
+        assert!(
+            missing.is_empty(),
+            "these top-level commands have no `after_help` Examples block \
+             (spec/cli-design.md, \"Command ordering\"):\n  {missing:?}"
+        );
     }
 
     #[test]
-    fn every_path_argument_has_a_completion_hint() {
-        assert_eq!(count_path_hints(&Cli::command()), 43);
+    fn explorer_accepts_negative_query_ids_and_parameter_files() {
+        let cli = Cli::try_parse_from([
+            "dsc",
+            "explorer",
+            "run",
+            "forum",
+            "-4",
+            "--params-file",
+            "params.yaml",
+            "--limit",
+            "100",
+        ])
+        .expect("Data Explorer run parses");
+        let Commands::Explorer {
+            command:
+                ExplorerCommand::Run {
+                    query_id,
+                    params_file,
+                    limit,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected explorer run command");
+        };
+        assert_eq!(query_id, -4);
+        assert_eq!(params_file, Some(PathBuf::from("params.yaml")));
+        assert_eq!(limit, Some(100));
+    }
+
+    #[test]
+    fn explorer_rejects_conflicting_output_and_parameter_flags() {
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
+                "explorer",
+                "run",
+                "forum",
+                "42",
+                "--params",
+                "{}",
+                "--params-file",
+                "params.yaml",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
+                "explorer",
+                "run",
+                "forum",
+                "42",
+                "--csv",
+                "result.csv",
+                "--format",
+                "json",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["dsc", "explorer", "run", "forum", "42", "--limit", "0",])
+                .is_err()
+        );
     }
 
     #[test]
@@ -2785,6 +3100,18 @@ mod tests {
             (&["dsc", "man", "--dir", "man"], "dsc man --dir"),
             (&["dsc", "config", "check"], "dsc config check"),
             (&["dsc", "doctor"], "dsc doctor"),
+            (
+                &[
+                    "dsc",
+                    "explorer",
+                    "show",
+                    "forum",
+                    "1",
+                    "--export",
+                    "query.json",
+                ],
+                "dsc explorer show --export",
+            ),
         ];
 
         for &(args, expected) in blocked {
@@ -2835,6 +3162,20 @@ mod tests {
             &["dsc", "config"],
             &["dsc", "sar", "forum", "user"],
             &["dsc", "harden", "host", "--pubkey-file", "key.pub"],
+            &["dsc", "explorer", "list", "forum"],
+            &["dsc", "explorer", "show", "forum", "1"],
+            &["dsc", "explorer", "run", "forum", "1"],
+            // `run --csv` now prints a complete plan instead of refusing:
+            // running a saved query records `last_run_at` server-side.
+            &[
+                "dsc",
+                "explorer",
+                "run",
+                "forum",
+                "1",
+                "--csv",
+                "result.csv",
+            ],
         ];
 
         for &args in allowed {

@@ -8,6 +8,7 @@ mod categories;
 mod client;
 mod emoji;
 mod error;
+mod explorer;
 mod groups;
 mod invites;
 mod models;
@@ -28,6 +29,10 @@ mod users;
 
 pub use api_keys::{ApiKeySummary, CreatedApiKey};
 pub use client::{DiscourseClient, VersionInfo};
+pub use explorer::{
+    ExplorerParamInfo, ExplorerQueryCatalogue, ExplorerQueryDetails, ExplorerQuerySummary,
+    ExplorerRunResult,
+};
 pub use groups::AddMembersOutcome;
 pub use invites::InviteResult;
 pub use models::*;

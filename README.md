@@ -40,7 +40,7 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 | **Backups, emoji, uploads** | backup create / list / pull / push / restore, bulk emoji, file upload | backup-all |
 | **Fleet (multi-install)** | one config for N forums, tag filtering, write a setting across matching installs, audit a setting across all, update-all over SSH | cross-forum search & aggregate reports |
 | **Server lifecycle** | `harden` a fresh box, stages 1-2 (new sudo user, pubkey auth, sshd lockdown to a non-standard port); `update` over SSH with skip-if-current | `harden` stage 3 - firewall, Docker, swap, fail2ban (config keys wired, SSH execution pending); one-shot `dsc install` provisioning |
-| **Reporting** | analytics snapshot (growth / activity / health); `log staff` audit-trail inspection | dashboard reports, webhooks, notifications |
+| **Reporting** | analytics snapshot (growth / activity / health); saved Data Explorer query inspection/execution; `log staff` audit-trail inspection | dashboard reports, webhooks, notifications |
 
 Exploratory (not committed): `dsc chat`, a TUI, and an MCP server mode. See [spec/roadmap.md](spec/roadmap.md) for the full picture.
 
@@ -155,6 +155,7 @@ dsc update myforum
   - [update](docs/update.md) — run OS and Discourse updates over SSH
   - [search](docs/search.md) — search topics on a Discourse
   - [analytics](docs/analytics.md) — community-health snapshot (growth, activity, health)
+  - [explorer](docs/explorer.md) — inspect and run saved Data Explorer queries
   - [upload](docs/upload.md) — upload a file and return its short URL
   - [emoji](docs/emoji.md) — upload and list custom emoji
   - [topic](docs/topic.md) — pull, push, and sync topics as Markdown
