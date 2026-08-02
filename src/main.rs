@@ -649,26 +649,30 @@ fn main() -> Result<()> {
                 discourse,
                 payload_url,
                 content_type,
-                secret,
+                secret_stdin,
                 active,
                 verify_certificate,
                 format,
             } => commands::webhook::webhook_create(
                 &config,
                 &discourse,
-                &payload_url,
-                map_webhook_content_type(content_type),
-                secret.as_deref(),
-                active,
-                verify_certificate,
-                format,
-                dry_run,
+                commands::webhook::WebhookCreateOptions {
+                    payload_url: &payload_url,
+                    content_type: map_webhook_content_type(content_type),
+                    secret_from_stdin: secret_stdin,
+                    active,
+                    verify_certificate,
+                    format,
+                    dry_run,
+                },
             ),
             WebhookCommand::Delete {
                 discourse,
                 webhook_id,
                 format,
-            } => commands::webhook::webhook_delete(&config, &discourse, webhook_id, format, dry_run),
+            } => {
+                commands::webhook::webhook_delete(&config, &discourse, webhook_id, format, dry_run)
+            }
             WebhookCommand::Ping {
                 discourse,
                 webhook_id,

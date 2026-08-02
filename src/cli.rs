@@ -2038,10 +2038,9 @@ pub enum WebhookCommand {
         /// Payload content type.
         #[arg(long, value_enum, default_value = "json")]
         content_type: WebhookContentTypeArg,
-        /// Shared secret Discourse signs payloads with (sent back in the
-        /// `X-Discourse-Event-Signature` header).
+        /// Read the shared signing secret from stdin. Avoids shell history and process-list exposure.
         #[arg(long)]
-        secret: Option<String>,
+        secret_stdin: bool,
         /// Create the webhook inactive.
         #[arg(long = "inactive", action = ArgAction::SetFalse, default_value_t = true)]
         active: bool,
@@ -2918,6 +2917,29 @@ mod tests {
         assert!(
             Cli::try_parse_from([
                 "dsc",
+                "webhook",
+                "create",
+                "forum",
+                "https://example.test/hook",
+                "--secret",
+                "not-accepted",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
+                "webhook",
+                "create",
+                "forum",
+                "https://example.test/hook",
+                "--secret-stdin",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
                 "explorer",
                 "run",
                 "forum",
@@ -3097,15 +3119,17 @@ mod tests {
             assert!(Cli::try_parse_from(["dsc", "webhook", command, "forum", "0"]).is_err());
             assert!(Cli::try_parse_from(["dsc", "webhook", command, "forum", "1"]).is_ok());
         }
-        assert!(Cli::try_parse_from([
-            "dsc",
-            "webhook",
-            "create",
-            "forum",
-            "https://example.test/hook",
-            "--no-wildcard",
-        ])
-        .is_err());
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
+                "webhook",
+                "create",
+                "forum",
+                "https://example.test/hook",
+                "--no-wildcard",
+            ])
+            .is_err()
+        );
     }
 
     fn command_from(args: &[&str]) -> Commands {

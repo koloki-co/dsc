@@ -49,5 +49,5 @@ pub use topics::{DeletedTopicSummary, PmTopicSummary, PostEditOptions, PostInfo}
 pub use uploads::UploadInfo;
 pub use user_actions::UserAction;
 pub use users::{UserDetail, UserSummary};
-pub(crate) use webhooks::redact_webhook_url;
 pub use webhooks::WebhookSummary;
+pub(crate) use webhooks::redact_webhook_url;

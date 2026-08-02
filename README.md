@@ -22,7 +22,7 @@ Most functionality uses the Discourse REST API. `dsc update` runs remote rebuild
 - Import from text or CSV, or add installs ad-hoc.
 - Pull/push individual topics or whole categories as Markdown.
 - Upload custom emojis in bulk.
-- List, install, and remove themes and plugins.
+- List, install, and remove themes and plugins; configure outbound webhooks.
 - Create, list, and restore backups.
 
 ## What works today
@@ -40,7 +40,7 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 | **Backups, emoji, uploads** | backup create / list / pull / push / restore, bulk emoji, file upload | backup-all |
 | **Fleet (multi-install)** | one config for N forums, tag filtering, write a setting across matching installs, audit a setting across all, update-all over SSH | cross-forum search & aggregate reports |
 | **Server lifecycle** | `harden` a fresh box, stages 1-2 (new sudo user, pubkey auth, sshd lockdown to a non-standard port); `update` over SSH with skip-if-current | `harden` stage 3 - firewall, Docker, swap, fail2ban (config keys wired, SSH execution pending); one-shot `dsc install` provisioning |
-| **Reporting** | analytics snapshot (growth / activity / health); saved Data Explorer query inspection/execution; `log staff` audit-trail inspection | dashboard reports, webhooks, notifications |
+| **Reporting** | analytics snapshot (growth / activity / health); saved Data Explorer query inspection/execution; `log staff` audit-trail inspection | dashboard reports, notifications |
 
 Exploratory (not committed): `dsc chat`, a TUI, and an MCP server mode. See [spec/roadmap.md](spec/roadmap.md) for the full picture.
 
@@ -170,6 +170,7 @@ dsc update myforum
   - [invite](docs/invite.md) — send invites, single or bulk from a file
   - [pm](docs/pm.md) — send and list private messages
   - [api-key](docs/api-key.md) — manage Discourse API keys
+  - [webhook](docs/webhook.md) — list, create, delete, and ping outbound webhooks
   - [backup](docs/backup.md) — create, list, restore, and provision S3 off-site backups
   - [setting](docs/setting.md) — get, set, pull, push, and diff site settings
   - [tag](docs/tag.md) — list, pull, push, and rename the tag taxonomy (per-topic tagging lives under `dsc topic tag`/`untag`)

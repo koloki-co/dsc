@@ -13,7 +13,7 @@ class of small admin-scope CRUD endpoint; webhooks are the natural next
 dsc webhook list <discourse> [--format text|json|yaml]
 
 dsc webhook create <discourse> <payload_url> [--content-type json|form]
-                                               [--secret <secret>]
+                                               [--secret-stdin]
                                                [--inactive]
                                                [--no-verify-certificate]
                                                [--format text|json|yaml]
@@ -31,11 +31,10 @@ dsc webhook ping <discourse> <webhook_id> [--format text|json|yaml]
   - `--content-type` - `json` (default, `application/json`) or `form`
     (`application/x-www-form-urlencoded`). Sent to Discourse as its integer
     encoding (`1`/`2`).
-  - `--secret` - shared secret Discourse signs deliveries with, returned in
-    the `X-Discourse-Event-Signature` request header on each delivery.
+  - `--secret-stdin` - read the shared secret Discourse signs deliveries with from standard input. This avoids shell history and process-list exposure.
   - `--inactive` and `--no-verify-certificate` negate the two boolean fields that otherwise default on (`active`, `verify_certificate`).
-  - A supplied secret must be at least 12 characters and is never printed, including under `--dry-run`.
-  - Payload URL userinfo is redacted in every output format.
+  - A supplied secret must contain at least 12 characters and cannot be blank. It is never printed, including under `--dry-run`.
+  - Payload URL userinfo, query parameters, and fragments are redacted in every output format.
 - `delete` - remove a webhook by ID.
 - `ping` - enqueue a one-off test delivery (Discourse's own "Ping" button
   in the admin UI). Any 2xx response counts as success; Discourse's ping
@@ -44,7 +43,9 @@ dsc webhook ping <discourse> <webhook_id> [--format text|json|yaml]
 `create`, `delete`, and `ping` all honour `--dry-run` - each enqueues a real
 side effect on the forum (a webhook row, its deletion, or a live test
 delivery job), so all three print a `[dry-run] ...` plan and return without
-making a request. `list` is read-only and ignores `--dry-run`.
+modifying the forum. `create` makes one read-only request to resolve and show
+the exact default event types it would attach. `list` is read-only and ignores
+`--dry-run`.
 
 ## Endpoints used
 
@@ -55,7 +56,9 @@ making a request. `list` is read-only and ignores `--dry-run`.
 | `delete` | `DELETE` | `/admin/api/web_hooks/{id}.json` |
 | `ping`   | `POST`   | `/admin/api/web_hooks/{id}/ping.json` |
 
-`list` follows Discourse's offset pagination (`?offset=N`, 50 rows per page) until its `total_rows_web_hooks` count is reached. `create` sends permitted `web_hook[...]` form fields (`payload_url`, `content_type`, `secret`, `wildcard_web_hook`, `active`, `verify_certificate`, and `web_hook_event_type_ids[]`).
+`list` follows Discourse's offset pagination (`?offset=N`, 50 rows per page) until its `total_rows_web_hooks` count is reached. `create` first fetches default event types, then sends permitted `web_hook[...]` form fields (`payload_url`, `content_type`, `secret`, `wildcard_web_hook`, `active`, `verify_certificate`, and `web_hook_event_type_ids[]`).
+
+The contract was confirmed against the [Discourse webhook controller](https://github.com/discourse/discourse/blob/main/app/controllers/admin/web_hooks_controller.rb) and [admin serializer](https://github.com/discourse/discourse/blob/main/app/serializers/admin_web_hook_serializer.rb).
 
 ## Output
 

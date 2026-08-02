@@ -110,7 +110,23 @@ impl From<WebhookWire> for WebhookSummary {
 #[derive(Debug, Default, Deserialize)]
 struct WebhookExtras {
     #[serde(default)]
-    default_event_types: Vec<u64>,
+    default_event_types: Vec<DefaultWebhookEventType>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum DefaultWebhookEventType {
+    Id(u64),
+    Event(WebhookEventType),
+}
+
+impl DefaultWebhookEventType {
+    fn id(self) -> u64 {
+        match self {
+            Self::Id(id) => id,
+            Self::Event(event) => event.id,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,9 +166,7 @@ impl DiscourseClient {
     fn webhook_page(&self, offset: usize) -> Result<WebhookPage> {
         let response = self.get(&format!("{WEBHOOKS_PATH}?offset={offset}"))?;
         let status = response.status();
-        let text = response
-            .text()
-            .context("reading webhook list response")?;
+        let text = response.text().context("reading webhook list response")?;
         if !status.is_success() {
             return Err(http_error("webhook list request", status, &text));
         }
@@ -168,15 +182,15 @@ impl DiscourseClient {
         secret: Option<&str>,
         active: bool,
         verify_certificate: bool,
+        event_type_ids: &[u64],
     ) -> Result<WebhookSummary> {
-        let event_type_ids = self.default_webhook_event_type_ids()?;
         let payload = webhook_create_payload(
             payload_url,
             content_type,
             secret,
             active,
             verify_certificate,
-            &event_type_ids,
+            event_type_ids,
         )?;
         let response =
             self.send_retrying(|| Ok(self.post("/admin/api/web_hooks.json")?.form(&payload)))?;
@@ -193,8 +207,15 @@ impl DiscourseClient {
         Ok(created.into())
     }
 
-    fn default_webhook_event_type_ids(&self) -> Result<Vec<u64>> {
-        let mut event_type_ids = self.webhook_page(0)?.extras.default_event_types;
+    /// Return the current default event-type IDs for new wildcard webhooks.
+    pub fn default_webhook_event_type_ids(&self) -> Result<Vec<u64>> {
+        let mut event_type_ids = self
+            .webhook_page(0)?
+            .extras
+            .default_event_types
+            .into_iter()
+            .map(DefaultWebhookEventType::id)
+            .collect::<Vec<_>>();
         event_type_ids.retain(|id| *id > 0);
         event_type_ids.sort_unstable();
         event_type_ids.dedup();
@@ -272,10 +293,21 @@ fn webhook_create_payload(
     if !matches!(content_type, 1 | 2) {
         return Err(anyhow!("unsupported webhook content type: {content_type}"));
     }
+    if event_type_ids.is_empty() {
+        return Err(anyhow!(
+            "cannot create a webhook without at least one event type"
+        ));
+    }
     let mut payload = vec![
         ("web_hook[payload_url]".to_string(), payload_url.to_string()),
-        ("web_hook[content_type]".to_string(), content_type.to_string()),
-        ("web_hook[wildcard_web_hook]".to_string(), "true".to_string()),
+        (
+            "web_hook[content_type]".to_string(),
+            content_type.to_string(),
+        ),
+        (
+            "web_hook[wildcard_web_hook]".to_string(),
+            "true".to_string(),
+        ),
         ("web_hook[active]".to_string(), active.to_string()),
         (
             "web_hook[verify_certificate]".to_string(),
@@ -294,18 +326,27 @@ fn webhook_create_payload(
     Ok(payload)
 }
 
-/// Remove URL userinfo before it can reach a CLI output format or dry-run plan.
+/// Remove URL credentials before they can reach a CLI output format or dry-run plan.
 pub(crate) fn redact_webhook_url(payload_url: &str) -> String {
     let Ok(mut parsed) = reqwest::Url::parse(payload_url) else {
-        return payload_url.to_string();
+        return "<invalid URL>".to_string();
     };
-    if parsed.username().is_empty() && parsed.password().is_none() {
+    let has_userinfo = !parsed.username().is_empty() || parsed.password().is_some();
+    if !has_userinfo && parsed.query().is_none() && parsed.fragment().is_none() {
         return payload_url.to_string();
     }
-    if parsed.set_username("***").is_err() {
-        return "<redacted URL>".to_string();
+    if has_userinfo {
+        if parsed.set_username("***").is_err() {
+            return "<redacted URL>".to_string();
+        }
+        let _ = parsed.set_password(None);
     }
-    let _ = parsed.set_password(None);
+    if parsed.query().is_some() {
+        parsed.set_query(Some("redacted"));
+    }
+    if parsed.fragment().is_some() {
+        parsed.set_fragment(Some("redacted"));
+    }
     parsed.to_string()
 }
 
@@ -355,7 +396,23 @@ mod tests {
     }
 
     #[test]
-    fn webhook_create_payload_uses_discord_defaults_for_wildcard_delivery() {
+    fn public_webhook_output_rejects_unparseable_server_urls() {
+        assert_eq!(
+            redact_webhook_url("not a URL with secret-canary"),
+            "<invalid URL>"
+        );
+    }
+
+    #[test]
+    fn public_webhook_output_redacts_query_and_fragment_secrets() {
+        assert_eq!(
+            redact_webhook_url("https://example.test/hook?token=query-canary#fragment-canary"),
+            "https://example.test/hook?redacted#redacted"
+        );
+    }
+
+    #[test]
+    fn webhook_create_payload_uses_discourse_defaults_for_wildcard_delivery() {
         let payload = webhook_create_payload(
             "https://example.test/hook",
             1,
@@ -378,6 +435,23 @@ mod tests {
             "web_hook[web_hook_event_type_ids][]".to_string(),
             "202".to_string()
         )));
+    }
+
+    #[test]
+    fn default_event_types_accept_current_objects_and_legacy_ids() {
+        let extras: WebhookExtras = serde_json::from_value(json!({
+            "default_event_types": [
+                { "id": 201, "name": "post_created", "group": "post" },
+                202
+            ]
+        }))
+        .expect("extras");
+        let ids: Vec<u64> = extras
+            .default_event_types
+            .into_iter()
+            .map(DefaultWebhookEventType::id)
+            .collect();
+        assert_eq!(ids, [201, 202]);
     }
 
     #[test]
@@ -404,8 +478,7 @@ mod tests {
     fn pagination_rejects_duplicate_webhook_ids() {
         let mut hooks = Vec::new();
         let mut seen_ids = HashSet::new();
-        append_webhook_page(&mut hooks, &mut seen_ids, vec![wire_webhook(7)])
-            .expect("first page");
+        append_webhook_page(&mut hooks, &mut seen_ids, vec![wire_webhook(7)]).expect("first page");
         assert!(append_webhook_page(&mut hooks, &mut seen_ids, vec![wire_webhook(7)]).is_err());
     }
 }

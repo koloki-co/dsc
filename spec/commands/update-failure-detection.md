@@ -2,7 +2,7 @@
 
 > **Status: Specification for R42. Disk-guard recovery is unimplemented; the reported stderr failure path needs reproduction and regression coverage.**
 
-Both defects were observed in a single 13-forum fleet run on 2026-07-29 (`dsc 0.12.1`) taking every managed forum from Discourse `2026.7.0-latest` to `2026.8.0-latest`. Neither is a server fault; both are `dsc` logic errors that turned routine updates into manual work.
+The field report came from a 13-forum fleet run on 2026-07-29 (`dsc 0.12.1`) taking every managed forum from Discourse `2026.7.0-latest` to `2026.8.0-latest`. The disk guard is a confirmed `dsc` logic error; the reported stderr failure path remains an investigation until it is reproduced.
 
 Related specs: [update-concurrency](update-concurrency.md), [update-log](update-log.md).
 
