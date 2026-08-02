@@ -27,3 +27,6 @@ demo-dsc.toml
 
 ### Zensical docs build output
 /site/
+
+### Local browser automation captures
+/.playwright-mcp/
