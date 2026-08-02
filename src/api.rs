@@ -26,6 +26,7 @@ mod topics;
 mod uploads;
 mod user_actions;
 mod users;
+mod webhooks;
 
 pub use api_keys::{ApiKeySummary, CreatedApiKey};
 pub use client::{DiscourseClient, VersionInfo};
@@ -48,3 +49,5 @@ pub use topics::{DeletedTopicSummary, PmTopicSummary, PostEditOptions, PostInfo}
 pub use uploads::UploadInfo;
 pub use user_actions::UserAction;
 pub use users::{UserDetail, UserSummary};
+pub use webhooks::WebhookSummary;
+pub(crate) use webhooks::redact_webhook_url;

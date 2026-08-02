@@ -1,6 +1,6 @@
 # `dsc backup health` - fleet visibility of newest backup and S3 bucket growth
 
-> **Status: Phase 1 implemented (unreleased).** `dsc backup health` checks one forum, all configured forums, or a tag-selected fleet; inspects actual paginated S3 objects through the ambient AWS CLI; reports newest archive age/size and total bucket accounting in text, JSON, YAML, or CSV; and exits non-zero for unhealthy S3 rows.
+> **Status: Phase 1 implemented in v0.13.0.** `dsc backup health` checks one forum, all configured forums, or a tag-selected fleet; inspects actual paginated S3 objects through the ambient AWS CLI; reports newest archive age/size and total bucket accounting in text, JSON, YAML, or CSV; and exits non-zero for unhealthy S3 rows.
 
 Spec for a read-only S3-backed backup health check. Goal: show whether every configured Discourse is producing recent backups, how large the newest archive is, and whether its backup bucket is growing unexpectedly. Driver: a recurring fleet check currently performed with ad hoc AWS CLI scripting to find the newest object in each backup bucket and inspect its upload time and size.
 

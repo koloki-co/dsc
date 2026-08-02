@@ -178,6 +178,17 @@ pub enum Commands {
         #[command(subcommand)]
         command: ApiKeyCommand,
     },
+    /// Manage outbound webhooks (admin scope).
+    #[command(visible_alias = "wh")]
+    #[command(after_help = "Examples:
+  dsc webhook list myforum
+  dsc webhook create myforum https://example.com/hook
+  dsc webhook ping myforum 3
+  dsc webhook delete myforum 3")]
+    Webhook {
+        #[command(subcommand)]
+        command: WebhookCommand,
+    },
     /// Send and list private messages.
     #[command(visible_alias = "msg")]
     #[command(after_help = "Examples:
@@ -1994,6 +2005,77 @@ pub enum ApiKeyCommand {
     },
 }
 
+/// Content type Discourse sends webhook payloads as. Maps to the integer
+/// encoding the admin API expects: `json` -> 1, `form` -> 2.
+#[derive(ValueEnum, Clone, Copy)]
+pub enum WebhookContentTypeArg {
+    /// `application/json` (default).
+    Json,
+    /// `application/x-www-form-urlencoded`.
+    Form,
+}
+
+#[derive(Subcommand)]
+#[command(next_display_order = None)]
+pub enum WebhookCommand {
+    /// List webhooks.
+    #[command(visible_alias = "ls")]
+    List {
+        /// Discourse name.
+        discourse: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Create a new wildcard webhook. Per-event-type selection is not
+    /// available yet.
+    #[command(visible_alias = "cr")]
+    Create {
+        /// Discourse name.
+        discourse: String,
+        /// URL Discourse will POST event payloads to.
+        payload_url: String,
+        /// Payload content type.
+        #[arg(long, value_enum, default_value = "json")]
+        content_type: WebhookContentTypeArg,
+        /// Read the shared signing secret from stdin. Avoids shell history and process-list exposure.
+        #[arg(long)]
+        secret_stdin: bool,
+        /// Create the webhook inactive.
+        #[arg(long = "inactive", action = ArgAction::SetFalse, default_value_t = true)]
+        active: bool,
+        /// Skip TLS certificate verification when delivering to `payload_url`.
+        #[arg(long = "no-verify-certificate", action = ArgAction::SetFalse, default_value_t = true)]
+        verify_certificate: bool,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Delete a webhook by ID.
+    #[command(visible_alias = "rm")]
+    Delete {
+        /// Discourse name.
+        discourse: String,
+        /// Webhook ID (from `dsc webhook list`).
+        #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+        webhook_id: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Send a test delivery to a webhook (enqueues a `ping` event).
+    Ping {
+        /// Discourse name.
+        discourse: String,
+        /// Webhook ID (from `dsc webhook list`).
+        #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+        webhook_id: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+}
+
 #[derive(Subcommand)]
 #[command(next_display_order = None)]
 pub enum InviteCommand {
@@ -2835,6 +2917,29 @@ mod tests {
         assert!(
             Cli::try_parse_from([
                 "dsc",
+                "webhook",
+                "create",
+                "forum",
+                "https://example.test/hook",
+                "--secret",
+                "not-accepted",
+            ])
+            .is_err()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
+                "webhook",
+                "create",
+                "forum",
+                "https://example.test/hook",
+                "--secret-stdin",
+            ])
+            .is_ok()
+        );
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
                 "explorer",
                 "run",
                 "forum",
@@ -3008,6 +3113,25 @@ mod tests {
         assert_eq!(limit, 200);
     }
 
+    #[test]
+    fn webhook_ids_must_be_positive() {
+        for command in ["delete", "ping"] {
+            assert!(Cli::try_parse_from(["dsc", "webhook", command, "forum", "0"]).is_err());
+            assert!(Cli::try_parse_from(["dsc", "webhook", command, "forum", "1"]).is_ok());
+        }
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
+                "webhook",
+                "create",
+                "forum",
+                "https://example.test/hook",
+                "--no-wildcard",
+            ])
+            .is_err()
+        );
+    }
+
     fn command_from(args: &[&str]) -> Commands {
         Cli::try_parse_from(args.iter().copied())
             .unwrap_or_else(|error| panic!("{args:?} should parse: {error}"))
@@ -3165,6 +3289,15 @@ mod tests {
             &["dsc", "explorer", "list", "forum"],
             &["dsc", "explorer", "show", "forum", "1"],
             &["dsc", "explorer", "run", "forum", "1"],
+            &[
+                "dsc",
+                "webhook",
+                "create",
+                "forum",
+                "https://example.test/hook",
+            ],
+            &["dsc", "webhook", "delete", "forum", "1"],
+            &["dsc", "webhook", "ping", "forum", "1"],
             // `run --csv` now prints a complete plan instead of refusing:
             // running a saved query records `last_run_at` server-side.
             &[

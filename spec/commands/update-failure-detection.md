@@ -1,14 +1,14 @@
 # `dsc update` failure detection and disk-guard recovery
 
-> **Status: Specification for R42. Two field-observed reliability defects in the shipped `update` workflow.**
+> **Status: Specification for R42. Disk-guard recovery is unimplemented; the reported stderr failure path needs reproduction and regression coverage.**
 
-Both defects were observed in a single 13-forum fleet run on 2026-07-29 (`dsc 0.12.1`) taking every managed forum from Discourse `2026.7.0-latest` to `2026.8.0-latest`. Neither is a server fault; both are `dsc` logic errors that turned routine updates into manual work.
+The field report came from a 13-forum fleet run on 2026-07-29 (`dsc 0.12.1`) taking every managed forum from Discourse `2026.7.0-latest` to `2026.8.0-latest`. The disk guard is a confirmed `dsc` logic error; the reported stderr failure path remains an investigation until it is reproduced.
 
 Related specs: [update-concurrency](update-concurrency.md), [update-log](update-log.md).
 
-## Defect 1 - git's stderr progress output is misread as command failure
+## Reported failure 1 - git's stderr progress output needs reproduction
 
-### Observed
+### Field report
 
 Two forums (`bawmedical`, `rcpch`) were recorded as `failed` with no version transition. The `detail` field persisted to the update log was git's ordinary fetch summary:
 
@@ -20,9 +20,9 @@ ssh command failed for bawmedical: From https://github.com/discourse/discourse_d
  * [new branch]      dependabot/bundler/image/setup_wizard/excon-1.5.0 -> ...
 ```
 
-Git writes fetch and progress reporting to **stderr** on success. This is normal, documented behaviour, not an error channel.
+Git writes fetch and progress reporting to **stderr** on success. This is normal, documented behaviour, not an error channel. The current `run_ssh_command_with_tail()` helper already decides failure from the child exit status, so the exact path that produced this report must be reproduced before treating stderr handling as the root cause.
 
-### Impact
+### Reported impact
 
 `dsc` aborted the run before `./launcher rebuild app`. Post-hoc inspection confirmed the pull had in fact **succeeded** - both `/var/discourse` working trees were correctly at `7d4fa59` and level with `origin/main`. The OS update and reboot had also completed. The forums were therefore left in a half-updated state: current `discourse_docker`, rebooted host, but Discourse still on the old version, and the log asserted a failure that had not happened.
 
@@ -30,7 +30,7 @@ Both succeeded on retry with no intervention, because `discourse_docker` was alr
 
 The 11 forums that did not exhibit it were, on the evidence, those whose fetch produced no new-branch summary.
 
-### Requirement
+### Requirement if reproduced
 
 Failure detection for remote steps must key on the **exit status** of the remote command, never on the presence or content of stderr.
 

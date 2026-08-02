@@ -73,6 +73,7 @@ nav:
       - invite: invite.md
       - pm: pm.md
       - api-key: api-key.md
+      - webhook: webhook.md
   - Install management:
       - list: list.md
       - add: add.md
