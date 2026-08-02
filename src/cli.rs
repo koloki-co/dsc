@@ -486,7 +486,7 @@ Examples:
     #[command(visible_alias = "comp")]
     #[command(after_help = "Examples:
   dsc completions install
-  dsc completions zsh --dir ~/.zsh/completions
+  dsc completions zsh --dir ~/.zfunc
   dsc completions bash > dsc.bash")]
     Completions {
         #[command(subcommand)]
