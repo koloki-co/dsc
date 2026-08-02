@@ -46,6 +46,7 @@ const VALID_FIELDS: &[&str] = &[
 
 /// The on-disk `categories.yaml` (or `.json`) document.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct CategoriesFile {
     pub version: u32,
     #[serde(default)]
@@ -55,6 +56,7 @@ pub struct CategoriesFile {
 /// One category's definition in the file. Every field beyond `name` is optional;
 /// an omitted field is left untouched on push.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct CategoryDefEntry {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -119,6 +121,14 @@ fn perm_type(label: &str) -> Result<u8> {
     }
 }
 
+/// Discourse strips terminal line endings from category descriptions. Normalise
+/// them at the file boundary so a YAML literal block remains idempotent.
+fn normalize_description(value: &Option<String>) -> Option<String> {
+    value
+        .as_ref()
+        .map(|value| value.trim_end_matches(['\r', '\n']).to_string())
+}
+
 // ─── API model <-> file entry ─────────────────────────────────────────────────
 
 /// Convert a server definition to a file entry. `id_to_slug` resolves the parent
@@ -140,6 +150,7 @@ fn def_to_entry(def: &CategoryDefinition, id_to_slug: &BTreeMap<u64, String>) ->
         .and_then(|pid| id_to_slug.get(&pid).cloned());
     let nonempty = |s: &Option<String>| s.clone().filter(|v| !v.is_empty());
     let nonempty_list = |v: &Option<Vec<String>>| v.clone().filter(|l| !l.is_empty());
+    let description = nonempty(&def.description_text).or_else(|| nonempty(&def.description));
 
     CategoryDefEntry {
         name: def.name.clone(),
@@ -152,7 +163,7 @@ fn def_to_entry(def: &CategoryDefinition, id_to_slug: &BTreeMap<u64, String>) ->
         read_restricted: def.read_restricted,
         // Prefer the plain-text description over the cooked HTML `description`
         // so pull -> push -> pull is idempotent (see CategoryDefinition).
-        description: nonempty(&def.description_text).or_else(|| nonempty(&def.description)),
+        description: normalize_description(&description),
         topic_template: nonempty(&def.topic_template),
         permissions,
         allowed_tags: nonempty_list(&def.allowed_tags),
@@ -213,7 +224,9 @@ fn entry_to_params(
     if let Some(v) = entry.read_restricted {
         p.push(("read_restricted".to_string(), v.to_string()));
     }
-    push_opt(&mut p, "description", &entry.description);
+    if let Some(description) = normalize_description(&entry.description) {
+        p.push(("description".to_string(), description));
+    }
     push_opt(&mut p, "topic_template", &entry.topic_template);
     if let Some(perms) = &entry.permissions {
         for (group, level) in perms {
@@ -266,6 +279,7 @@ struct DefAction {
     name: String,
     kind: DefActionKind,
     server_id: Option<u64>,
+    changed_fields: Vec<&'static str>,
     /// A no-`id` file entry that matched nothing: `def push` would CREATE it,
     /// but if the user meant to rename an existing category this would orphan
     /// its topics. Warned in the plan.
@@ -311,27 +325,67 @@ fn opt_list_diff(a: &Option<Vec<String>>, b: &Option<Vec<String>>) -> bool {
     }
 }
 
-/// Does the file entry specify any field that differs from the server entry?
-/// Only fields the file actually sets are compared - omitted fields are ignored.
-fn differs(e: &CategoryDefEntry, s: &CategoryDefEntry) -> bool {
-    e.name != s.name
-        || opt_diff(&e.slug, &s.slug)
-        || opt_diff(&e.color, &s.color)
-        || opt_diff(&e.text_color, &s.text_color)
-        || opt_diff(&e.position, &s.position)
-        || opt_diff(&e.parent, &s.parent)
-        || opt_diff(&e.read_restricted, &s.read_restricted)
-        || opt_diff(&e.description, &s.description)
-        || opt_diff(&e.topic_template, &s.topic_template)
-        || opt_diff(&e.permissions, &s.permissions)
-        || opt_list_diff(&e.allowed_tags, &s.allowed_tags)
-        || opt_list_diff(&e.allowed_tag_groups, &s.allowed_tag_groups)
-        || opt_diff(&e.minimum_required_tags, &s.minimum_required_tags)
-        || opt_diff(&e.sort_order, &s.sort_order)
-        || opt_diff(&e.default_view, &s.default_view)
-        || opt_diff(&e.subcategory_list_style, &s.subcategory_list_style)
-        || opt_diff(&e.num_featured_topics, &s.num_featured_topics)
-        || opt_diff(&e.show_subcategory_list, &s.show_subcategory_list)
+/// Return the specified file fields that differ from the server. Omitted file
+/// fields are intentionally absent because `def push` leaves them untouched.
+fn changed_fields(e: &CategoryDefEntry, s: &CategoryDefEntry) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    if e.name != s.name {
+        fields.push("name");
+    }
+    if opt_diff(&e.slug, &s.slug) {
+        fields.push("slug");
+    }
+    if opt_diff(&e.color, &s.color) {
+        fields.push("color");
+    }
+    if opt_diff(&e.text_color, &s.text_color) {
+        fields.push("text_color");
+    }
+    if opt_diff(&e.position, &s.position) {
+        fields.push("position");
+    }
+    if opt_diff(&e.parent, &s.parent) {
+        fields.push("parent");
+    }
+    if opt_diff(&e.read_restricted, &s.read_restricted) {
+        fields.push("read_restricted");
+    }
+    if e.description.is_some()
+        && normalize_description(&e.description) != normalize_description(&s.description)
+    {
+        fields.push("description");
+    }
+    if opt_diff(&e.topic_template, &s.topic_template) {
+        fields.push("topic_template");
+    }
+    if opt_diff(&e.permissions, &s.permissions) {
+        fields.push("permissions");
+    }
+    if opt_list_diff(&e.allowed_tags, &s.allowed_tags) {
+        fields.push("allowed_tags");
+    }
+    if opt_list_diff(&e.allowed_tag_groups, &s.allowed_tag_groups) {
+        fields.push("allowed_tag_groups");
+    }
+    if opt_diff(&e.minimum_required_tags, &s.minimum_required_tags) {
+        fields.push("minimum_required_tags");
+    }
+    if opt_diff(&e.sort_order, &s.sort_order) {
+        fields.push("sort_order");
+    }
+    if opt_diff(&e.default_view, &s.default_view) {
+        fields.push("default_view");
+    }
+    if opt_diff(&e.subcategory_list_style, &s.subcategory_list_style) {
+        fields.push("subcategory_list_style");
+    }
+    if opt_diff(&e.num_featured_topics, &s.num_featured_topics) {
+        fields.push("num_featured_topics");
+    }
+    if opt_diff(&e.show_subcategory_list, &s.show_subcategory_list) {
+        fields.push("show_subcategory_list");
+    }
+    fields
 }
 
 /// Classify each file entry against the server (upsert; never delete).
@@ -339,21 +393,26 @@ fn plan_push(file: &[CategoryDefEntry], server: &[CategoryDefEntry]) -> Vec<DefA
     file.iter()
         .map(|e| {
             let (matched, rename_warning) = match_server(e, server);
-            let (kind, server_id) = match matched {
-                Some(s) => (
-                    if differs(e, s) {
-                        DefActionKind::Update
-                    } else {
-                        DefActionKind::Unchanged
-                    },
-                    s.id,
-                ),
-                None => (DefActionKind::Create, None),
+            let (kind, server_id, changed_fields) = match matched {
+                Some(s) => {
+                    let changed_fields = changed_fields(e, s);
+                    (
+                        if changed_fields.is_empty() {
+                            DefActionKind::Unchanged
+                        } else {
+                            DefActionKind::Update
+                        },
+                        s.id,
+                        changed_fields,
+                    )
+                }
+                None => (DefActionKind::Create, None, Vec::new()),
             };
             DefAction {
                 name: e.name.clone(),
                 kind,
                 server_id,
+                changed_fields,
                 rename_warning,
             }
         })
@@ -462,7 +521,11 @@ pub fn category_def_push(
                     }
                 }
                 DefActionKind::Update => {
-                    println!("  ~ update: {}", action.name);
+                    println!(
+                        "  ~ update: {} ({})",
+                        action.name,
+                        action.changed_fields.join(", ")
+                    );
                     changes += 1;
                 }
                 DefActionKind::Unchanged => println!("  = unchanged: {}", action.name),
@@ -1035,31 +1098,84 @@ mod tests {
     }
 
     #[test]
-    fn differs_ignores_fields_the_file_omits() {
+    fn changed_fields_ignores_fields_the_file_omits() {
         let mut server = entry("General");
         server.description = Some("server desc".to_string());
         server.color = Some("ABABAB".to_string());
         // File omits description and color -> not a change.
         let file = entry("General");
-        assert!(!differs(&file, &server));
+        assert!(changed_fields(&file, &server).is_empty());
     }
 
     #[test]
-    fn differs_flags_specified_mismatch() {
+    fn changed_fields_flags_specified_mismatch() {
         let mut server = entry("General");
         server.color = Some("ABABAB".to_string());
         let mut file = entry("General");
         file.color = Some("FF0000".to_string());
-        assert!(differs(&file, &server));
+        assert!(!changed_fields(&file, &server).is_empty());
     }
 
     #[test]
-    fn differs_compares_lists_order_insensitively() {
+    fn changed_fields_ignores_terminal_description_line_endings() {
+        let mut server = entry("General");
+        server.description = Some("Description".to_string());
+        let mut file = entry("General");
+        file.description = Some("Description\n".to_string());
+        assert!(changed_fields(&file, &server).is_empty());
+    }
+
+    #[test]
+    fn category_definition_params_normalize_terminal_description_line_endings() {
+        let mut category = entry("General");
+        category.description = Some("Description\r\n".to_string());
+        let params = entry_to_params(&category, &BTreeMap::new()).unwrap();
+        assert!(params.contains(&("description".to_string(), "Description".to_string())));
+    }
+
+    #[test]
+    fn changed_fields_names_every_specified_difference() {
+        let mut server = entry("General");
+        server.color = Some("ABABAB".to_string());
+        let mut file = entry("Renamed");
+        file.color = Some("FF0000".to_string());
+        assert_eq!(changed_fields(&file, &server), vec!["name", "color"]);
+    }
+
+    #[test]
+    fn category_definition_rejects_unknown_fields() {
+        let error = serde_yaml::from_str::<CategoriesFile>(
+            "version: 1\ncategories:\n  - name: Marketplace\n    solved_enabled: true\n",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn category_definition_rejects_unknown_top_level_fields() {
+        let error = serde_yaml::from_str::<CategoriesFile>(
+            "version: 1\nunknown: true\ncategories:\n  - name: Marketplace\n",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn category_definition_rejects_unknown_json_fields() {
+        let error = serde_json::from_str::<CategoriesFile>(
+            r#"{"version":1,"categories":[{"name":"Marketplace","solved_enabled":true}]}"#,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn changed_fields_compares_lists_order_insensitively() {
         let mut server = entry("General");
         server.allowed_tags = Some(vec!["b".to_string(), "a".to_string()]);
         let mut file = entry("General");
         file.allowed_tags = Some(vec!["a".to_string(), "b".to_string()]);
-        assert!(!differs(&file, &server));
+        assert!(changed_fields(&file, &server).is_empty());
     }
 
     #[test]

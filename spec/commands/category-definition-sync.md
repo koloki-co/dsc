@@ -120,6 +120,10 @@ dsc category def push <DISCOURSE> <LOCAL_PATH>    # apply file → server
     like `setting push --dry-run` / `tag push --dry-run`.
   - Idempotent: a push with no file change is a no-op (normalised compare; no
     spurious PUTs).
+  - Reject unknown top-level and category-entry fields. A declarative file must
+    fail loudly rather than silently ignoring a misspelt or unsupported setting.
+  - Dry-run lists the exact definition fields that differ for every planned
+    update, without dumping potentially long descriptions or templates.
 
 ### Imperative (single category, one field)
 
@@ -357,7 +361,7 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 > `src/commands/category_def.rs` + `src/api/categories.rs`/`models.rs`.
 > Verified end-to-end on koloki-demo: pull, show, get, reversible set, and def
 > push (create with rename-warning, update, and idempotent `= unchanged` on a
-> full pull→push→pull). Unit-tested (`plan_push`, `differs`, permission
+> full pull→push→pull). Unit-tested (`plan_push`, changed-field comparison, permission
 > round-trip, single-field param building).
 >
 > Two findings baked into the implementation:
@@ -370,6 +374,9 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 >   that already exist on the server; a brand-new parent created in the *same*
 >   push isn't yet resolvable. Create the parent first (or run push twice). A
 >   two-pass ordering is deferred to Phase 2.
+> - **Description terminal newlines are normalised.** YAML literal blocks end in
+>   a newline while Discourse strips it from category descriptions. Normalising
+>   this boundary prevents a perpetual update plan for otherwise identical text.
 
 - [x] `dsc category def pull <discourse> [categories.yaml]` — reads
   `/categories.json?show_permissions=true&include_subcategories=true`, emits the
@@ -388,6 +395,8 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 - [x] Added a `CategoryDefinition` model with the definition fields and
   `update_category()` / `create_category_def()` / `fetch_category_definitions()`
   to `src/api/categories.rs`.
+- [x] `def push` rejects unknown YAML keys and dry-run names every changed field,
+  so incomplete schemas such as `solved_enabled` cannot be silently ignored.
 
 ### Phase 2 — iteration ergonomics
 
@@ -402,6 +411,9 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 - [ ] `--append` / `--remove` for list fields on `category set` (`allowed_tags`,
   `allowed_tag_groups`).
 - [ ] `required_tag_groups` round-trip (list of `{name, min_tags}`).
+- [ ] `category_types` round-trip. The modern Discourse support category type is
+  needed to enable accepted answers for York Music's Marketplace; it supersedes
+  the invalid category-level `solved_enabled` field.
 - [ ] `parent` resolution by name as well as slug; validation that the parent
   exists before push (clear error instead of a 4xx from the API).
 - [ ] `topic_title_placeholder`, logo/background asset fields, `custom_fields`,
