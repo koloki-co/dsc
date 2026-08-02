@@ -118,7 +118,7 @@ dsc theme asset list <discourse> <theme-id>
 
 ## Completeness (2026-07-01)
 
-`dsc theme` now covers the full ACCM driver and the day-to-day CRUD end to end: install (git URL incl. private-via-URL creds, or a local `.tar.gz`/zip bundle - `POST /admin/themes/import.json` with `remote`+`branch` or a `bundle` multipart), delete-by-id (`DELETE /admin/themes/:id.json`, refuses the site default), list/show/pull/push/duplicate, settings (incl. pull/push), fields (SCSS/HTML), upload assets (set + unset), enable/disable, attach/detach, palettes, and remote update. All verified live on koloki-demo (git + local install, delete, asset unset).
+`dsc theme` now covers the full ACCM driver and the day-to-day CRUD end to end: install (git URL incl. private-via-URL creds, or a local `.tar.gz`/zip bundle - `POST /admin/themes/import.json` with `remote`+`branch` or a `bundle` multipart), delete-by-id (`DELETE /admin/themes/:id.json`, refuses the site default), list/show/pull/push/duplicate, settings (incl. pull/push), fields (SCSS/HTML), upload assets (set + unset), enable/disable, attach/detach, palettes, and remote update. Palette `push --dry-run` reads and validates an existing target, then prints the exact payload, request sequence, and assigned-ID and refreshed local snapshot writes without writing. All verified live on koloki-demo (git + local install, delete, asset unset).
 
 The old SSH `theme install`/`theme remove` remain as legacy paths but are superseded by the API `install`/`delete`. Only genuinely-deferred item left: a cross-instance theme settings diff (the `dsc setting diff` analogue), out of scope below.
 

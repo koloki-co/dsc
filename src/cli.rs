@@ -589,21 +589,12 @@ impl Commands {
             Commands::Palette {
                 command: PaletteCommand::Pull { .. },
             } => Some("dsc palette pull"),
-            Commands::Palette {
-                command: PaletteCommand::Push { .. },
-            } => Some("dsc palette push"),
             Commands::Theme {
                 command:
                     ThemeCommand::Palette {
                         command: PaletteCommand::Pull { .. },
                     },
             } => Some("dsc theme palette pull"),
-            Commands::Theme {
-                command:
-                    ThemeCommand::Palette {
-                        command: PaletteCommand::Push { .. },
-                    },
-            } => Some("dsc theme palette push"),
             Commands::Theme {
                 command: ThemeCommand::Pull { .. },
             } => Some("dsc theme pull"),
@@ -3178,16 +3169,8 @@ mod tests {
                 "dsc palette pull",
             ),
             (
-                &["dsc", "palette", "push", "forum", "palette.json"],
-                "dsc palette push",
-            ),
-            (
                 &["dsc", "theme", "palette", "pull", "forum", "1"],
                 "dsc theme palette pull",
-            ),
-            (
-                &["dsc", "theme", "palette", "push", "forum", "palette.json"],
-                "dsc theme palette push",
             ),
             (&["dsc", "theme", "pull", "forum", "1"], "dsc theme pull"),
             (
@@ -3254,6 +3237,8 @@ mod tests {
             &["dsc", "category", "push", "forum", "1", "topics"],
             &["dsc", "category", "def", "push", "forum", "categories.yaml"],
             &["dsc", "backup", "push", "forum", "backup.tar.gz"],
+            &["dsc", "palette", "push", "forum", "palette.json"],
+            &["dsc", "theme", "palette", "push", "forum", "palette.json"],
             &["dsc", "theme", "delete", "forum", "1"],
             &[
                 "dsc",

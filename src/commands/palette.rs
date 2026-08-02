@@ -117,6 +117,7 @@ pub fn palette_push(
     discourse_name: &str,
     local_path: &Path,
     palette_id: Option<i64>,
+    dry_run: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -125,6 +126,9 @@ pub fn palette_push(
 
     if palette.colors.is_empty() {
         return Err(anyhow!("palette file contains no colors"));
+    }
+    if palette.name.trim().is_empty() {
+        return Err(anyhow!("palette file contains an empty name"));
     }
 
     let target_id = palette_id.or(palette.id);
@@ -157,6 +161,17 @@ pub fn palette_push(
         }
         let changed_name =
             (locally_renamed && current.name != palette.name).then_some(palette.name.as_str());
+        if dry_run {
+            print_update_plan(
+                discourse_name,
+                local_path,
+                target_id,
+                &current,
+                changed_name,
+                &changed_colors,
+            );
+            return Ok(());
+        }
         if changed_name.is_some() || !changed_colors.is_empty() {
             client.update_color_scheme(target_id, changed_name, &changed_colors)?;
         }
@@ -169,8 +184,9 @@ pub fn palette_push(
         );
         println!("{}", url);
     } else {
-        if palette.name.trim().is_empty() {
-            return Err(anyhow!("missing palette name for palette create"));
+        if dry_run {
+            print_create_plan(discourse_name, local_path, &palette);
+            return Ok(());
         }
         let new_id = client.create_color_scheme(&palette.name, &palette.colors)?;
         let mut created_with_id = palette;
@@ -187,6 +203,93 @@ pub fn palette_push(
     }
 
     Ok(())
+}
+
+/// Print the full dry-run sequence for an existing palette. The initial GET has
+/// already happened while checking conflicts; it is included so the planned
+/// live request sequence and local snapshot refresh are explicit.
+fn print_update_plan(
+    discourse_name: &str,
+    local_path: &Path,
+    target_id: i64,
+    current: &PaletteFile,
+    changed_name: Option<&str>,
+    changed_colors: &BTreeMap<String, String>,
+) {
+    println!(
+        "[dry-run] {}: palette push plan for {} ({:?}) from {}:",
+        discourse_name,
+        target_id,
+        current.name,
+        local_path.display()
+    );
+    println!(
+        "  GET /admin/color_schemes.json (read current palette {})",
+        target_id
+    );
+
+    let mut changes = 0;
+    if let Some(name) = changed_name {
+        println!("  ~ name: {:?} -> {:?}", current.name, name);
+        changes += 1;
+    }
+    for (name, value) in changed_colors {
+        let current_value = current
+            .colors
+            .get(name)
+            .map(String::as_str)
+            .unwrap_or("<unset>");
+        println!("  ~ {}: {:?} -> {:?}", name, current_value, value);
+        changes += 1;
+    }
+    if changes == 0 {
+        println!("  = unchanged: palette {}", target_id);
+    } else {
+        println!(
+            "  PUT /admin/color_schemes/{}.json ({} change{})",
+            target_id,
+            changes,
+            if changes == 1 { "" } else { "s" }
+        );
+    }
+    println!("  GET /admin/color_schemes.json (refresh palette snapshot)");
+    println!(
+        "  write refreshed palette snapshot to {}",
+        local_path.display()
+    );
+    println!("[dry-run] No changes applied.");
+}
+
+/// Print the complete dry-run sequence for a new palette, including every
+/// color that would be sent and the local snapshot created after Discourse
+/// assigns an ID.
+fn print_create_plan(discourse_name: &str, local_path: &Path, palette: &PaletteFile) {
+    println!(
+        "[dry-run] {}: palette create plan for {:?} from {}:",
+        discourse_name,
+        palette.name,
+        local_path.display()
+    );
+    println!(
+        "  + create: {:?} ({} color{})",
+        palette.name,
+        palette.colors.len(),
+        if palette.colors.len() == 1 { "" } else { "s" }
+    );
+    for (name, value) in &palette.colors {
+        println!("    + {}: {:?}", name, value);
+    }
+    println!("  POST /admin/color_schemes.json");
+    println!(
+        "  write palette snapshot with assigned ID to {}",
+        local_path.display()
+    );
+    println!("  GET /admin/color_schemes.json (fetch created palette and assigned ID)");
+    println!(
+        "  write refreshed palette snapshot to {}",
+        local_path.display()
+    );
+    println!("[dry-run] No changes applied.");
 }
 
 fn palette_from_response(response: &Value, fallback_id: i64) -> Result<PaletteFile> {

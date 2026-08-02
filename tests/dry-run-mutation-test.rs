@@ -126,6 +126,9 @@ fn get_body(path: &str) -> String {
     if p == "/admin/customize/colors.json" {
         return r#"[{"id":19,"name":"Palette","colors":[],"base_scheme_id":null}]"#.to_string();
     }
+    if p == "/admin/color_schemes.json" {
+        return r#"[{"id":19,"name":"Palette","colors":[{"name":"primary","hex":"000000"}],"base_scheme_id":null}]"#.to_string();
+    }
     if p == "/admin/backups.json" {
         return "[]".to_string();
     }
@@ -579,7 +582,11 @@ fn dry_run_never_issues_a_mutating_request() {
     )
     .expect("write themeset");
     let palette = dir.path().join("palette.json");
-    std::fs::write(&palette, "{\"name\":\"Palette\",\"colors\":[]}\n").expect("write palette");
+    std::fs::write(
+        &palette,
+        "{\"name\":\"Palette\",\"colors\":{\"primary\":\"111111\"}}\n",
+    )
+    .expect("write palette");
     let csvout = dir.path().join("result.csv");
 
     let substitute = |arg: &str| -> String {
@@ -643,6 +650,112 @@ fn dry_run_never_issues_a_mutating_request() {
         "explorer run --csv wrote {} during a dry run",
         csvout.display()
     );
+}
+
+#[test]
+fn palette_push_dry_run_prints_complete_create_and_update_plans_without_writing() {
+    let (baseurl, log) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = dir.path().join("dsc.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{baseurl}\"\napikey = \"mock-key\"\napi_username = \"tester\"\n"
+        ),
+    )
+    .expect("write config");
+
+    let create = dir.path().join("create.json");
+    let create_source = "{\"name\":\"New palette\",\"colors\":{\"primary\":\"111111\"}}\n";
+    std::fs::write(&create, create_source).expect("write create palette");
+    let before = mutating(&log).len();
+    let (create_output, create_ok) = run_dsc(
+        &[
+            "-n",
+            "theme",
+            "palette",
+            "push",
+            "mock",
+            create.to_str().expect("UTF-8 path"),
+        ],
+        &config,
+    );
+    assert!(create_ok, "create dry-run failed: {create_output}");
+    assert!(create_output.contains("[dry-run] mock: palette create plan for \"New palette\""));
+    assert!(create_output.contains("POST /admin/color_schemes.json"));
+    assert!(create_output.contains("write palette snapshot with assigned ID"));
+    assert!(create_output.contains("write refreshed palette snapshot"));
+    assert_eq!(
+        std::fs::read_to_string(&create).expect("read create palette"),
+        create_source
+    );
+    assert_eq!(mutating(&log).len(), before);
+
+    let update = dir.path().join("update.json");
+    let update_source = concat!(
+        "{\"id\":19,\"name\":\"Renamed palette\",\"colors\":{\"primary\":\"111111\"},",
+        "\"pulled\":{\"name\":\"Palette\",\"colors\":{\"primary\":\"000000\"}}}\n"
+    );
+    std::fs::write(&update, update_source).expect("write update palette");
+    let before = mutating(&log).len();
+    let (update_output, update_ok) = run_dsc(
+        &[
+            "-n",
+            "theme",
+            "palette",
+            "push",
+            "mock",
+            update.to_str().expect("UTF-8 path"),
+        ],
+        &config,
+    );
+    assert!(update_ok, "update dry-run failed: {update_output}");
+    assert!(update_output.contains("[dry-run] mock: palette push plan for 19 (\"Palette\")"));
+    assert!(update_output.contains("~ name: \"Palette\" -> \"Renamed palette\""));
+    assert!(update_output.contains("PUT /admin/color_schemes/19.json"));
+    assert_eq!(
+        std::fs::read_to_string(&update).expect("read update palette"),
+        update_source
+    );
+    assert_eq!(mutating(&log).len(), before);
+}
+
+#[test]
+fn palette_push_rejects_an_empty_name_before_planning_or_writing() {
+    let (baseurl, log) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = dir.path().join("dsc.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{baseurl}\"\napikey = \"mock-key\"\napi_username = \"tester\"\n"
+        ),
+    )
+    .expect("write config");
+
+    let palette = dir.path().join("palette.json");
+    std::fs::write(
+        &palette,
+        "{\"name\":\"  \",\"colors\":{\"primary\":\"111111\"}}\n",
+    )
+    .expect("write palette");
+    let before = mutating(&log).len();
+
+    let (output, ok) = run_dsc(
+        &[
+            "-n",
+            "theme",
+            "palette",
+            "push",
+            "mock",
+            palette.to_str().expect("UTF-8 path"),
+        ],
+        &config,
+    );
+
+    assert!(!ok, "empty palette name unexpectedly succeeded: {output}");
+    assert!(output.contains("palette file contains an empty name"));
+    assert_eq!(mutating(&log).len(), before);
 }
 
 // ─── coverage: every command must be triaged ──────────────────────────────────
