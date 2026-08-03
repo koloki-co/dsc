@@ -1,12 +1,12 @@
 # `dsc update` failure detection and disk-guard recovery
 
-> **Status: Specification for R42. Disk-guard recovery is unimplemented; the reported stderr failure path needs reproduction and regression coverage.**
+> **Status: R42 partially implemented. Disk-guard recovery and actionable refusal output are implemented; SSH diagnostics are corrected, but the historical non-zero launcher exit remains unreproduced.**
 
-The field report came from a 13-forum fleet run on 2026-07-29 (`dsc 0.12.1`) taking every managed forum from Discourse `2026.7.0-latest` to `2026.8.0-latest`. The disk guard is a confirmed `dsc` logic error; the reported stderr failure path remains an investigation until it is reproduced.
+The field report came from a 13-forum fleet run on 2026-07-29 (`dsc 0.12.1`) taking every managed forum from Discourse `2026.7.0-latest` to `2026.8.0-latest`. The disk guard was a confirmed `dsc` logic error. Source comparison established that v0.12.1 and current code both classified SSH success by exit status; the proven diagnostic defect was that a non-zero command discarded stdout and its exit status, then displayed ordinary git stderr as though it were the reason for failure. Why the historical launcher invocation returned non-zero remains an investigation rather than a resolved false-failure classification.
 
 Related specs: [update-concurrency](update-concurrency.md), [update-log](update-log.md).
 
-## Reported failure 1 - git's stderr progress output needs reproduction
+## Reported failure 1 - misleading SSH failure diagnostics
 
 ### Field report
 
@@ -24,26 +24,28 @@ Git writes fetch and progress reporting to **stderr** on success. This is normal
 
 ### Reported impact
 
-`dsc` aborted the run before `./launcher rebuild app`. Post-hoc inspection confirmed the pull had in fact **succeeded** - both `/var/discourse` working trees were correctly at `7d4fa59` and level with `origin/main`. The OS update and reboot had also completed. The forums were therefore left in a half-updated state: current `discourse_docker`, rebooted host, but Discourse still on the old version, and the log asserted a failure that had not happened.
+`dsc` aborted during the launcher invocation. Post-hoc inspection confirmed that launcher's `discourse_docker` pull stage had succeeded - both working trees were correctly at `7d4fa59` and level with `origin/main` - while Discourse itself remained on the old version after the OS update and reboot. The non-zero SSH status proves that some launcher stage failed or was interrupted, but the old diagnostic discarded stdout and the exit code, so the captured git stderr cannot identify which stage.
 
-Both succeeded on retry with no intervention, because `discourse_docker` was already current so the fetch emitted nothing. That retry-succeeds-without-change signature is diagnostic of this class of bug.
+Both succeeded on retry with no intervention. `discourse_docker` was already current and emitted no fetch summary on the retry, but that correlation is not proof that stderr caused the original non-zero exit.
 
-The 11 forums that did not exhibit it were, on the evidence, those whose fetch produced no new-branch summary.
+The other 11 forums did not record the same diagnostic. The available log cannot establish whether their launcher output or execution path differed in any other material way.
 
-### Requirement if reproduced
+### Resolution
 
-Failure detection for remote steps must key on the **exit status** of the remote command, never on the presence or content of stderr.
+Failure detection for remote steps continues to key on the **exit status** of the remote command, never on the presence or content of stderr.
 
-- Capture stdout and stderr separately; treat stderr as diagnostic context, not as a failure signal.
-- Ensure the remote command's exit status is what propagates. Where steps are chained or piped over SSH, set `pipefail` or otherwise guarantee the meaningful status is not masked by a later element of a pipeline.
-- Where a step's success genuinely cannot be read from exit status, assert a **positive postcondition** (for example, `git rev-parse HEAD` equals `origin/main`) rather than inferring failure from output text.
-- Never persist raw stderr into the log's `detail` field as though it were an error message. If a step fails, `detail` should state which step failed and its exit status, with output attached as context.
+- [x] Capture stdout and stderr separately and treat stderr as diagnostic context, not as a failure signal.
+- [x] Report the failed step and SSH exit status, retaining bounded tails from both streams for terminal diagnosis.
+- [x] Persist only the concise first-line failure in the update log rather than flattening raw command output into `detail`.
+- [x] Retain the existing exit-status classifier; no output-content heuristic was added.
+- [ ] Reproduce the historical launcher non-zero exit or retain enough evidence from a future occurrence to identify the failing launcher stage.
 
 ### Verification
 
-- Unit test: a remote step returning exit 0 with non-empty stderr is classified as success.
-- Unit test: a remote step returning non-zero with empty stderr is classified as failure.
-- Regression test: simulated `git fetch` output containing `* [new branch]` lines and a `..` range summary does not produce a failure classification.
+- [x] Unit test: a remote step returning exit 0 with non-empty stderr is classified as success.
+- [x] Unit test: a remote step returning non-zero with empty stderr is classified as failure and names its exit status.
+- [x] Regression test: simulated `git fetch` output containing `* [new branch]` lines and a `..` range summary does not produce a failure classification.
+- [x] Regression test: a failed step retains substantive stdout alongside git progress from stderr.
 
 ## Defect 2 - the disk guard cannot self-heal
 
@@ -60,7 +62,7 @@ The host had 3.9G free (87% used). The cause was accumulated Docker images: 13.6
 
 ### Impact
 
-The guard runs **before** the update; `./launcher cleanup` runs **after** it. A host that drifts below the threshold therefore can never recover through `dsc`, no matter how many times it is run, even though the very operation that would free the space is already part of the workflow. The tool's own error text concedes this by directing the operator to SSH.
+Before R42, the guard ran **before** the update while cleanup ran **after** it. A host below the threshold therefore could not recover through `dsc`, no matter how many times it was run, and the error directed the operator to SSH.
 
 Manual remediation on this host recovered 3.9G to 12G free (87% to 61%) - comfortably above the threshold - using only operations `dsc` already knows how to perform.
 
@@ -70,19 +72,25 @@ Note that `./launcher cleanup` alone is not always sufficient. It did not reclai
 
 When the pre-flight disk check fails, `dsc` should attempt recovery before refusing.
 
-- On insufficient space, run the cleanup step **first**, re-measure, and proceed if the threshold is then met. Report both measurements in the summary.
-- Prefer targeted removal of unused `discourse/base` images by ID over `docker system prune -a`. A blunt prune also discards the current base image, forcing an unnecessary multi-gigabyte re-download on the next rebuild. Images that are parents of an in-use image will correctly refuse deletion and must not be treated as an error.
-- Consider offering journal vacuuming as part of recovery; journald had grown to 815MB on the observed host and vacuuming to 200MB freed a further 624MB.
-- Only refuse if space is still insufficient **after** recovery, and say so explicitly ("cleanup reclaimed N, still below minimum").
-- Report post-update disk usage prominently enough to act as an early warning. A second forum in the same run finished at 82% used with 6.9G free - above the guard, but on the same trajectory.
+- [x] On insufficient space, run the cleanup step **first**, re-measure, and proceed if the threshold is then met. Report both measurements in the summary.
+- [x] Use a fixed `docker image prune -f` for preflight rather than reusing the configurable, potentially broader post-update cleanup hook. Re-measure immediately and proceed if the threshold is met.
+- [x] If cleanup is insufficient, preserve the newest listed `discourse/base` ID and print validated older IDs as manual no-force `docker rmi` candidates. Do not remove tagged base images automatically because creation order alone does not prove they are unused.
+- [x] Never run `docker system prune -a` automatically. If recovery fails, print shell-quoted rootful/rootless inspection commands and exact candidate `docker rmi` commands where available, with explicit verification and no-force warnings.
+- [x] Mention journal usage inspection as policy-dependent manual follow-up rather than deleting logs automatically.
+- [x] Only refuse if space is still insufficient **after** recovery, and report initial, final, reclaimed, and minimum values.
+- [x] Report post-update disk usage prominently enough to act as an early warning. A second forum in the same run finished at 82% used with 6.9G free - above the guard, but on the same trajectory.
 
 ### Verification
 
-- Unit test: a host below the threshold that would rise above it after cleanup proceeds with the update.
-- Unit test: a host still below the threshold after cleanup refuses, with both measurements in the error.
-- Unit test: a `docker rmi` refusal caused by dependent child images is not classified as a cleanup failure.
+- [x] Unit test: a host below the threshold that rises above it after cleanup proceeds with the update.
+- [x] Policy test: a host still below the threshold refuses with both measurements and safe manual commands.
+- [x] Policy test: low-space output can carry older validated base-image IDs without automatically removing them.
+- [x] Unit test: Docker image IDs are validated and deduplicated before interpolation into a remote command.
+- [x] Unit test: rootful/rootless command generation never uses `prune -a`.
+- [x] Process test: streamed command handling uses the real child exit status and retains separate stdout/stderr context.
 
 ## Out of scope
 
 - Changing the 5G threshold itself. The value was not the problem.
+- The move from rounded whole-GiB `df -BG` output to 1 KiB block accounting enforces the existing 5 GiB threshold accurately; hosts just below 5 GiB no longer round up and pass.
 - Automatic scheduled cleanup independent of `update`. If fleet disk drift needs its own surface, that is a separate item alongside R41 (`backup health`) rather than part of `update`.

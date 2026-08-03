@@ -30,7 +30,7 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 
 ### Ops reliability
 
-- [ ] **R42 - `dsc update` failure detection and disk-guard recovery** - two field-observed reliability gaps in the shipped `update` workflow. (1) A 13-forum run reported two false failures with git fetch summaries on stderr. The current SSH helper already keys errors on exit status, so reproduce the exact failure path and add regressions for successful stderr and silent non-zero exits before changing behaviour. (2) The pre-flight disk guard runs before the update while `./launcher cleanup` runs after it, so a host below the 5G threshold can never recover through `dsc` and must be cleaned manually. Guard should attempt cleanup, re-measure, and only then refuse. Driver: the 2026-07-29 fleet run where one forum needed manual `docker rmi` of stale `discourse/base` images to get from 3.9G to 12G free. Spec: [update-failure-detection](commands/update-failure-detection.md).
+- [~] **R42 - `dsc update` failure detection and disk-guard recovery** - disk recovery is implemented: exact preflight measurement, safe dangling-image cleanup, re-measurement, and shell-quoted manual guidance with validated older `discourse/base` IDs. SSH failures now report exit status and bounded stdout/stderr context while logs retain only the concise diagnosis. Remaining investigation: reproduce why two 2026-07-29 launcher invocations returned non-zero after successfully updating `discourse_docker`; stderr itself was never the failure classifier. Spec: [update-failure-detection](commands/update-failure-detection.md).
 
 ### Docker app configuration
 

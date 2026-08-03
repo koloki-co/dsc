@@ -17,15 +17,30 @@ dsc update log [--latest] [--since <DUR>] [--format text|md|json]
 
 ## Update workflow
 
-1. OS package update over SSH.
-2. Reboot (if applicable).
-3. Check whether the running Discourse commit matches the latest `stable` branch commit on GitHub. If they match, skip the rebuild.
-4. Discourse rebuild (`./launcher rebuild app`) — only if step 3 found a newer commit available.
-5. Cleanup (`docker container prune -f && docker image prune -f`).
-6. Fetch version info from the homepage `<meta name="generator" ...>` tag.
-7. Optionally post a changelog checklist to the configured topic.
+1. Refuse or skip if a `./launcher rebuild` is already running, unless `--force` is set.
+2. Fetch the initial Discourse version and OS details.
+3. Check available 1 KiB blocks on `/` and compare them without whole-GiB rounding. If space is below the configured minimum, run the [disk recovery](#disk-guard-and-recovery) sequence before making any OS or Discourse change.
+4. Run the OS package update over SSH and reboot if applicable.
+5. Check whether the running Discourse commit matches the latest `stable` branch commit on GitHub. If they match, skip the rebuild.
+6. Run the Discourse rebuild (`./launcher rebuild app`) only if step 5 found a newer commit available.
+7. Fetch final version information, run Docker cleanup (`docker container prune -f && docker image prune -f`), and report root disk usage.
+8. Optionally post a changelog checklist to the configured topic.
 
 If the OS update command fails, `dsc update` aborts after attempting the rollback command (when configured).
+
+OS-update and Discourse-rebuild success is determined only by the SSH process exit status. Output written to stderr, including ordinary git fetch progress, does not turn a successful command into a failure. A failed streamed command reports its exit status and bounded tails from both stdout and stderr; the update log stores only the concise first-line diagnosis.
+
+## Disk guard and recovery
+
+The preflight requires at least 5 GiB free on `/` by default. When the host is below that threshold, `dsc` performs a conservative recovery before refusing:
+
+1. Run a fixed `docker image prune -f`, which removes dangling images but not tagged images or stopped containers, and re-measure free space. The configurable post-update cleanup hook is deliberately not reused during preflight.
+2. Continue the update only if the minimum is now met.
+3. If space is still low, list `discourse/base` images and preserve the newest ID when constructing manual suggestions. `dsc` does not delete tagged base images automatically because creation order does not prove an image is unused.
+
+The automatic preflight never runs `docker system prune -a`, which could discard the current base image and force a large re-download. A locally configured `DSC_SSH_CLEANUP_CMD` still controls post-update cleanup and remains the operator's responsibility.
+
+If recovery cannot free enough space, the error reports the initial and final measurements and prints shell-quoted commands tailored to rootful or rootless Docker. Suggested `docker rmi` commands contain validated older image IDs, but the operator must confirm an image is unused before running them. The output also suggests `docker system df`, `docker image ls --no-trunc discourse/base`, and `df -h /`, with an explicit warning not to add `--force`. Journal inspection is mentioned separately because deleting logs depends on the host's retention policy.
 
 ## Changelog template
 
@@ -34,10 +49,11 @@ The changelog is posted as a checklist to the topic specified by `changelog_topi
 ```md
 - [x] OS updated {{ubuntu_os_version}}
 - {% if rebooted %} {{[x] Server rebooted}} {% endif %}
+- {% if recovered %} [x] Preflight disk recovery: {{ before_free }} -> {{ after_free }} available {% endif %}
 - [x] Updated Discourse:
   - Initial version: {{ before_version }} [{{ before_commit_hash | truncate 7 }}](https://github.com/discourse/discourse/commit/{{ before_commit_hash }})
   - Updated version: {{ after_version }} [{{ after_commit_hash | truncate 7 }}](https://github.com/discourse/discourse/commit/{{ after_commit_hash }})
-- [x] `./launcher cleanup` Total reclaimed space: {{ reclaimed_space }}
+- [x] Docker cleanup total reclaimed space: {{ reclaimed_space }}
 - [x] Root disk usage (df -h /): {{ root_disk_usage }}
 ```
 
@@ -86,9 +102,10 @@ dsc update log --since 7d --format md
 | `DSC_SSH_REBOOT_CMD` | `sudo -n reboot` | Reboot command. |
 | `DSC_SSH_OS_VERSION_CMD` | `lsb_release -d \| cut -f2` | OS version detection (fallback: `/etc/os-release`). |
 | `DSC_SSH_UPDATE_CMD` | `cd /var/discourse && sudo -n ./launcher rebuild app` | Discourse rebuild command. |
-| `DSC_SSH_CLEANUP_CMD` | `cd /var/discourse && sudo -n ./launcher cleanup` | Post-rebuild cleanup command. |
+| `DSC_SSH_CLEANUP_CMD` | `sudo -n docker container prune -f && sudo -n docker image prune -f` | Post-rebuild cleanup command. Rootless installs omit `sudo -n`; preflight always uses the fixed, narrower `docker image prune -f`. |
 | `DSC_SSH_STRICT_HOST_KEY_CHECKING` | `accept-new` | SSH host key checking mode (set empty to omit). |
 | `DSC_SSH_OPTIONS` | *(none)* | Extra SSH options (space-delimited). |
+| `DSC_DISCOURSE_MIN_FREE_GB` | `5` | Minimum free GiB required on `/` after automatic recovery. |
 | `DSC_DISCOURSE_BOOT_WAIT_SECS` | `15` | Seconds to wait after rebuild before fetching `about.json`. |
 | `DSC_UPDATE_LOG` | `$XDG_STATE_HOME/dsc/update.log` | Path to the append-only update log. |
 | `DSC_COLOR` | `auto` | ANSI color output (`auto`/`always`/`never`). `NO_COLOR` also disables color. |

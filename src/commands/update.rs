@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::api::{DiscourseClient, VersionInfo};
-use crate::commands::common::{ensure_api_credentials, missing_config, validate_ssh_target};
+use crate::commands::common::{
+    ensure_api_credentials, missing_config, shell_quote, validate_ssh_target,
+};
 use crate::commands::update_log::{self, LogKind};
 use crate::config::{Config, DiscourseConfig, find_discourse};
 use crate::utils::color_discourse_label;
@@ -13,12 +15,16 @@ use reqwest::blocking::Client;
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Write};
 use std::io::{BufRead, BufReader, IsTerminal};
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
 const DEFAULT_PARALLEL_UPDATE_WORKERS: usize = 3;
+const KIBIBYTE: u64 = 1024;
+const GIBIBYTE: u64 = 1024 * 1024 * 1024;
+const MAX_REMOTE_DIAGNOSTIC_LINES: usize = 20;
+const MAX_REMOTE_DIAGNOSTIC_CHARS: usize = 4096;
 /// Window for "was this forum updated recently?" when `--skip-recent` is given
 /// without a value, or for the interactive re-update prompt.
 const DEFAULT_RECENT_WINDOW: Duration = Duration::from_secs(24 * 3600);
@@ -140,7 +146,13 @@ fn update_and_log(
             Ok(())
         }
         Err(e) => {
-            update_log::append(&discourse.name, LogKind::Failed, "-", "-", &e.to_string());
+            update_log::append(
+                &discourse.name,
+                LogKind::Failed,
+                "-",
+                "-",
+                &concise_failure_detail(&e),
+            );
             Err(e)
         }
     }
@@ -226,7 +238,47 @@ fn parallel_worker_count(max: Option<usize>, discourse_count: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::parallel_worker_count;
+    use super::*;
+    use std::collections::VecDeque;
+
+    struct FakeDiskOps {
+        measurements: VecDeque<u64>,
+        cleanup_calls: usize,
+        older_base_image_ids: Vec<String>,
+        image_list_fails: bool,
+    }
+
+    impl FakeDiskOps {
+        fn new(measurements: &[u64]) -> Self {
+            Self {
+                measurements: measurements.iter().copied().collect(),
+                cleanup_calls: 0,
+                older_base_image_ids: Vec::new(),
+                image_list_fails: false,
+            }
+        }
+    }
+
+    impl DiskRecoveryOps for FakeDiskOps {
+        fn available_bytes(&mut self) -> Result<u64> {
+            self.measurements
+                .pop_front()
+                .ok_or_else(|| anyhow!("missing fake disk measurement"))
+        }
+
+        fn cleanup(&mut self) -> Result<()> {
+            self.cleanup_calls += 1;
+            Ok(())
+        }
+
+        fn older_base_image_ids(&mut self) -> Result<Vec<String>> {
+            if self.image_list_fails {
+                Err(anyhow!("image listing failed"))
+            } else {
+                Ok(self.older_base_image_ids.clone())
+            }
+        }
+    }
 
     #[test]
     fn default_parallel_workers_is_three() {
@@ -246,6 +298,215 @@ mod tests {
         assert!(super::REBUILD_CHECK_CMD.contains("[l]auncher rebuild"));
         assert!(!super::REBUILD_CHECK_CMD.contains("launcher rebuild"));
     }
+
+    #[test]
+    fn successful_ssh_status_ignores_git_progress_on_stderr() {
+        let stderr = "From https://github.com/discourse/discourse_docker\n   e7f1201..7d4fa59 main -> origin/main\n * [new branch] build-cache -> origin/build-cache\n";
+        assert!(
+            ensure_ssh_success("Discourse rebuild", "forum", true, Some(0), "", stderr).is_ok()
+        );
+    }
+
+    #[test]
+    fn failed_ssh_status_reports_exit_code_even_without_stderr() {
+        let error = ensure_ssh_success("Discourse rebuild", "forum", false, Some(23), "", "")
+            .unwrap_err()
+            .to_string();
+        assert_eq!(error, "Discourse rebuild failed on forum (ssh exit 23)");
+    }
+
+    #[test]
+    fn failed_ssh_status_keeps_stdout_and_stderr_as_context() {
+        let error = ensure_ssh_success(
+            "Discourse rebuild",
+            "forum",
+            false,
+            Some(1),
+            "substantive launcher failure",
+            "From https://github.com/discourse/discourse_docker",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.starts_with("Discourse rebuild failed on forum (ssh exit 1)"));
+        assert!(error.contains("stdout (tail):\nsubstantive launcher failure"));
+        assert!(error.contains("stderr (tail):\nFrom https://github.com"));
+        assert_eq!(
+            concise_failure_detail(&anyhow!(error)),
+            "Discourse rebuild failed on forum (ssh exit 1)"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn streamed_command_uses_exit_status_and_preserves_both_streams() {
+        let mut success = Command::new("sh");
+        success.args([
+            "-c",
+            "printf 'launcher complete\\n'; printf 'From git.example/repo\\n' >&2; exit 0",
+        ]);
+        let stdout =
+            run_command_with_tail(success, "forum", "Discourse rebuild", "testing", 0).unwrap();
+        assert_eq!(stdout, "launcher complete\n");
+
+        let mut failure = Command::new("sh");
+        failure.args([
+            "-c",
+            "printf 'launcher failed\\n'; printf 'From git.example/repo\\n' >&2; exit 17",
+        ]);
+        let error = run_command_with_tail(failure, "forum", "Discourse rebuild", "testing", 0)
+            .unwrap_err()
+            .to_string();
+        assert!(error.starts_with("Discourse rebuild failed on forum (ssh exit 17)"));
+        assert!(error.contains("stdout (tail):\nlauncher failed"));
+        assert!(error.contains("stderr (tail):\nFrom git.example/repo"));
+    }
+
+    #[test]
+    fn sufficient_disk_skips_recovery() {
+        let mut ops = FakeDiskOps::new(&[6 * GIBIBYTE]);
+        let outcome = recover_disk_space(&mut ops, 5 * GIBIBYTE).unwrap();
+        assert_eq!(outcome, DiskSpaceOutcome::Sufficient);
+        assert_eq!(ops.cleanup_calls, 0);
+    }
+
+    #[test]
+    fn disk_threshold_is_exact() {
+        let minimum = 5 * GIBIBYTE;
+        let mut exact = FakeDiskOps::new(&[minimum]);
+        assert_eq!(
+            recover_disk_space(&mut exact, minimum).unwrap(),
+            DiskSpaceOutcome::Sufficient
+        );
+
+        let mut below = FakeDiskOps::new(&[minimum - 1, minimum - 1]);
+        assert!(matches!(
+            recover_disk_space(&mut below, minimum).unwrap(),
+            DiskSpaceOutcome::Insufficient(_)
+        ));
+    }
+
+    #[test]
+    fn cleanup_that_recovers_enough_space_proceeds() {
+        let mut ops = FakeDiskOps::new(&[4 * GIBIBYTE, 6 * GIBIBYTE]);
+        let outcome = recover_disk_space(&mut ops, 5 * GIBIBYTE).unwrap();
+        let DiskSpaceOutcome::Recovered(report) = outcome else {
+            panic!("expected recovered disk outcome");
+        };
+        assert_eq!(ops.cleanup_calls, 1);
+        assert_eq!(report.initial_available_bytes, 4 * GIBIBYTE);
+        assert_eq!(report.final_available_bytes, 6 * GIBIBYTE);
+    }
+
+    #[test]
+    fn low_disk_reports_older_base_images_without_removing_them() {
+        let image_id = format!("sha256:{}", "a".repeat(64));
+        let mut ops = FakeDiskOps::new(&[4 * GIBIBYTE, 4 * GIBIBYTE]);
+        ops.older_base_image_ids.push(image_id.clone());
+        let outcome = recover_disk_space(&mut ops, 5 * GIBIBYTE).unwrap();
+        let DiskSpaceOutcome::Insufficient(report) = outcome else {
+            panic!("expected insufficient disk outcome");
+        };
+        assert_eq!(report.older_base_image_ids, vec![image_id]);
+    }
+
+    #[test]
+    fn insufficient_disk_error_includes_safe_manual_commands() {
+        let image_id = format!("sha256:{}", "c".repeat(64));
+        let report = DiskRecoveryReport {
+            initial_available_bytes: 4 * GIBIBYTE,
+            final_available_bytes: 4 * GIBIBYTE,
+            cleanup_error: None,
+            image_list_error: None,
+            older_base_image_ids: vec![image_id.clone()],
+        };
+        let error = insufficient_disk_error("forum", false, 5 * GIBIBYTE, &report).to_string();
+        assert!(error.contains("4.00 GiB -> 4.00 GiB available"));
+        assert!(error.contains("sudo docker system df"));
+        assert!(error.contains("sudo docker image ls --no-trunc discourse/base"));
+        assert!(error.contains(&format!("sudo docker rmi {image_id}")));
+        assert!(error.contains("intentionally omits `--force`"));
+        assert!(error.contains("Do not use `docker system prune -a`"));
+    }
+
+    #[test]
+    fn insufficient_disk_error_shell_quotes_the_ssh_target() {
+        let report = DiskRecoveryReport {
+            initial_available_bytes: 4 * GIBIBYTE,
+            final_available_bytes: 4 * GIBIBYTE,
+            cleanup_error: None,
+            image_list_error: None,
+            older_base_image_ids: Vec::new(),
+        };
+        let error =
+            insufficient_disk_error("forum; touch /tmp/not-safe", true, 5 * GIBIBYTE, &report)
+                .to_string();
+        assert!(error.contains("ssh 'forum; touch /tmp/not-safe'"));
+    }
+
+    #[test]
+    fn insufficient_disk_error_never_rounds_available_space_up_to_the_minimum() {
+        let minimum = 5 * GIBIBYTE;
+        let report = DiskRecoveryReport {
+            initial_available_bytes: minimum - KIBIBYTE,
+            final_available_bytes: minimum - KIBIBYTE,
+            cleanup_error: None,
+            image_list_error: None,
+            older_base_image_ids: Vec::new(),
+        };
+        let error = insufficient_disk_error("forum", true, minimum, &report).to_string();
+        assert!(error.contains("4.99 GiB -> 4.99 GiB available (minimum 5.00 GiB"));
+    }
+
+    #[test]
+    fn image_id_parser_deduplicates_and_rejects_shell_input() {
+        let digest = "D".repeat(64);
+        let parsed =
+            parse_discourse_base_image_ids(&format!("sha256:{digest}\nsha256:{digest}\n")).unwrap();
+        assert_eq!(
+            parsed,
+            vec![format!("sha256:{}", digest.to_ascii_lowercase())]
+        );
+        assert!(parse_discourse_base_image_ids("sha256:abc; reboot").is_err());
+    }
+
+    #[test]
+    fn older_image_selection_preserves_the_newest_image() {
+        let newest = "a".repeat(64);
+        let older = "b".repeat(64);
+        let older_images =
+            older_discourse_base_image_ids(&format!("sha256:{newest}\nsha256:{older}\n")).unwrap();
+        assert_eq!(older_images, vec![format!("sha256:{older}")]);
+    }
+
+    #[test]
+    fn root_disk_parser_uses_exact_available_kibibytes() {
+        let output = "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 10485760 6291456 4194304 60% /\n";
+        assert_eq!(
+            parse_root_disk_available_bytes(output).unwrap(),
+            4 * GIBIBYTE
+        );
+        assert!(parse_root_disk_available_bytes("").is_err());
+        assert!(parse_root_disk_available_bytes("unexpected").is_err());
+    }
+
+    #[test]
+    fn docker_commands_preserve_rootless_mode() {
+        assert_eq!(
+            docker_command(false, "rmi sha256:abc"),
+            "sudo -n docker rmi sha256:abc"
+        );
+        assert_eq!(
+            docker_command(true, "rmi sha256:abc"),
+            "docker rmi sha256:abc"
+        );
+        assert_eq!(
+            preflight_cleanup_command(false),
+            "sudo -n docker image prune -f"
+        );
+        assert_eq!(preflight_cleanup_command(true), "docker image prune -f");
+        assert!(!default_cleanup_command(false).contains("prune -a"));
+        assert!(!default_cleanup_command(true).contains("prune -a"));
+    }
 }
 
 struct UpdateMetadata {
@@ -257,15 +518,224 @@ struct UpdateMetadata {
     before_os_version: Option<String>,
     after_version_error: Option<String>,
     root_disk_usage: Option<String>,
+    preflight_disk_recovery: Option<Box<DiskRecoveryReport>>,
     os_updated: bool,
     server_rebooted: bool,
     /// Whether the Discourse rebuild actually ran (vs skipped as already current).
     discourse_rebuilt: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DiskRecoveryReport {
+    initial_available_bytes: u64,
+    final_available_bytes: u64,
+    cleanup_error: Option<String>,
+    image_list_error: Option<String>,
+    older_base_image_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DiskSpaceOutcome {
+    Sufficient,
+    Recovered(DiskRecoveryReport),
+    Insufficient(DiskRecoveryReport),
+}
+
+trait DiskRecoveryOps {
+    fn available_bytes(&mut self) -> Result<u64>;
+    fn cleanup(&mut self) -> Result<()>;
+    fn older_base_image_ids(&mut self) -> Result<Vec<String>>;
+}
+
+struct SshDiskRecovery<'a> {
+    target: &'a str,
+    rootless: bool,
+}
+
+impl DiskRecoveryOps for SshDiskRecovery<'_> {
+    fn available_bytes(&mut self) -> Result<u64> {
+        get_root_disk_available_bytes(self.target)
+    }
+
+    fn cleanup(&mut self) -> Result<()> {
+        let command = preflight_cleanup_command(self.rootless);
+        run_ssh_command_combined_named(self.target, &command, "Preflight Docker cleanup")
+            .map(|_| ())
+    }
+
+    fn older_base_image_ids(&mut self) -> Result<Vec<String>> {
+        let command = docker_command(self.rootless, "image ls --no-trunc --quiet discourse/base");
+        let output = run_ssh_command_named(self.target, &command, "Listing discourse/base images")?;
+        older_discourse_base_image_ids(&output)
+    }
+}
+
+fn recover_disk_space<O: DiskRecoveryOps>(
+    ops: &mut O,
+    minimum_bytes: u64,
+) -> Result<DiskSpaceOutcome> {
+    let initial_available_bytes = ops.available_bytes()?;
+    if initial_available_bytes >= minimum_bytes {
+        return Ok(DiskSpaceOutcome::Sufficient);
+    }
+
+    let cleanup_error = ops
+        .cleanup()
+        .err()
+        .map(|error| concise_failure_detail(&error));
+    let after_cleanup_bytes = ops.available_bytes()?;
+    let mut report = DiskRecoveryReport {
+        initial_available_bytes,
+        final_available_bytes: after_cleanup_bytes,
+        cleanup_error,
+        image_list_error: None,
+        older_base_image_ids: Vec::new(),
+    };
+    if after_cleanup_bytes >= minimum_bytes {
+        return Ok(DiskSpaceOutcome::Recovered(report));
+    }
+
+    report.older_base_image_ids = match ops.older_base_image_ids() {
+        Ok(image_ids) => image_ids,
+        Err(error) => {
+            report.image_list_error = Some(concise_failure_detail(&error));
+            Vec::new()
+        }
+    };
+    Ok(DiskSpaceOutcome::Insufficient(report))
+}
+
+fn preflight_cleanup_command(rootless: bool) -> String {
+    // Only dangling images are removed automatically. Do not reuse the
+    // configurable post-update hook here: it may be non-idempotent or broader
+    // than is appropriate before an update has started.
+    docker_command(rootless, "image prune -f")
+}
+
+fn default_cleanup_command(rootless: bool) -> String {
+    // Both Docker prune commands prompt for confirmation by default. `-f`
+    // makes the existing cleanup deterministic under non-interactive SSH.
+    if rootless {
+        "docker container prune -f && docker image prune -f".to_string()
+    } else {
+        "sudo -n docker container prune -f && sudo -n docker image prune -f".to_string()
+    }
+}
+
+fn docker_command(rootless: bool, arguments: &str) -> String {
+    if rootless {
+        format!("docker {arguments}")
+    } else {
+        format!("sudo -n docker {arguments}")
+    }
+}
+
+fn manual_docker_command(rootless: bool, arguments: &str) -> String {
+    if rootless {
+        format!("docker {arguments}")
+    } else {
+        format!("sudo docker {arguments}")
+    }
+}
+
+fn parse_discourse_base_image_ids(output: &str) -> Result<Vec<String>> {
+    let mut seen = HashSet::new();
+    let mut image_ids = Vec::new();
+    for raw in output
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let digest = raw.strip_prefix("sha256:").unwrap_or(raw);
+        if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(anyhow!(
+                "Docker returned an invalid image ID; refusing automatic removal"
+            ));
+        }
+        let image_id = format!("sha256:{}", digest.to_ascii_lowercase());
+        if seen.insert(image_id.clone()) {
+            image_ids.push(image_id);
+        }
+    }
+    Ok(image_ids)
+}
+
+fn older_discourse_base_image_ids(output: &str) -> Result<Vec<String>> {
+    let image_ids = parse_discourse_base_image_ids(output)?;
+    // Docker lists images newest-first. Preserve the newest base image and only
+    // show older IDs as no-force manual `docker rmi` candidates. Creation order
+    // alone does not prove an image is unused, so dsc never removes these itself.
+    Ok(image_ids.into_iter().skip(1).collect())
+}
+
+fn format_gib(bytes: u64) -> String {
+    let whole = bytes / GIBIBYTE;
+    let hundredths = ((bytes % GIBIBYTE) as u128 * 100 / GIBIBYTE as u128) as u64;
+    format!("{whole}.{hundredths:02} GiB")
+}
+
+fn insufficient_disk_error(
+    target: &str,
+    rootless: bool,
+    minimum_bytes: u64,
+    report: &DiskRecoveryReport,
+) -> anyhow::Error {
+    let reclaimed = report
+        .final_available_bytes
+        .saturating_sub(report.initial_available_bytes);
+    let mut message = format!(
+        "insufficient disk space on {target} after automatic recovery: {} -> {} available (minimum {}; reclaimed {})",
+        format_gib(report.initial_available_bytes),
+        format_gib(report.final_available_bytes),
+        format_gib(minimum_bytes),
+        format_gib(reclaimed)
+    );
+    if let Some(error) = &report.cleanup_error {
+        message.push_str(&format!("\nAutomatic Docker cleanup failed: {error}"));
+    }
+    if let Some(error) = &report.image_list_error {
+        message.push_str(&format!("\nStale base-image inspection failed: {error}"));
+    }
+
+    message.push_str(&format!(
+        "\n\nSafe manual checks and cleanup:\n  ssh {}\n  {}\n  {}",
+        shell_quote(target),
+        manual_docker_command(rootless, "system df"),
+        manual_docker_command(rootless, "image ls --no-trunc discourse/base")
+    ));
+    if report.older_base_image_ids.is_empty() {
+        message.push_str(&format!(
+            "\n  {}  # replace IMAGE_ID with a confirmed-unused older ID from the list above",
+            manual_docker_command(rootless, "rmi IMAGE_ID")
+        ));
+    } else {
+        for image_id in &report.older_base_image_ids {
+            message.push_str(&format!(
+                "\n  {}",
+                manual_docker_command(rootless, &format!("rmi {image_id}"))
+            ));
+        }
+    }
+    message.push_str(
+        "\n  df -h /\n\nConfirm an older image is unused before running its `docker rmi` suggestion. The command intentionally omits `--force`, so Docker can refuse images still in use. Do not use `docker system prune -a`, which can remove the current base image. If journal retention policy permits, inspect it with `sudo journalctl --disk-usage` before considering a bounded vacuum.",
+    );
+    anyhow!(message)
+}
+
+fn concise_failure_detail(error: &anyhow::Error) -> String {
+    error
+        .to_string()
+        .lines()
+        .next()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .unwrap_or("update failed")
+        .to_string()
+}
+
 /// The result of one forum's update pass.
 enum UpdateOutcome {
-    Updated(UpdateMetadata),
+    Updated(Box<UpdateMetadata>),
     /// A `./launcher rebuild` was already running on the host, so the whole
     /// forum was left untouched (no OS update, no reboot, no rebuild).
     SkippedRebuildInProgress,
@@ -350,24 +820,41 @@ fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome>
         }
     };
 
+    let rootless = discourse.docker_rootless.unwrap_or(false);
+
     stage(&discourse_label, "Checking root disk free space");
     let min_free_gb = std::env::var("DSC_DISCOURSE_MIN_FREE_GB")
         .ok()
         .and_then(|raw| raw.trim().parse::<u64>().ok())
         .filter(|gb| *gb > 0)
         .unwrap_or(5);
-    if let Some(available_gb) = get_root_disk_available_gb(&target)?
-        && available_gb < min_free_gb
-    {
-        return Err(anyhow!(
-            "insufficient disk space on {}: {}G free (minimum {}G). Please run an interactive update via SSH to clean up space, then retry.",
-            target,
-            available_gb,
-            min_free_gb
-        ));
-    }
-
-    let rootless = discourse.docker_rootless.unwrap_or(false);
+    let min_free_bytes = min_free_gb.saturating_mul(GIBIBYTE);
+    let mut disk_ops = SshDiskRecovery {
+        target: &target,
+        rootless,
+    };
+    let preflight_disk_recovery = match recover_disk_space(&mut disk_ops, min_free_bytes)? {
+        DiskSpaceOutcome::Sufficient => None,
+        DiskSpaceOutcome::Recovered(report) => {
+            stage(
+                &discourse_label,
+                &format!(
+                    "Preflight disk recovery: {} -> {} available",
+                    format_gib(report.initial_available_bytes),
+                    format_gib(report.final_available_bytes)
+                ),
+            );
+            Some(Box::new(report))
+        }
+        DiskSpaceOutcome::Insufficient(report) => {
+            return Err(insufficient_disk_error(
+                &target,
+                rootless,
+                min_free_bytes,
+                &report,
+            ));
+        }
+    };
 
     let os_update_cmd = std::env::var("DSC_SSH_OS_UPDATE_CMD").unwrap_or_else(|_| {
         "sudo -n DEBIAN_FRONTEND=noninteractive apt update && sudo -n DEBIAN_FRONTEND=noninteractive apt upgrade -y"
@@ -382,22 +869,18 @@ fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome>
             "cd /var/discourse && sudo -n ./launcher rebuild app".to_string()
         }
     });
-    let cleanup_cmd = std::env::var("DSC_SSH_CLEANUP_CMD").unwrap_or_else(|_| {
-        // ./launcher cleanup runs docker container prune + docker image prune, both of which
-        // prompt for [y/N] confirmation. Without a TTY, they read EOF and default to N,
-        // silently doing nothing. Use -f to skip confirmation in non-interactive SSH.
-        if rootless {
-            "docker container prune -f && docker image prune -f".to_string()
-        } else {
-            "sudo -n docker container prune -f && sudo -n docker image prune -f".to_string()
-        }
-    });
-
+    let cleanup_cmd =
+        std::env::var("DSC_SSH_CLEANUP_CMD").unwrap_or_else(|_| default_cleanup_command(rootless));
     let mut server_rebooted = false;
 
     stage(&discourse_label, "Running OS update");
-    if let Err(err) = run_ssh_command_with_tail(&target, &os_update_cmd, "OS update in progress", 3)
-    {
+    if let Err(err) = run_ssh_command_with_tail(
+        &target,
+        &os_update_cmd,
+        "OS update",
+        "OS update in progress",
+        3,
+    ) {
         if let Some(rollback_cmd) = os_update_rollback_cmd() {
             stage(&discourse_label, "Running OS update rollback");
             if let Err(rollback_err) = run_ssh_command(&target, &rollback_cmd) {
@@ -407,7 +890,7 @@ fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome>
                 );
             }
         }
-        return Err(anyhow!("OS update failed for {}: {}", target, err));
+        return Err(err);
     }
     let os_updated = true;
     stage(&discourse_label, "Rebooting server");
@@ -455,6 +938,7 @@ fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome>
         run_ssh_command_with_tail(
             &target,
             &discourse_update_cmd,
+            "Discourse rebuild",
             "Discourse update in progress",
             3,
         )?;
@@ -497,7 +981,7 @@ fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome>
         }
     };
     stage(&discourse_label, "Running cleanup");
-    let cleanup = run_ssh_command_combined(&target, &cleanup_cmd)?;
+    let cleanup = run_ssh_command_combined_named(&target, &cleanup_cmd, "Docker cleanup")?;
     let reclaimed_space = parse_reclaimed_space(&cleanup);
     // No OS version check after update; routine updates don't upgrade OS versions.
     stage(&discourse_label, "Fetching root disk usage");
@@ -512,7 +996,7 @@ fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome>
         }
     };
 
-    Ok(UpdateOutcome::Updated(UpdateMetadata {
+    Ok(UpdateOutcome::Updated(Box::new(UpdateMetadata {
         before_version: before_info.version,
         before_commit: before_info.commit,
         after_version: after_info.version,
@@ -521,41 +1005,48 @@ fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome>
         before_os_version,
         after_version_error,
         root_disk_usage,
+        preflight_disk_recovery,
         os_updated,
         server_rebooted,
         discourse_rebuilt,
-    }))
+    })))
 }
 
 pub(crate) fn run_ssh_command(target: &str, command: &str) -> Result<String> {
+    run_ssh_command_named(target, command, "SSH command")
+}
+
+fn run_ssh_command_named(target: &str, command: &str, step: &str) -> Result<String> {
     let mut cmd = build_ssh_command(target, &[])?;
     let output = cmd
         .arg(command)
         .output()
         .with_context(|| format!("running ssh to {}: {}", target, command))?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "ssh command failed for {}: {}",
-            target,
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
+    ensure_ssh_success(
+        step,
+        target,
+        output.status.success(),
+        output.status.code(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-fn run_ssh_command_combined(target: &str, command: &str) -> Result<String> {
+fn run_ssh_command_combined_named(target: &str, command: &str, step: &str) -> Result<String> {
     let mut cmd = build_ssh_command(target, &[])?;
     let output = cmd
         .arg(command)
         .output()
         .with_context(|| format!("running ssh to {}: {}", target, command))?;
-    if !output.status.success() {
-        return Err(anyhow!(
-            "ssh command failed for {}: {}",
-            target,
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
+    ensure_ssh_success(
+        step,
+        target,
+        output.status.success(),
+        output.status.code(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )?;
     let mut combined = String::new();
     combined.push_str(&String::from_utf8_lossy(&output.stdout));
     combined.push_str(&String::from_utf8_lossy(&output.stderr));
@@ -570,6 +1061,19 @@ struct LineEvent {
 fn run_ssh_command_with_tail(
     target: &str,
     command: &str,
+    step: &str,
+    message: &str,
+    tail_lines: usize,
+) -> Result<String> {
+    let mut command_process = build_ssh_command(target, &[])?;
+    command_process.arg(command);
+    run_command_with_tail(command_process, target, step, message, tail_lines)
+}
+
+fn run_command_with_tail(
+    mut command: Command,
+    target: &str,
+    step: &str,
     message: &str,
     tail_lines: usize,
 ) -> Result<String> {
@@ -586,13 +1090,11 @@ fn run_ssh_command_with_tail(
         pb.enable_steady_tick(Duration::from_millis(120));
     }
 
-    let mut cmd = build_ssh_command(target, &[])?;
-    let mut child = cmd
-        .arg(command)
+    let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| format!("running ssh to {}: {}", target, command))?;
+        .with_context(|| format!("running {step} command for {target}"))?;
 
     let stdout = child.stdout.take().context("missing stdout")?;
     let stderr = child.stderr.take().context("missing stderr")?;
@@ -672,11 +1174,64 @@ fn run_ssh_command_with_tail(
     let status = child.wait().context("waiting for ssh command")?;
     pb.finish_and_clear();
 
-    if !status.success() {
-        return Err(anyhow!("ssh command failed for {}: {}", target, stderr_buf));
-    }
+    ensure_ssh_success(
+        step,
+        target,
+        status.success(),
+        status.code(),
+        &stdout_buf,
+        &stderr_buf,
+    )?;
 
     Ok(stdout_buf)
+}
+
+fn ensure_ssh_success(
+    step: &str,
+    target: &str,
+    success: bool,
+    exit_code: Option<i32>,
+    stdout: &str,
+    stderr: &str,
+) -> Result<()> {
+    if success {
+        return Ok(());
+    }
+
+    let status = exit_code
+        .map(|code| format!("ssh exit {code}"))
+        .unwrap_or_else(|| "ssh terminated by signal".to_string());
+    let mut message = format!("{step} failed on {target} ({status})");
+    append_remote_diagnostic(&mut message, "stdout", stdout);
+    append_remote_diagnostic(&mut message, "stderr", stderr);
+    Err(anyhow!(message))
+}
+
+fn append_remote_diagnostic(message: &mut String, stream: &str, output: &str) {
+    let output = output.trim();
+    if output.is_empty() {
+        return;
+    }
+    message.push_str(&format!("\n{stream} (tail):\n{}", diagnostic_tail(output)));
+}
+
+fn diagnostic_tail(output: &str) -> String {
+    let lines: Vec<&str> = output.lines().collect();
+    let start = lines.len().saturating_sub(MAX_REMOTE_DIAGNOSTIC_LINES);
+    let tail = lines[start..].join("\n");
+    if tail.chars().count() <= MAX_REMOTE_DIAGNOSTIC_CHARS {
+        tail
+    } else {
+        let truncated: String = tail
+            .chars()
+            .rev()
+            .take(MAX_REMOTE_DIAGNOSTIC_CHARS)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        format!("[truncated]\n{truncated}")
+    }
 }
 
 fn build_ssh_command(target: &str, extra_options: &[&str]) -> Result<std::process::Command> {
@@ -787,15 +1342,26 @@ fn get_root_disk_usage(target: &str) -> Result<String> {
     Ok(output.trim().to_string())
 }
 
-fn get_root_disk_available_gb(target: &str) -> Result<Option<u64>> {
-    let cmd = "df -BG / | awk 'NR==2 {print $4}'";
-    let output = run_ssh_command(target, cmd)?;
-    let trimmed = output.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    let digits = trimmed.trim_end_matches('G');
-    Ok(digits.parse::<u64>().ok())
+fn get_root_disk_available_bytes(target: &str) -> Result<u64> {
+    let output = run_ssh_command_named(target, "df -Pk /", "Root disk measurement")?;
+    parse_root_disk_available_bytes(&output)
+}
+
+fn parse_root_disk_available_bytes(output: &str) -> Result<u64> {
+    let row = output
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .ok_or_else(|| anyhow!("root disk measurement returned no rows"))?;
+    let available_kib = row
+        .split_whitespace()
+        .nth(3)
+        .ok_or_else(|| anyhow!("root disk measurement returned an unexpected row"))?
+        .parse::<u64>()
+        .context("parsing root disk available blocks")?;
+    available_kib
+        .checked_mul(KIBIBYTE)
+        .ok_or_else(|| anyhow!("root disk available-byte count overflowed"))
 }
 
 fn os_update_rollback_cmd() -> Option<String> {
@@ -827,6 +1393,13 @@ fn build_changelog_payload(metadata: &UpdateMetadata) -> String {
     if metadata.server_rebooted {
         body.push("- [x] Server rebooted".to_string());
     }
+    if let Some(recovery) = &metadata.preflight_disk_recovery {
+        body.push(format!(
+            "- [x] Preflight disk recovery: {} -> {} available",
+            format_gib(recovery.initial_available_bytes),
+            format_gib(recovery.final_available_bytes)
+        ));
+    }
 
     body.push("- [x] Updated Discourse:".to_string());
     if let Some(commit) = before_commit.as_deref() {
@@ -854,10 +1427,10 @@ fn build_changelog_payload(metadata: &UpdateMetadata) -> String {
         ));
     }
     if reclaimed == "unknown" {
-        body.push("- [x] `./launcher cleanup` performed".to_string());
+        body.push("- [x] Docker cleanup performed".to_string());
     } else {
         body.push(format!(
-            "- [x] `./launcher cleanup` Total reclaimed space: {}",
+            "- [x] Docker cleanup total reclaimed space: {}",
             reclaimed
         ));
     }
