@@ -5,6 +5,22 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.13.1] - 2026-08-03
+
+### Bug fixes
+
+- **update**: Recover safely from low disk space ([025678b](https://github.com/koloki-co/dsc/commit/025678bc5cfa407691fa2e239ccaef56ae411f8c))
+
+- **webhook**: Harden webhook administration ([632cad5](https://github.com/koloki-co/dsc/commit/632cad546998e3e04e4b2fa4e39b4a4fa02898c6))
+
+### Chores
+
+- Ignore Playwright MCP captures ([7fdf9ce](https://github.com/koloki-co/dsc/commit/7fdf9cee2e4f5cc29735b31b1a40b1184cadbd6f))
+
+### Features
+
+- **webhook**: Add basic webhook admin commands (list/create/delete/ping) ([d8f979b](https://github.com/koloki-co/dsc/commit/d8f979b4f2db7d4565171289b6c4b2ff8fdd17fa))
+
 ## [0.13.0] - 2026-08-01
 
 ### Bug fixes
