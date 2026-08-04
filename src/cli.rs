@@ -2420,6 +2420,17 @@ pub enum PostCommand {
         #[arg(long = "to-topic", short = 't')]
         to_topic: u64,
     },
+    /// Resolve a post ID to its canonical topic URL and metadata (read-only).
+    #[command(visible_alias = "i")]
+    Info {
+        /// Discourse name.
+        discourse: String,
+        /// Post ID.
+        post_id: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
 }
 
 #[derive(Subcommand)]

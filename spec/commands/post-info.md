@@ -71,11 +71,11 @@ Its metadata supplies `id`, `title`, `slug`, `category_id`, and `deleted_at`. No
 
 ### Phase 1 - blocking
 
-- [ ] Add `dsc post info <discourse> <post-id>` with text, JSON, and YAML output.
-- [ ] Extend the post API model to deserialize only the metadata required for the output schema, including `post_url`.
-- [ ] Fetch the associated topic without raw content and return its metadata.
-- [ ] Cover visible, deleted-post, and deleted-topic responses; assert raw and author fields never appear in output.
-- [ ] Add `docs/post.md` usage and output examples.
+- [x] Add `dsc post info <discourse> <post-id>` with text, JSON, and YAML output.
+- [x] Extend the post API model to deserialize only the metadata required for the output schema, including `post_url`.
+- [x] Fetch the associated topic without raw content and return its metadata.
+- [x] Cover visible, deleted-post, and deleted-topic responses; assert raw and author fields never appear in output.
+- [x] Add `docs/post.md` usage and output examples.
 
 ### Phase 2 - reviewables workflow
 

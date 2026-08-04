@@ -1443,6 +1443,11 @@ fn main() -> Result<()> {
                 post_id,
                 to_topic,
             } => commands::post::post_move(&config, &discourse, post_id, to_topic, dry_run),
+            PostCommand::Info {
+                discourse,
+                post_id,
+                format,
+            } => commands::post::post_info(&config, &discourse, post_id, format),
         },
 
         Commands::Tag { command } => match command {
