@@ -32,8 +32,16 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        # Pinned to `master`, not `stable`: dtolnay/rust-toolchain force-pushes
+        # the `stable`/`nightly`/`x.y.z` branches every time a new Rust ships,
+        # which orphans any SHA pinned there (zizmor's impostor-commit check).
+        # `master`'s action.yml is the generic entrypoint and only changes for
+        # real changes to the action, so pinning it plus an explicit
+        # `toolchain:` input is the durable form - see the upstream README's
+        # "Choice of full-length commit SHA" and "Toolchain expressions".
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
+          toolchain: stable
           components: clippy, rustfmt
 
       - name: Cache Cargo registry and build artefacts
@@ -68,7 +76,9 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust 1.95.0
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        # See the comment on the "Install Rust stable" step above: pinned to
+        # `master`, the durable generic entrypoint, not a version branch.
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.95.0
 
