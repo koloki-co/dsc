@@ -32,8 +32,16 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        # Pinned to `master`, not `stable`: dtolnay/rust-toolchain force-pushes
+        # the `stable`/`nightly`/`x.y.z` branches every time a new Rust ships,
+        # which orphans any SHA pinned there (zizmor's impostor-commit check).
+        # `master`'s action.yml is the generic entrypoint and only changes for
+        # real changes to the action, so pinning it plus an explicit
+        # `toolchain:` input is the durable form - see the upstream README's
+        # "Choice of full-length commit SHA" and "Toolchain expressions".
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
+          toolchain: stable
           components: clippy, rustfmt
 
       - name: Cache Cargo registry and build artefacts
@@ -68,7 +76,9 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust 1.95.0
-        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        # See the comment on the "Install Rust stable" step above: pinned to
+        # `master`, the durable generic entrypoint, not a version branch.
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
           toolchain: 1.95.0
 
@@ -87,7 +97,7 @@ jobs:
 
       # Prebuilt binary (seconds) rather than a from-source `cargo install`.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2.85.0
+        uses: taiki-e/install-action@065d6a08a14e61e89fb0a4c10eecdbdef39c7d8e # v2.85.4
         with:
           tool: cargo-audit
           fallback: none
@@ -115,7 +125,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2.85.0
+      - uses: taiki-e/install-action@065d6a08a14e61e89fb0a4c10eecdbdef39c7d8e # v2.85.4
         with:
           tool: zizmor@1.28.0
           fallback: none
