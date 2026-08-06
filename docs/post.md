@@ -49,6 +49,19 @@ dsc post move myforum 98765 --to-topic 1525
 dsc -n post move myforum 98765 -t 1525   # dry run
 ```
 
+## dsc post info
+
+```text
+dsc post info <discourse> <post-id> [--format text|json|yaml]
+```
+
+Read-only lookup that resolves a post ID to its canonical topic URL and minimal metadata: post ID, topic ID/title/slug/category ID, post number, URL, and deletion state. Supports staff-visible soft-deleted posts and topics. Never prints raw post content, author data, or credentials — use `dsc post pull` when you need the body. (Alias: `dsc post i`.)
+
+```bash
+dsc post info myforum 61695
+dsc post info myforum 61695 --format json
+```
+
 ## Notes
 
 - Post edits and deletes require either admin scope or that the API user owns the post.

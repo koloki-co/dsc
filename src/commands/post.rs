@@ -3,10 +3,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::api::{DiscourseClient, PostEditOptions};
+use crate::cli::ListFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
 use crate::config::Config;
-use crate::utils::atomic_write;
+use crate::utils::{atomic_write, normalize_baseurl};
 use anyhow::{Context, Result, anyhow};
+use serde::Serialize;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -118,6 +120,96 @@ pub fn post_move(
 
     let url = client.move_posts(info.topic_id, &[post_id], to_topic)?;
     println!("Moved post {} → topic {} ({})", post_id, to_topic, url);
+    Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct PostInfoTopicOutput {
+    id: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    slug: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    category_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deleted_at: Option<String>,
+}
+
+/// Output for `dsc post info`. Deliberately its own struct rather than a
+/// reuse of the API's `PostInfo`/`TopicResponse`, so that raw content,
+/// author fields, and anything else those API models pick up in future can
+/// never leak into this read-only lookup's output.
+#[derive(Debug, Serialize)]
+struct PostInfoOutput {
+    id: u64,
+    topic: PostInfoTopicOutput,
+    post_number: u64,
+    url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deleted_at: Option<String>,
+}
+
+pub fn post_info(
+    config: &Config,
+    discourse_name: &str,
+    post_id: u64,
+    format: ListFormat,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+
+    let post = client.fetch_post_metadata(post_id)?;
+    let topic = client.fetch_topic(post.topic_id, false)?;
+
+    let post_number = post.post_number.unwrap_or(1);
+    let url = post.post_url.clone().unwrap_or_else(|| {
+        let base = normalize_baseurl(&discourse.baseurl);
+        let slug = topic.slug.as_deref().unwrap_or("topic");
+        format!("{}/t/{}/{}/{}", base, slug, post.topic_id, post_number)
+    });
+
+    let output = PostInfoOutput {
+        id: post.id,
+        topic: PostInfoTopicOutput {
+            id: topic.id.unwrap_or(post.topic_id),
+            title: topic.title,
+            slug: topic.slug,
+            category_id: topic.category_id,
+            deleted_at: topic.deleted_at,
+        },
+        post_number,
+        url,
+        deleted_at: post.deleted_at,
+    };
+
+    match format {
+        ListFormat::Text => {
+            println!("id:          {}", output.id);
+            println!("topic_id:    {}", output.topic.id);
+            if let Some(title) = &output.topic.title {
+                println!("title:       {}", title);
+            }
+            if let Some(slug) = &output.topic.slug {
+                println!("slug:        {}", slug);
+            }
+            if let Some(category_id) = output.topic.category_id {
+                println!("category_id: {}", category_id);
+            }
+            println!("post_number: {}", output.post_number);
+            println!("url:         {}", output.url);
+            if let Some(deleted_at) = &output.deleted_at {
+                println!("deleted_at:  {}", deleted_at);
+            }
+            if let Some(topic_deleted_at) = &output.topic.deleted_at {
+                println!("topic_deleted_at: {}", topic_deleted_at);
+            }
+        }
+        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&output)?),
+        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&output)?),
+    }
+
     Ok(())
 }
 

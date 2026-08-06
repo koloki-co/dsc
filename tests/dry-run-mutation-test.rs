@@ -73,6 +73,9 @@ fn get_body(path: &str) -> String {
     if p == "/admin/api/web_hooks.json" {
         return webhook_list_body(path);
     }
+    if p == "/t/888.json" {
+        return r#"{"id":888,"title":"Deleted topic","slug":"deleted-topic","category_id":4,"posts_count":1,"deleted_at":"2026-06-25T00:00:00.000Z","post_stream":{"posts":[],"stream":[]}}"#.to_string();
+    }
     if p.starts_with("/t/") && p.ends_with("/posts.json") {
         return format!(r#"{{"post_stream":{{"posts":[{post}]}}}}"#);
     }
@@ -80,6 +83,9 @@ fn get_body(path: &str) -> String {
         return format!(
             r#"{{"id":7,"title":"Test topic","slug":"test-topic","category_id":4,"posts_count":1,"tags":["alpha"],"created_at":"2026-01-01T00:00:00.000Z","post_stream":{{"posts":[{post}],"stream":[1]}}}}"#
         );
+    }
+    if p == "/posts/999.json" {
+        return r#"{"id":999,"topic_id":888,"post_number":3,"raw":"hello","cooked":"<p>hello</p>","username":"tester","created_at":"2026-01-01T00:00:00.000Z","category_id":4,"deleted_at":"2026-06-30T14:31:08Z"}"#.to_string();
     }
     if p.starts_with("/posts/") {
         return post.to_string();
@@ -692,6 +698,7 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "palette pull",
     "plugin list",
     "pm list",
+    "post info",
     "post pull",
     "sar",
     "search",
@@ -755,6 +762,61 @@ fn webhook_output_never_emits_secrets_or_url_credentials() {
     assert!(ok, "webhook JSON list failed: {json}");
     let rows: Vec<serde_json::Value> = serde_json::from_str(&json).expect("webhook JSON");
     assert_eq!(rows.len(), 51, "webhook list should follow offset pages");
+}
+
+#[test]
+fn post_info_never_emits_raw_or_author() {
+    let (baseurl, _log) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = dir.path().join("dsc.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{baseurl}\"\napikey = \"mock-key\"\napi_username = \"tester\"\n"
+        ),
+    )
+    .expect("write config");
+
+    for args in [
+        &["post", "info", "mock", "1"] as &[&str],
+        &["post", "info", "mock", "1", "--format", "json"],
+        &["post", "info", "mock", "1", "--format", "yaml"],
+    ] {
+        let (output, ok) = run_dsc(args, &config);
+        assert!(ok, "post info failed: {output}");
+        assert!(!output.contains("hello"), "raw body leaked: {output}");
+        assert!(!output.contains("tester"), "author leaked: {output}");
+        assert!(!output.contains("<p>"), "cooked HTML leaked: {output}");
+    }
+
+    let (json, ok) = run_dsc(&["post", "info", "mock", "1", "--format", "json"], &config);
+    assert!(ok, "post info JSON failed: {json}");
+    let value: serde_json::Value = serde_json::from_str(&json).expect("post info JSON");
+    assert_eq!(value["id"], 1);
+    assert_eq!(value["topic"]["id"], 7);
+    assert_eq!(value["topic"]["title"], "Test topic");
+    assert_eq!(value["topic"]["slug"], "test-topic");
+    assert_eq!(value["topic"]["category_id"], 4);
+    assert_eq!(value["post_number"], 1);
+    assert_eq!(value["url"], format!("{baseurl}/t/test-topic/7/1"));
+
+    // A soft-deleted post in a soft-deleted topic still resolves, and the
+    // deletion state on both post and topic is surfaced.
+    let (deleted_json, ok) = run_dsc(
+        &["post", "info", "mock", "999", "--format", "json"],
+        &config,
+    );
+    assert!(ok, "post info (deleted) failed: {deleted_json}");
+    assert!(
+        !deleted_json.contains("hello") && !deleted_json.contains("tester"),
+        "raw/author leaked for deleted post: {deleted_json}"
+    );
+    let deleted: serde_json::Value = serde_json::from_str(&deleted_json).expect("post info JSON");
+    assert_eq!(deleted["id"], 999);
+    assert_eq!(deleted["topic"]["id"], 888);
+    assert_eq!(deleted["topic"]["title"], "Deleted topic");
+    assert_eq!(deleted["deleted_at"], "2026-06-30T14:31:08Z");
+    assert_eq!(deleted["topic"]["deleted_at"], "2026-06-25T00:00:00.000Z");
 }
 
 #[test]

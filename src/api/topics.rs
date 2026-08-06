@@ -21,6 +21,8 @@ pub struct PostInfo {
     pub raw: Option<String>,
     #[serde(default)]
     pub deleted_at: Option<String>,
+    #[serde(default)]
+    pub post_url: Option<String>,
 }
 
 /// Side-effect controls for a post edit (`PUT /posts/{id}.json`). The default
@@ -313,6 +315,21 @@ impl DiscourseClient {
     /// Fetch a post's metadata (id, topic_id, post_number, raw).
     pub fn fetch_post(&self, post_id: u64) -> Result<PostInfo> {
         let path = format!("/posts/{}.json?include_raw=1", post_id);
+        let response = self.get(&path)?;
+        let status = response.status();
+        let text = response.text().context("reading post response body")?;
+        if !status.is_success() {
+            return Err(http_error("post request", status, &text));
+        }
+        let info: PostInfo = serde_json::from_str(&text).context("parsing post response")?;
+        Ok(info)
+    }
+
+    /// Fetch a post's metadata without its raw body (id, topic_id,
+    /// post_number, post_url, deleted_at). Used by read-only lookups such as
+    /// `dsc post info` that must never request or surface the post body.
+    pub fn fetch_post_metadata(&self, post_id: u64) -> Result<PostInfo> {
+        let path = format!("/posts/{}.json", post_id);
         let response = self.get(&path)?;
         let status = response.status();
         let text = response.text().context("reading post response body")?;
