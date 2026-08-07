@@ -5,6 +5,42 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.14.0] - 2026-08-07
+
+### Bug fixes
+
+- **completions**: Default Zsh installs to .zfunc ([32416b5](https://github.com/koloki-co/dsc/commit/32416b54242c2fae3050757cf0ceb9a371f79766))
+
+### Build
+
+- **deps**: Bump taiki-e/install-action ([#83](https://github.com/koloki-co/dsc/issues/83)) ([d484ce2](https://github.com/koloki-co/dsc/commit/d484ce2e8ffec68e8618f00ab9c966e5a2a45dfc))
+
+- **deps**: Bump base64 from 0.22.1 to 0.23.0 ([#82](https://github.com/koloki-co/dsc/issues/82)) ([45f9d08](https://github.com/koloki-co/dsc/commit/45f9d08c43b07aa25539248ebcde83775adc1dc0))
+
+- **deps**: Bump the routine-minor-and-patch group with 2 updates ([#81](https://github.com/koloki-co/dsc/issues/81)) ([59aff17](https://github.com/koloki-co/dsc/commit/59aff177e3a359ce11bbffec8c3868e595d34adb))
+
+### CI
+
+- Retrigger after the 2026-08-06 GitHub Actions/Pages outage ([aad01fe](https://github.com/koloki-co/dsc/commit/aad01fe3b1e16ef7657bd89a3019d51fe88c13cb))
+
+- Repin dtolnay/rust-toolchain to master, not stable ([b27548f](https://github.com/koloki-co/dsc/commit/b27548ffbd4e6e5838613965a630806c0be66c86))
+
+### Chores
+
+- Ignore Playwright MCP captures ([a787198](https://github.com/koloki-co/dsc/commit/a78719899079b386dd3e0d67667f18c3529f1d43))
+
+### Documentation
+
+- **roadmap**: Record recent CLI work and colour design ([4f7d02c](https://github.com/koloki-co/dsc/commit/4f7d02c30082627bf67eabaaac57b2c523662f87))
+
+### Features
+
+- **palette**: Add push dry-run plans ([161935b](https://github.com/koloki-co/dsc/commit/161935bd6f31735aefabfad240c5226a89ed3367))
+
+- **category**: Make definition sync strict and idempotent ([b945c6e](https://github.com/koloki-co/dsc/commit/b945c6e4967b89eddde4be874c076e10cbc4d83d))
+
+- **post**: Add dsc post info command ([b351919](https://github.com/koloki-co/dsc/commit/b3519195970168acb0a142ce6e63c875b3edf753))
+
 ## [0.13.1] - 2026-08-03
 
 ### Bug fixes
