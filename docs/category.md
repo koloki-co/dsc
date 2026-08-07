@@ -129,8 +129,9 @@ dsc category def push <discourse> <categories.yaml>   # apply the file (upsert; 
 ```
 
 - `def pull` writes one `categories.yaml` (or `.json` by extension) holding every category's definition - name, slug, colour, position, parent, `read_restricted`, description, topic template, permissions, tag rules, and display knobs. Usage counts and other volatile fields are dropped so re-pulls diff cleanly.
-- `def push` reconciles the server toward the file: it **creates** missing categories and **updates** changed ones, matching by `id` (stable), then `slug`, then `name`. It never deletes. `--dry-run` prints the plan with `+` (create), `~` (update), `=` (unchanged) sigils. A file entry with no `id` that matches nothing is flagged loudly - it would create a new category, so if you meant to rename an existing one, keep its `id` in the file to preserve its topics, or use `dsc category rename` below.
-- The push is idempotent: a pull followed by a push with no edits reports every category `= unchanged`.
+- `def push` reconciles the server toward the file: it **creates** missing categories and **updates** changed ones, matching by `id` (stable), then `slug`, then `name`. It never deletes. `--dry-run` prints the plan with `+` (create), `~` (update), `=` (unchanged) sigils and names each field that would change. A file entry with no `id` that matches nothing is flagged loudly - it would create a new category, so if you meant to rename an existing one, keep its `id` in the file to preserve its topics, or use `dsc category rename` below.
+- The file schema is strict: unknown top-level or category fields are errors rather than silently ignored. This protects declarative configuration from misspellings and unsupported settings.
+- The push is idempotent: a pull followed by a push with no edits reports every category `= unchanged`. Description terminal line endings are normalised because Discourse removes them from category descriptions.
 
 ### Single-field access
 

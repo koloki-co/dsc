@@ -49,7 +49,7 @@ fn map_webhook_content_type(content_type: WebhookContentTypeArg) -> u8 {
 
 /// Dispatch a palette subcommand. Shared by the top-level `dsc palette`
 /// (deprecated) and the canonical `dsc theme palette`.
-fn run_palette(config: &dsc::config::Config, command: PaletteCommand) -> Result<()> {
+fn run_palette(config: &dsc::config::Config, command: PaletteCommand, dry_run: bool) -> Result<()> {
     match command {
         PaletteCommand::List {
             discourse,
@@ -72,7 +72,7 @@ fn run_palette(config: &dsc::config::Config, command: PaletteCommand) -> Result<
             discourse,
             local_path,
             palette_id,
-        } => commands::palette::palette_push(config, &discourse, &local_path, palette_id),
+        } => commands::palette::palette_push(config, &discourse, &local_path, palette_id, dry_run),
     }
 }
 
@@ -951,7 +951,7 @@ fn main() -> Result<()> {
                 "note: `dsc palette` is deprecated and will move under `dsc theme palette`; \
                  please use `dsc theme palette` instead."
             );
-            run_palette(&config, command)
+            run_palette(&config, command, dry_run)
         }
 
         Commands::Plugin { command } => match command {
@@ -1168,7 +1168,7 @@ fn main() -> Result<()> {
                 theme_id,
                 check,
             } => commands::theme::theme_update(&config, &discourse, theme_id, check, dry_run),
-            ThemeCommand::Palette { command } => run_palette(&config, command),
+            ThemeCommand::Palette { command } => run_palette(&config, command, dry_run),
         },
 
         Commands::Setting {

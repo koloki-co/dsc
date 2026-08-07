@@ -26,8 +26,9 @@ For packaging or custom installs:
 dsc completions --dir /usr/local/share/bash-completion/completions bash
 
 # Zsh
-dsc completions --dir ~/.zsh/completions zsh
-echo 'fpath=(~/.zsh/completions $fpath)' >> ~/.zshrc
+dsc completions --dir ~/.zfunc zsh
+# Ensure this is in ~/.zshrc before compinit, if it is not already:
+fpath=(~/.zfunc $fpath)
 autoload -Uz compinit && compinit
 
 # Fish

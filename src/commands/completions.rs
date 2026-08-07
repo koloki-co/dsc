@@ -105,7 +105,7 @@ fn default_completion_dir(shell: CompletionShell) -> Result<PathBuf> {
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".local/share"))
             .join("bash-completion/completions"),
-        CompletionShell::Zsh => home.join(".zsh/completions"),
+        CompletionShell::Zsh => home.join(".zfunc"),
         CompletionShell::Fish => env::var_os("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".config"))
@@ -237,4 +237,17 @@ fn replace_update_name_completion(content: String) -> String {
     }
 
     content
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zsh_install_defaults_to_zfunc() {
+        let dir = default_completion_dir(CompletionShell::Zsh)
+            .expect("test environment has a home directory");
+
+        assert!(dir.ends_with(".zfunc"));
+    }
 }
