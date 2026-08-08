@@ -71,7 +71,7 @@ Tested against Discourse version confirmed by `dsc version rcgp` (not run here, 
 
 ### Phase 1 - blocking
 
-- [ ] `dsc group info --with-defaults` - surfaces already-available API data, no new endpoint needed. Lowest effort, immediately useful for the incident investigation.
+- [x] `dsc group info --with-defaults` - surfaces already-available API data, no new endpoint needed. Lowest effort, immediately useful for the incident investigation. Ships the real Discourse `GroupShowSerializer` fields (`watching_category_ids`/`tracking_category_ids`/`watching_first_post_category_ids`/`regular_category_ids`/`muted_category_ids` and the equivalent `*_tags` fields), not the `group_category_notifications`/`group_tag_notifications` shape floated above - those are internal serializer helper names, not JSON keys.
 - [ ] `dsc notify who <discourse> <topic-id>` - the most urgently needed forensic query. Requires either a Data Explorer query wrapper or documenting that this needs server access. If Data Explorer is the only path, `dsc` could detect whether the plugin is installed and run a pre-packaged query via the Data Explorer admin API (`POST /admin/plugins/explorer/queries/<id>/run`).
 
 ### Phase 2 - iteration ergonomics

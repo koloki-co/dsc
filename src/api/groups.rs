@@ -495,3 +495,61 @@ fn parse_add_members_outcome(body: &str) -> Result<AddMembersOutcome> {
         errors,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_detail_deserializes_notification_defaults() {
+        let raw = r#"{
+            "group": {
+                "id": 42,
+                "name": "staff",
+                "watching_category_ids": [5, 9],
+                "tracking_category_ids": [],
+                "watching_first_post_category_ids": [],
+                "regular_category_ids": [],
+                "muted_category_ids": [3],
+                "watching_tags": [{"id": 1, "name": "urgent", "slug": "urgent"}],
+                "tracking_tags": [],
+                "watching_first_post_tags": [],
+                "regular_tags": [],
+                "muted_tags": []
+            }
+        }"#;
+        let body: GroupDetailResponse = serde_json::from_str(raw).expect("parse");
+        assert_eq!(body.group.watching_category_ids, vec![5, 9]);
+        assert_eq!(body.group.muted_category_ids, vec![3]);
+        assert_eq!(body.group.watching_tags.len(), 1);
+        assert_eq!(body.group.watching_tags[0].slug, "urgent");
+    }
+
+    #[test]
+    fn group_detail_defaults_to_empty_when_fields_absent() {
+        let raw = r#"{"group": {"id": 1, "name": "trust_level_0"}}"#;
+        let body: GroupDetailResponse = serde_json::from_str(raw).expect("parse");
+        assert!(body.group.watching_category_ids.is_empty());
+        assert!(body.group.watching_tags.is_empty());
+    }
+
+    #[test]
+    fn clear_notification_defaults_empties_all_fields() {
+        let raw = r#"{
+            "group": {
+                "id": 42,
+                "name": "staff",
+                "watching_category_ids": [5],
+                "watching_tags": [{"id": 1, "name": "urgent", "slug": "urgent"}]
+            }
+        }"#;
+        let body: GroupDetailResponse = serde_json::from_str(raw).expect("parse");
+        let mut group = body.group;
+        group.clear_notification_defaults();
+        assert!(group.watching_category_ids.is_empty());
+        assert!(group.watching_tags.is_empty());
+        let serialized = serde_json::to_string(&group).expect("serialize");
+        assert!(!serialized.contains("watching_category_ids"));
+        assert!(!serialized.contains("watching_tags"));
+    }
+}

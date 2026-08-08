@@ -510,7 +510,8 @@ fn main() -> Result<()> {
                 discourse,
                 group,
                 format,
-            } => commands::group::group_info(&config, &discourse, group, format),
+                with_defaults,
+            } => commands::group::group_info(&config, &discourse, group, format, with_defaults),
             GroupCommand::Members {
                 discourse,
                 group,
