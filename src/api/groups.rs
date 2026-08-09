@@ -519,18 +519,21 @@ mod tests {
             }
         }"#;
         let body: GroupDetailResponse = serde_json::from_str(raw).expect("parse");
-        assert_eq!(body.group.watching_category_ids, vec![5, 9]);
-        assert_eq!(body.group.muted_category_ids, vec![3]);
-        assert_eq!(body.group.watching_tags.len(), 1);
-        assert_eq!(body.group.watching_tags[0].slug, "urgent");
+        assert_eq!(body.group.watching_category_ids, Some(vec![5, 9]));
+        assert_eq!(body.group.muted_category_ids, Some(vec![3]));
+        assert_eq!(body.group.watching_tags.as_ref().unwrap().len(), 1);
+        assert_eq!(body.group.watching_tags.as_ref().unwrap()[0].slug, "urgent");
+        let serialized = serde_json::to_value(&body.group).expect("serialize");
+        assert_eq!(serialized["tracking_category_ids"], serde_json::json!([]));
+        assert_eq!(serialized["tracking_tags"], serde_json::json!([]));
     }
 
     #[test]
     fn group_detail_defaults_to_empty_when_fields_absent() {
         let raw = r#"{"group": {"id": 1, "name": "trust_level_0"}}"#;
         let body: GroupDetailResponse = serde_json::from_str(raw).expect("parse");
-        assert!(body.group.watching_category_ids.is_empty());
-        assert!(body.group.watching_tags.is_empty());
+        assert!(body.group.watching_category_ids.is_none());
+        assert!(body.group.watching_tags.is_none());
     }
 
     #[test]
@@ -546,8 +549,8 @@ mod tests {
         let body: GroupDetailResponse = serde_json::from_str(raw).expect("parse");
         let mut group = body.group;
         group.clear_notification_defaults();
-        assert!(group.watching_category_ids.is_empty());
-        assert!(group.watching_tags.is_empty());
+        assert!(group.watching_category_ids.is_none());
+        assert!(group.watching_tags.is_none());
         let serialized = serde_json::to_string(&group).expect("serialize");
         assert!(!serialized.contains("watching_category_ids"));
         assert!(!serialized.contains("watching_tags"));

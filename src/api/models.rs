@@ -291,43 +291,43 @@ pub struct GroupDetail {
     pub bio_raw: Option<String>,
     /// Category IDs a group's members watch by default, keyed by notification level.
     /// Populated by the API for admins/owners; omitted from output unless requested.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub watching_category_ids: Vec<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tracking_category_ids: Vec<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub watching_first_post_category_ids: Vec<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub regular_category_ids: Vec<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub muted_category_ids: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watching_category_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracking_category_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watching_first_post_category_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regular_category_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted_category_ids: Option<Vec<u64>>,
     /// Tags a group's members watch by default, keyed by notification level.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub watching_tags: Vec<GroupNotificationTag>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tracking_tags: Vec<GroupNotificationTag>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub watching_first_post_tags: Vec<GroupNotificationTag>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub regular_tags: Vec<GroupNotificationTag>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub muted_tags: Vec<GroupNotificationTag>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watching_tags: Option<Vec<GroupNotificationTag>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracking_tags: Option<Vec<GroupNotificationTag>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watching_first_post_tags: Option<Vec<GroupNotificationTag>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regular_tags: Option<Vec<GroupNotificationTag>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted_tags: Option<Vec<GroupNotificationTag>>,
 }
 
 impl GroupDetail {
     /// Clear the group/category/tag notification-default fields so they are omitted
     /// from serialized output unless explicitly requested (`--with-defaults`).
     pub fn clear_notification_defaults(&mut self) {
-        self.watching_category_ids.clear();
-        self.tracking_category_ids.clear();
-        self.watching_first_post_category_ids.clear();
-        self.regular_category_ids.clear();
-        self.muted_category_ids.clear();
-        self.watching_tags.clear();
-        self.tracking_tags.clear();
-        self.watching_first_post_tags.clear();
-        self.regular_tags.clear();
-        self.muted_tags.clear();
+        self.watching_category_ids = None;
+        self.tracking_category_ids = None;
+        self.watching_first_post_category_ids = None;
+        self.regular_category_ids = None;
+        self.muted_category_ids = None;
+        self.watching_tags = None;
+        self.tracking_tags = None;
+        self.watching_first_post_tags = None;
+        self.regular_tags = None;
+        self.muted_tags = None;
     }
 }
 
