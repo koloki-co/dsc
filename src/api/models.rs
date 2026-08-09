@@ -289,6 +289,54 @@ pub struct GroupDetail {
     pub flair_background_color: Option<String>,
     #[serde(default)]
     pub bio_raw: Option<String>,
+    /// Category IDs a group's members watch by default, keyed by notification level.
+    /// Populated by the API for admins/owners; omitted from output unless requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watching_category_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracking_category_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watching_first_post_category_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regular_category_ids: Option<Vec<u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted_category_ids: Option<Vec<u64>>,
+    /// Tags a group's members watch by default, keyed by notification level.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watching_tags: Option<Vec<GroupNotificationTag>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracking_tags: Option<Vec<GroupNotificationTag>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watching_first_post_tags: Option<Vec<GroupNotificationTag>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regular_tags: Option<Vec<GroupNotificationTag>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub muted_tags: Option<Vec<GroupNotificationTag>>,
+}
+
+impl GroupDetail {
+    /// Clear the group/category/tag notification-default fields so they are omitted
+    /// from serialized output unless explicitly requested (`--with-defaults`).
+    pub fn clear_notification_defaults(&mut self) {
+        self.watching_category_ids = None;
+        self.tracking_category_ids = None;
+        self.watching_first_post_category_ids = None;
+        self.regular_category_ids = None;
+        self.muted_category_ids = None;
+        self.watching_tags = None;
+        self.tracking_tags = None;
+        self.watching_first_post_tags = None;
+        self.regular_tags = None;
+        self.muted_tags = None;
+    }
+}
+
+/// A tag referenced by a group's tag notification defaults.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct GroupNotificationTag {
+    pub id: u64,
+    pub name: String,
+    pub slug: String,
 }
 
 /// Response payload for creating a post/topic.

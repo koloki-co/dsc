@@ -51,12 +51,16 @@ pub fn group_info(
     discourse_name: &str,
     group_id: u64,
     format: StructuredFormat,
+    with_defaults: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
     let group_summary = find_group_summary(&client, group_id)?;
-    let group = client.fetch_group_detail(group_summary.id, Some(&group_summary.name))?;
+    let mut group = client.fetch_group_detail(group_summary.id, Some(&group_summary.name))?;
+    if !with_defaults {
+        group.clear_notification_defaults();
+    }
     match format {
         StructuredFormat::Json => {
             let raw = serde_json::to_string_pretty(&group)?;

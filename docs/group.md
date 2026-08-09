@@ -13,10 +13,10 @@ Lists all groups with their IDs, names, and full names. `-v`/`--verbose` include
 ## dsc group info
 
 ```
-dsc group info <discourse> <group-id> [--format json|yaml]
+dsc group info <discourse> <group-id> [--format json|yaml] [--with-defaults]
 ```
 
-Shows details for a specific group.
+Shows details for a specific group. `--with-defaults` additionally includes the group's category and tag notification-level defaults (`watching_category_ids`, `tracking_tags`, etc.) as returned by the Discourse API for admins/owners; omitted by default.
 
 ## dsc group members
 

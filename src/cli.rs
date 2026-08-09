@@ -1230,6 +1230,9 @@ pub enum GroupCommand {
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "json")]
         format: StructuredFormat,
+        /// Include the group's category/tag notification-level defaults.
+        #[arg(long)]
+        with_defaults: bool,
     },
     /// List members of a group.
     #[command(visible_alias = "m")]

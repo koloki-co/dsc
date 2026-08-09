@@ -54,6 +54,38 @@ fn group_info() {
 
 #[test]
 #[ignore = "live compatibility test; run through s/test-live"]
+fn group_info_with_defaults() {
+    let Some(test) = test_discourse() else {
+        return;
+    };
+    let Some(group_id) = test.test_group_id else {
+        return;
+    };
+    vprintln("e2e_group_info_with_defaults: fetch group info including notification defaults");
+
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n",
+            test.name, test.baseurl, test.apikey, test.api_username
+        ),
+    );
+    let output = run_dsc(
+        &[
+            "group",
+            "info",
+            &test.name,
+            &group_id.to_string(),
+            "--with-defaults",
+        ],
+        &config_path,
+    );
+    assert!(output.status.success(), "group info --with-defaults failed");
+}
+
+#[test]
+#[ignore = "live compatibility test; run through s/test-live"]
 fn group_members() {
     let Some(test) = test_discourse() else {
         return;
