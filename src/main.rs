@@ -176,6 +176,7 @@ fn main() -> Result<()> {
             yes,
             force,
             skip_recent,
+            branch,
         } => match command {
             Some(UpdateCommand::Log {
                 latest,
@@ -205,6 +206,7 @@ fn main() -> Result<()> {
                         yes,
                         force,
                         skip_recent,
+                        branch.as_deref(),
                     ),
                     Some(_) if parallel.is_some() => {
                         Err(anyhow!("--parallel only applies to 'dsc update all'"))
@@ -216,6 +218,7 @@ fn main() -> Result<()> {
                         yes,
                         force,
                         skip_recent,
+                        branch.as_deref(),
                     ),
                 }
             }

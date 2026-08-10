@@ -122,6 +122,11 @@ pub struct DiscourseConfig {
     pub app_yml_path: Option<String>,
     #[serde(default)]
     pub docker_rootless: Option<bool>,
+    /// Discourse branch to compare against during `dsc update`. Most
+    /// Discourse sites run `latest` (which tracks `main` closely); `stable`
+    /// is used by sites that prefer less frequent updates. Default: `latest`.
+    #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
+    pub discourse_branch: Option<String>,
 }
 
 impl fmt::Debug for DiscourseConfig {
@@ -141,6 +146,7 @@ impl fmt::Debug for DiscourseConfig {
             .field("ssh_host", &self.ssh_host)
             .field("app_yml_path", &self.app_yml_path)
             .field("docker_rootless", &self.docker_rootless)
+            .field("discourse_branch", &self.discourse_branch)
             .finish()
     }
 }

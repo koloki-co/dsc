@@ -57,6 +57,7 @@ tags = ["production", "client-a"]
 | `docker_rootless` | no | Set `true` when the instance uses rootless Docker (e.g. provisioned by `dsc harden`). Drops `sudo` from Docker/launcher commands during `dsc update`. Default: `false`. |
 | `changelog_topic_id` | for changelog | Topic ID for update changelog posts. |
 | `tags` | no | Labels for organising installs; used with `--tags` filtering. |
+| `discourse_branch` | no | Discourse branch to compare against during `dsc update` (default: `latest`). Set to `stable` for sites that track the Discourse stable branch. The `--branch` CLI flag overrides this per-run. |
 | `enabled` | no | Defaults to `true`. Set `false` to skip in bulk operations. |
 
 ## Notes

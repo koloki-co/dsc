@@ -32,7 +32,7 @@ dsc update all -p 5         # parallel, 5 workers
 
 `dsc update`'s order is **OS update → `sudo reboot` → wait for SSH → check-if-current → `./launcher rebuild app`**. So if a rebuild is already running on a host (a supervised manual `./launcher rebuild`, or another `dsc` run) and you start `dsc update` against it, `dsc`'s *first destructive act is to reboot the box* - killing the in-flight rebuild and possibly leaving a half-bootstrapped container. This is a real hazard, not just an ergonomic wart. The user's workflow - "safely re-run `dsc update all` while I have a supervised rebuild going in another terminal" - must skip the busy host, not reboot it.
 
-This is distinct from the existing **skip-if-current** gate (`is_discourse_up_to_date`, which compares the running commit to the latest stable on GitHub and skips the *rebuild* when nothing is stale). That gate is about *staleness*; this one is about *concurrency*. They compose.
+This is distinct from the existing **skip-if-current** gate (`is_discourse_up_to_date`, which compares the running commit to the latest commit on the configured branch on GitHub and skips the *rebuild* when nothing is stale). That gate is about *staleness*; this one is about *concurrency*. They compose.
 
 ### Behaviour
 
@@ -45,7 +45,7 @@ This is distinct from the existing **skip-if-current** gate (`is_discourse_up_to
   (Catches a rebuild started by a human or by another `dsc` run. `dsc`'s own rebuild uses `./launcher rebuild app`, so a second `dsc` correctly detects the first and skips.)
 - If detected → **skip the whole forum** (do not OS-update, do not reboot, do not rebuild) and report it distinctly, separate from the staleness skip:
   - `igkt: rebuild already in progress - skipped`
-  - vs the existing `already at the latest stable commit - skipping rebuild`
+  - vs the existing `already at the latest <branch> commit - skipping rebuild`
 - **On by default** - you never want two rebuilds or a reboot-during-rebuild. A `--force` escape hatch overrides for the rare "I know, proceed anyway" case.
 - Cost: one cheap SSH round-trip per forum up front. Worth it.
 

@@ -36,6 +36,7 @@ pub fn update_one(
     yes: bool,
     force: bool,
     skip_recent: Option<Duration>,
+    branch_override: Option<&str>,
 ) -> Result<()> {
     let discourse =
         find_discourse(config, name).ok_or_else(|| anyhow!("discourse not found: {}", name))?;
@@ -49,7 +50,8 @@ pub fn update_one(
         return Ok(());
     }
 
-    update_and_log(discourse, post_changelog, yes, force)
+    let branch = resolve_branch(discourse, branch_override);
+    update_and_log(discourse, post_changelog, yes, force, &branch)
 }
 
 pub fn update_all(
@@ -59,6 +61,7 @@ pub fn update_all(
     yes: bool,
     force: bool,
     skip_recent: Option<Duration>,
+    branch_override: Option<&str>,
 ) -> Result<()> {
     let updatable: Vec<DiscourseConfig> = config
         .discourse
@@ -86,13 +89,30 @@ pub fn update_all(
 
     let Some(width) = parallel else {
         for discourse in &to_update {
-            update_and_log(discourse, post_changelog, yes, force)?;
+            let branch = resolve_branch(discourse, branch_override);
+            update_and_log(discourse, post_changelog, yes, force, &branch)?;
         }
         return Ok(());
     };
 
     let max_threads = parallel_worker_count(Some(width), to_update.len());
-    update_all_parallel(&to_update, max_threads, post_changelog, yes, force)
+    update_all_parallel(
+        &to_update,
+        max_threads,
+        post_changelog,
+        yes,
+        force,
+        branch_override,
+    )
+}
+
+/// Resolve the Discourse branch to compare against: CLI override takes
+/// priority, then the per-forum config key, then the default `latest`.
+fn resolve_branch(discourse: &DiscourseConfig, override_value: Option<&str>) -> String {
+    override_value
+        .map(|s| s.to_string())
+        .or_else(|| discourse.discourse_branch.clone())
+        .unwrap_or_else(|| "latest".to_string())
 }
 
 /// Run updates across a fixed worker pool pulling from a shared queue.
@@ -106,6 +126,7 @@ fn update_all_parallel(
     post_changelog: bool,
     yes: bool,
     force: bool,
+    branch_override: Option<&str>,
 ) -> Result<()> {
     use std::sync::{Arc, Mutex};
 
@@ -117,11 +138,13 @@ fn update_all_parallel(
     for _ in 0..workers {
         let queue = Arc::clone(&queue);
         let tx = tx.clone();
+        let branch_override = branch_override.map(|s| s.to_string());
         handles.push(thread::spawn(move || {
             loop {
                 let next = queue.lock().ok().and_then(|mut q| q.pop_front());
                 let Some(discourse) = next else { break };
-                let result = update_and_log(&discourse, post_changelog, yes, force);
+                let branch = resolve_branch(&discourse, branch_override.as_deref());
+                let result = update_and_log(&discourse, post_changelog, yes, force, &branch);
                 if tx.send(result).is_err() {
                     break;
                 }
@@ -153,8 +176,9 @@ fn update_and_log(
     post_changelog: bool,
     yes: bool,
     force: bool,
+    branch: &str,
 ) -> Result<()> {
-    match run_update(discourse, force) {
+    match run_update(discourse, force, branch) {
         Ok(UpdateOutcome::Updated(metadata)) => {
             let kind = if metadata.discourse_rebuilt {
                 LogKind::Updated
@@ -785,7 +809,7 @@ fn rebuild_in_progress(target: &str) -> Result<bool> {
     Ok(run_ssh_command(target, REBUILD_CHECK_CMD)?.contains("REBUILDING"))
 }
 
-fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome> {
+fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<UpdateOutcome> {
     let client = DiscourseClient::new(discourse)?;
     let target = discourse
         .ssh_host
@@ -960,12 +984,12 @@ fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome>
     }
 
     stage(&discourse_label, "Checking if Discourse update is needed");
-    let discourse_up_to_date = is_discourse_up_to_date(before_info.commit.as_deref());
+    let discourse_up_to_date = is_discourse_up_to_date(before_info.commit.as_deref(), branch);
     let discourse_rebuilt = !discourse_up_to_date;
     if discourse_up_to_date {
         stage(
             &discourse_label,
-            "Discourse is already at the latest stable commit — skipping rebuild",
+            &format!("Discourse is already at the latest {branch} commit — skipping rebuild"),
         );
     } else {
         stage(&discourse_label, "Running Discourse update");
@@ -1521,16 +1545,17 @@ fn fetch_version_info_with_retry(client: &DiscourseClient, attempts: usize) -> R
     Err(last_err.unwrap_or_else(|| anyhow!("fetch version failed")))
 }
 
-/// Fetch the latest commit SHA on the `stable` branch of discourse/discourse
+/// Fetch the latest commit SHA on the given branch of discourse/discourse
 /// from the GitHub API. Returns `None` on any failure (network, rate limit,
 /// parse error) — callers treat that as "unknown, proceed with update".
-fn fetch_latest_discourse_commit() -> Option<String> {
+fn fetch_latest_discourse_commit(branch: &str) -> Option<String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .ok()?;
+    let url = format!("https://api.github.com/repos/discourse/discourse/commits/{branch}");
     let resp = client
-        .get("https://api.github.com/repos/discourse/discourse/commits/stable")
+        .get(&url)
         .header("Accept", "application/vnd.github.sha")
         .header("User-Agent", "dsc-cli")
         .send()
@@ -1547,8 +1572,8 @@ fn fetch_latest_discourse_commit() -> Option<String> {
 }
 
 /// Returns `true` if the running Discourse commit matches the latest available
-/// stable commit — meaning a rebuild would be a no-op.
-fn is_discourse_up_to_date(running_commit: Option<&str>) -> bool {
+/// commit on the configured branch — meaning a rebuild would be a no-op.
+fn is_discourse_up_to_date(running_commit: Option<&str>, branch: &str) -> bool {
     let Some(running) = running_commit else {
         return false;
     };
@@ -1556,7 +1581,7 @@ fn is_discourse_up_to_date(running_commit: Option<&str>) -> bool {
     if running.is_empty() {
         return false;
     }
-    let Some(latest) = fetch_latest_discourse_commit() else {
+    let Some(latest) = fetch_latest_discourse_commit(branch) else {
         return false;
     };
     // Compare by the shorter of the two — the running commit from the
