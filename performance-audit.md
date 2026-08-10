@@ -12,7 +12,7 @@ The audit does not treat every blocking operation as a defect. `dsc` is a synchr
 
 The audit found **31 performance issues: 5 high, 16 medium, and 10 low**. The dominant problem is not CPU efficiency. It is avoidable remote work: oversized request sets, serial N+1 calls, fleet operations that do not use the good worker-pool pattern already present in `config check`, and subprocess paths without appropriate bounds.
 
-The best immediate returns are P1 (analytics request planning), P2 (tag pull/push idempotency), P3 (the broken update scheduler), P4 (SSH liveness defaults), P6 (one GitHub probe per update run), and P7 (one update-log scan). P1, P2, P6, and P7 are relatively contained changes. P3 and P4 should follow promptly because they affect long-running privileged operations.
+The best immediate returns are P1 (analytics request planning), P2 (tag pull/push idempotency), P3 (the broken update scheduler), P4 (SSH liveness defaults), P5 (readiness polling), and P7 (one update-log scan). P1, P2, P5, and P7 are relatively contained changes. P3 and P4 should follow promptly because they affect long-running privileged operations. P6 is deferred: the per-forum fetch is intentional because the `latest` branch moves during a multi-hour update.
 
 The largest scale risks are P9 (SAR), P10 (category content sync), P12 (fleet audits), and P13 (backup-health S3 aggregation). They need bounded concurrency or streaming rather than isolated micro-optimizations.
 
@@ -80,15 +80,13 @@ A successful normal reboot sleeps 30 seconds before the first SSH probe and then
 
 **Recommendation:** Replace fixed readiness sleeps with state-driven polling: detect the reboot transition safely, poll SSH at a shorter bounded interval, and poll a lightweight Discourse endpoint immediately with capped backoff. Preserve overall deadlines and progress messages.
 
-### P6 - Medium - Every forum update independently fetches the same global GitHub stable commit
+### P6 - Deferred - Per-forum GitHub commit fetch is intentional, not waste
 
 **Evidence:** `src/commands/update.rs:928-945,1469-1510`.
 
-Each forum reaches `is_discourse_up_to_date`, constructs a fresh HTTP client, and requests the same `discourse/discourse` stable-branch SHA. An `update all` run therefore performs one duplicate public GitHub request per forum. Any lookup failure is interpreted as “not current,” so rate limiting or a transient GitHub failure causes an otherwise-current forum to run an expensive rebuild.
+**Decision: not fixing.** The original recommendation was to cache the latest SHA once per update invocation. On review, this is incorrect for a moving target: the `latest` branch tracks Discourse `main` closely and can advance during a multi-hour fleet update. Caching at the start would cause later forums to compare against a stale reference and incorrectly skip rebuilds. The per-forum fetch gives each forum the most current reference point.
 
-**Impact:** Large fleets waste TLS setup and unauthenticated GitHub quota. Once lookups fail, the fallback can turn a small request inefficiency into hours of unnecessary remote rebuild work.
-
-**Recommendation:** Fetch the latest stable SHA once per top-level update invocation and share the result with workers. Keep the conservative update-on-unknown behavior if desired, but emit the reason once and avoid repeated failed probes.
+A deeper issue exists: the code hardcodes the `stable` branch at `src/commands/update.rs:1478`, so forums running `latest` always compare against the wrong reference and always rebuild. The real fix is making the branch configurable or detecting which branch the forum tracks, which is a design change, not a performance optimization. The duplicate GitHub requests are a minor cost compared to the correctness risk of caching.
 
 ### P7 - Medium - Recent-update filtering rereads and reparses the complete log once per forum
 
@@ -362,9 +360,8 @@ Most mutations build a fresh request through `send_retrying`, but `DiscourseClie
 
 1. P2 - remove tag pull N+1 reads and unchanged push writes.
 2. P1 - restrict analytics tasks by section and consume `prev_data`.
-3. P6 - fetch the stable Discourse SHA once per update invocation.
-4. P7 - scan the update log once per command.
-5. P17, P18, P19, P21, and P31 - remove straightforward extra requests/copies and normalize DELETE retries.
+3. P7 - scan the update log once per command.
+4. P17, P18, P19, P21, and P31 - remove straightforward extra requests/copies and normalize DELETE retries.
 
 Add request-budget tests with each change. These tests should assert exact or maximum route counts, not wall-clock time.
 
