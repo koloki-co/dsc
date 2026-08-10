@@ -247,10 +247,16 @@ pub fn tag_pull(
 
     let server_tags = client.list_tags()?;
 
-    // Collect tag entries with descriptions
+    // Use the description field from the list response directly. Only fall
+    // back to the per-tag detail endpoint for tags whose list entry has no
+    // description field (older Discourse versions may omit it).
     let mut tag_entries: Vec<TagEntry> = Vec::new();
     for t in &server_tags {
-        let description = client.get_tag_description(&t.text).unwrap_or(None);
+        let description = if t.description.is_some() {
+            t.description.clone()
+        } else {
+            client.get_tag_description(&t.text).unwrap_or(None)
+        };
         tag_entries.push(TagEntry {
             name: t.text.clone(),
             description,
@@ -447,6 +453,7 @@ fn plan_tags(
     explicit: &BTreeMap<String, Option<String>>,
     group_tags: &BTreeSet<String>,
     server_tags: &BTreeSet<String>,
+    server_descriptions: &BTreeMap<String, Option<String>>,
     prune: bool,
 ) -> TagPlan {
     // Tags that will exist once groups are reconciled.
@@ -457,7 +464,14 @@ fn plan_tags(
     let mut set_description: Vec<(String, String)> = explicit
         .iter()
         .filter_map(|(name, desc)| match desc {
-            Some(d) if will_exist.contains(name) => Some((name.clone(), d.clone())),
+            Some(d) if will_exist.contains(name) => {
+                let current = server_descriptions.get(name).cloned().flatten();
+                if current.as_deref() == Some(d.as_str()) {
+                    None
+                } else {
+                    Some((name.clone(), d.clone()))
+                }
+            }
             _ => None,
         })
         .collect();
@@ -540,8 +554,13 @@ pub fn tag_push(
         .flat_map(|g| g.tags.clone())
         .collect();
 
+    let server_tag_infos = client.list_tags()?;
     let server_tag_names: BTreeSet<String> =
-        client.list_tags()?.into_iter().map(|t| t.text).collect();
+        server_tag_infos.iter().map(|t| t.text.clone()).collect();
+    let server_descriptions: BTreeMap<String, Option<String>> = server_tag_infos
+        .iter()
+        .map(|t| (t.text.clone(), t.description.clone()))
+        .collect();
 
     // Group reconciliation needs the admin endpoint; fetch it up front so the
     // whole plan reflects what will actually happen. Without it, no group tags
@@ -571,7 +590,13 @@ pub fn tag_push(
     };
     let group_ids_by_name = group_ids_by_name(&group_names_by_id);
 
-    let tag_plan = plan_tags(&explicit, &effective_group_tags, &server_tag_names, prune);
+    let tag_plan = plan_tags(
+        &explicit,
+        &effective_group_tags,
+        &server_tag_names,
+        &server_descriptions,
+        prune,
+    );
 
     // ── Compute the tag-group plan (only when the admin endpoint is reachable) ─
     let server_groups_by_name: BTreeMap<String, &TagGroupInfo> =
@@ -686,8 +711,15 @@ pub fn tag_push(
         println!("  ~ updated group: {}", g.name);
     }
 
-    // Re-read tags: group reconciliation just materialised the group tags.
-    let now_existing: BTreeSet<String> = client.list_tags()?.into_iter().map(|t| t.text).collect();
+    // Re-read tags only when group reconciliation could have materialised new
+    // tags. If no groups were created or updated, the existing server_tag_names
+    // set is still accurate and we save a redundant /tags.json request.
+    let groups_changed = !groups_to_create.is_empty() || !groups_to_update.is_empty();
+    let now_existing: BTreeSet<String> = if groups_changed {
+        client.list_tags()?.into_iter().map(|t| t.text).collect()
+    } else {
+        server_tag_names.clone()
+    };
     for name in &tag_plan.created_via_group {
         if now_existing.contains(name) {
             println!("  + created tag: {} (via its tag group)", name);
@@ -816,6 +848,17 @@ mod tests {
             .collect()
     }
 
+    fn no_server_descs() -> BTreeMap<String, Option<String>> {
+        BTreeMap::new()
+    }
+
+    fn server_descs(pairs: &[(&str, &str)]) -> BTreeMap<String, Option<String>> {
+        pairs
+            .iter()
+            .map(|(n, d)| (n.to_string(), Some(d.to_string())))
+            .collect()
+    }
+
     fn permissions(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs
             .iter()
@@ -924,6 +967,7 @@ mod tests {
             &explicit(&[]),
             &set(&["acoustic", "jazz"]),
             &set(&["jazz"]),
+            &no_server_descs(),
             false,
         );
         assert_eq!(p.created_via_group, s(&["acoustic"]));
@@ -934,7 +978,13 @@ mod tests {
     fn plan_groupless_missing_is_reported_not_created() {
         // An explicit tag in no group and absent from the server cannot be
         // created by any API - it must be surfaced, not silently attempted.
-        let p = plan_tags(&explicit(&[("orphan", None)]), &set(&[]), &set(&[]), false);
+        let p = plan_tags(
+            &explicit(&[("orphan", None)]),
+            &set(&[]),
+            &set(&[]),
+            &no_server_descs(),
+            false,
+        );
         assert_eq!(p.groupless_missing, s(&["orphan"]));
         assert!(p.created_via_group.is_empty());
         assert!(p.set_description.is_empty());
@@ -948,6 +998,7 @@ mod tests {
             &explicit(&[("jazz", Some("Jazz music"))]),
             &set(&["jazz"]),
             &set(&[]),
+            &no_server_descs(),
             false,
         );
         assert_eq!(
@@ -964,6 +1015,7 @@ mod tests {
             &explicit(&[("orphan", Some("x"))]),
             &set(&[]),
             &set(&[]),
+            &no_server_descs(),
             false,
         );
         assert!(p.set_description.is_empty());
@@ -976,6 +1028,7 @@ mod tests {
             &explicit(&[("rock", Some("Rock"))]),
             &set(&[]),
             &set(&["rock"]),
+            &no_server_descs(),
             false,
         );
         assert_eq!(
@@ -986,11 +1039,40 @@ mod tests {
     }
 
     #[test]
+    fn plan_skips_description_when_server_already_matches() {
+        // If the server already has the same description, don't schedule a write.
+        let p = plan_tags(
+            &explicit(&[("rock", Some("Rock"))]),
+            &set(&[]),
+            &set(&["rock"]),
+            &server_descs(&[("rock", "Rock")]),
+            false,
+        );
+        assert!(p.set_description.is_empty());
+    }
+
+    #[test]
+    fn plan_sets_description_when_server_differs() {
+        let p = plan_tags(
+            &explicit(&[("rock", Some("Rock"))]),
+            &set(&[]),
+            &set(&["rock"]),
+            &server_descs(&[("rock", "Old rock")]),
+            false,
+        );
+        assert_eq!(
+            p.set_description,
+            vec![("rock".to_string(), "Rock".to_string())]
+        );
+    }
+
+    #[test]
     fn plan_prune_deletes_undesired_server_tags() {
         let p = plan_tags(
             &explicit(&[("keep", None)]),
             &set(&[]),
             &set(&["keep", "old"]),
+            &no_server_descs(),
             true,
         );
         assert_eq!(p.to_delete, s(&["old"]));
@@ -998,7 +1080,13 @@ mod tests {
 
     #[test]
     fn plan_without_prune_deletes_nothing() {
-        let p = plan_tags(&explicit(&[]), &set(&[]), &set(&["old"]), false);
+        let p = plan_tags(
+            &explicit(&[]),
+            &set(&[]),
+            &set(&["old"]),
+            &no_server_descs(),
+            false,
+        );
         assert!(p.to_delete.is_empty());
     }
 
@@ -1006,7 +1094,13 @@ mod tests {
     fn plan_group_tag_still_desired_is_not_pruned() {
         // A tag desired only via a group must not be pruned just because it's
         // absent from the explicit list.
-        let p = plan_tags(&explicit(&[]), &set(&["jazz"]), &set(&["jazz"]), true);
+        let p = plan_tags(
+            &explicit(&[]),
+            &set(&["jazz"]),
+            &set(&["jazz"]),
+            &no_server_descs(),
+            true,
+        );
         assert!(p.to_delete.is_empty());
     }
 
@@ -1015,7 +1109,13 @@ mod tests {
         // When the admin group endpoint is unreachable the caller passes empty
         // group_tags; an explicit tag that only lived in a group can no longer
         // be created and is reported.
-        let p = plan_tags(&explicit(&[("jazz", None)]), &set(&[]), &set(&[]), false);
+        let p = plan_tags(
+            &explicit(&[("jazz", None)]),
+            &set(&[]),
+            &set(&[]),
+            &no_server_descs(),
+            false,
+        );
         assert_eq!(p.groupless_missing, s(&["jazz"]));
     }
 

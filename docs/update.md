@@ -106,6 +106,5 @@ dsc update log --since 7d --format md
 | `DSC_SSH_STRICT_HOST_KEY_CHECKING` | `accept-new` | SSH host key checking mode (set empty to omit). |
 | `DSC_SSH_OPTIONS` | *(none)* | Extra SSH options (space-delimited). |
 | `DSC_DISCOURSE_MIN_FREE_GB` | `5` | Minimum free GiB required on `/` after automatic recovery. |
-| `DSC_DISCOURSE_BOOT_WAIT_SECS` | `15` | Seconds to wait after rebuild before fetching `about.json`. |
 | `DSC_UPDATE_LOG` | `$XDG_STATE_HOME/dsc/update.log` | Path to the append-only update log. |
 | `DSC_COLOR` | `auto` | ANSI color output (`auto`/`always`/`never`). `NO_COLOR` also disables color. |

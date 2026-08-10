@@ -45,6 +45,33 @@ const REPORT_IDS: &[&str] = &[
     "moderators_activity",
 ];
 
+/// Report IDs used by each section. `posts` appears in both activity and
+/// health; the union is `REPORT_IDS`.
+const GROWTH_REPORT_IDS: &[&str] = &["new_contributors", "trust_level_growth"];
+const ACTIVITY_REPORT_IDS: &[&str] = &[
+    "topics",
+    "posts",
+    "topics_with_no_response",
+    "time_to_first_response",
+];
+const HEALTH_REPORT_IDS: &[&str] = &["likes", "posts", "flags", "moderators_activity"];
+
+/// The report IDs needed by the selected section(s), in `REPORT_IDS` order.
+fn required_report_ids(filter: &SectionFilter) -> Vec<&'static str> {
+    match filter {
+        SectionFilter::Growth => GROWTH_REPORT_IDS.to_vec(),
+        SectionFilter::Activity => ACTIVITY_REPORT_IDS.to_vec(),
+        SectionFilter::Health => HEALTH_REPORT_IDS.to_vec(),
+        SectionFilter::All => REPORT_IDS.to_vec(),
+    }
+}
+
+/// Report IDs whose previous-window `average` is not available in
+/// `prev_data` and therefore need a separate previous-window fetch in
+/// compare mode. Only `time_to_first_response` uses `average` (not
+/// `current_total`).
+const COMPARE_PREVIOUS_REPORT_IDS: &[&str] = &["time_to_first_response"];
+
 // ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
@@ -93,7 +120,7 @@ pub fn analytics(
         format = AnalyticsFormat::Text;
     }
 
-    let cache = populate_cache(&client, &windows)?;
+    let cache = populate_cache(&client, &windows, &section_filter)?;
     let report = build_report(
         discourse_name,
         &windows,
@@ -271,23 +298,39 @@ type ReportCache = HashMap<(String, usize), Option<AdminReport>>;
 /// staying below the burst limit is faster and more polite. 4 is empirical.
 const ANALYTICS_PARALLELISM: usize = 4;
 
-fn populate_cache(client: &DiscourseClient, windows: &[Window]) -> Result<ReportCache> {
+fn populate_cache(
+    client: &DiscourseClient,
+    windows: &[Window],
+    filter: &SectionFilter,
+) -> Result<ReportCache> {
     let cache: Arc<Mutex<ReportCache>> = Arc::new(Mutex::new(HashMap::new()));
 
-    // Build the full task list, then dispatch with a bounded worker pool.
-    // We could do "parallel-within-window, sequential-between-window" but
-    // that lets each window finish its slowest call before the next one
-    // can start — pointless idle time. A flat task queue keeps the workers
-    // saturated.
+    // Determine which report IDs are needed and which windows to fetch.
+    //
+    // In compare mode (exactly 2 windows: current + previous), each
+    // current-window report already contains `prev_data` for the
+    // immediately preceding equal-length window, so we only need to fetch
+    // the previous window for report IDs whose `average` scalar is not
+    // derivable from `prev_data` (currently just `time_to_first_response`).
+    // Total-based metrics read `previous_total()` from the current window's
+    // `prev_data` instead.
+    let needed = required_report_ids(filter);
+    let compare = windows.len() == 2;
+
     let tasks: Vec<(String, usize, String, String)> = windows
         .iter()
         .enumerate()
         .flat_map(|(w_idx, window)| {
             let start = window.iso_date_since();
             let end = window.iso_date_until();
-            REPORT_IDS
-                .iter()
+            let ids: &[&str] = if compare && w_idx == 1 {
+                COMPARE_PREVIOUS_REPORT_IDS
+            } else {
+                &needed
+            };
+            ids.iter()
                 .map(move |id| (id.to_string(), w_idx, start.clone(), end.clone()))
+                .collect::<Vec<_>>()
         })
         .collect();
     let queue = Arc::new(Mutex::new(tasks.into_iter()));
@@ -324,9 +367,21 @@ fn report_at<'a>(cache: &'a ReportCache, id: &str, w: usize) -> Option<&'a Admin
 
 /// Per-window total for a single report. None when the report was
 /// missing OR Discourse returned no data.
+///
+/// In compare mode (2 windows), the previous window's total is derived
+/// from `prev_data` on the current-window report when the previous window
+/// was not fetched separately.
 fn totals_for(cache: &ReportCache, id: &str, n_windows: usize) -> Vec<Option<f64>> {
     (0..n_windows)
-        .map(|w| report_at(cache, id, w).map(|r: &AdminReport| r.current_total()))
+        .map(|w| {
+            if let Some(r) = report_at(cache, id, w) {
+                Some(r.current_total())
+            } else if w == 1 && n_windows == 2 {
+                report_at(cache, id, 0).and_then(|r| r.previous_total())
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
