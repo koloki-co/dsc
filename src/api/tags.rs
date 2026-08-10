@@ -136,7 +136,7 @@ impl DiscourseClient {
     /// Delete a tag group.
     pub fn delete_tag_group(&self, group_id: u64) -> Result<()> {
         let path = format!("/tag_groups/{}.json", group_id);
-        let response = self.delete(&path)?;
+        let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         if !status.is_success() {
             let text = response.text().unwrap_or_default();
@@ -190,7 +190,7 @@ impl DiscourseClient {
     /// 2026.7.0).
     pub fn delete_tag(&self, tag_name: &str) -> Result<()> {
         let path = format!("/tag/{}.json", tag_name);
-        let response = self.delete(&path)?;
+        let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         if !status.is_success() {
             let text = response.text().unwrap_or_default();

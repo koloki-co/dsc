@@ -358,18 +358,18 @@ Most mutations build a fresh request through `send_retrying`, but `DiscourseClie
 
 ### Phase 1 - Request-count and idempotency fixes
 
-1. P2 - remove tag pull N+1 reads and unchanged push writes.
-2. P1 - restrict analytics tasks by section and consume `prev_data`.
-3. P7 - scan the update log once per command.
-4. P17, P18, P19, P21, and P31 - remove straightforward extra requests/copies and normalize DELETE retries.
+1. ~~P2 - remove tag pull N+1 reads and unchanged push writes.~~ (done)
+2. ~~P1 - restrict analytics tasks by section and consume `prev_data`.~~ (done)
+3. ~~P7 - scan the update log once per command.~~ (done)
+4. ~~P17, P18, P19, P21, and P31 - remove straightforward extra requests/copies and normalize DELETE retries.~~ (done)
 
 Add request-budget tests with each change. These tests should assert exact or maximum route counts, not wall-clock time.
 
 ### Phase 2 - Long-running orchestration
 
-1. P3 - replace update's handle stack with a real worker pool and collect all outcomes.
-2. P4 - apply shared SSH connection/liveness defaults.
-3. P5 - replace fixed readiness sleeps with bounded observable polling.
+1. ~~P3 - replace update's handle stack with a real worker pool and collect all outcomes.~~ (done)
+2. ~~P4 - apply shared SSH connection/liveness defaults.~~ (done)
+3. ~~P5 - replace fixed readiness sleeps with bounded observable polling.~~ (done)
 4. P8 - bound SSH output retention and use the streaming runner consistently.
 5. P12, P27, P28, and P30 - introduce a shared bounded fleet executor and decide SSH multiplexing policy.
 

@@ -184,6 +184,35 @@ pub fn updated_within(forum: &str, window: Duration) -> bool {
         .any(|epoch| epoch >= cutoff)
 }
 
+/// Read the log once and return the set of forum names that were successfully
+/// updated (or confirmed current) within `window`. O(log records) instead of
+/// O(forums × log records) when called per-forum via `updated_within`.
+pub fn recent_forum_set(forums: &[&str], window: Duration) -> std::collections::HashSet<String> {
+    let cutoff = now_epoch().saturating_sub(window.as_secs() as i64);
+    let forum_set: std::collections::HashSet<&str> = forums.iter().copied().collect();
+    let mut result = std::collections::HashSet::new();
+    let Ok(content) = fs::read_to_string(log_path()) else {
+        return result;
+    };
+    for line in content.lines() {
+        let Some(record) = parse_line(line) else {
+            continue;
+        };
+        if !forum_set.contains(record.forum.as_str()) {
+            continue;
+        }
+        if !LogKind::parse(&record.outcome).is_some_and(LogKind::is_success) {
+            continue;
+        }
+        if let Some(epoch) = iso_to_epoch(&record.timestamp)
+            && epoch >= cutoff
+        {
+            result.insert(record.forum.clone());
+        }
+    }
+    result
+}
+
 fn version_cell(r: &LogRecord) -> String {
     match (r.from_version.as_str(), r.to_version.as_str()) {
         ("-", "-") => "-".to_string(),

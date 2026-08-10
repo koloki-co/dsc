@@ -56,7 +56,8 @@ impl DiscourseClient {
 
     /// Delete a theme by ID.
     pub fn delete_theme(&self, theme_id: u64) -> Result<()> {
-        let response = self.delete(&format!("/admin/themes/{}.json", theme_id))?;
+        let path = format!("/admin/themes/{}.json", theme_id);
+        let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         let text = response.text().context("reading delete theme response")?;
         if !status.is_success() {

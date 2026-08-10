@@ -242,10 +242,12 @@ fn recent_skip_set(
         return HashSet::new();
     }
     let window = skip_recent.unwrap_or(DEFAULT_RECENT_WINDOW);
-    let recent: Vec<&str> = updatable
+    let forum_names: Vec<&str> = updatable.iter().map(|d| d.name.as_str()).collect();
+    let recent_set = update_log::recent_forum_set(&forum_names, window);
+    let recent: Vec<&str> = forum_names
         .iter()
-        .map(|d| d.name.as_str())
-        .filter(|n| update_log::updated_within(n, window))
+        .copied()
+        .filter(|n| recent_set.contains(*n))
         .collect();
     if recent.is_empty() {
         return HashSet::new();

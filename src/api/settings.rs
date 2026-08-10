@@ -78,8 +78,25 @@ impl DiscourseClient {
             .ok_or_else(|| anyhow!("site_settings response missing 'site_settings' array"))?;
         let mut out = Vec::with_capacity(arr.len());
         for entry in arr {
+            // serde_json::from_value takes ownership, but we can avoid
+            // cloning the entire entry by serializing only the borrow and
+            // re-parsing — cheaper for large entries. In practice
+            // `from_value(entry.clone())` is fine for settings catalogues
+            // (each entry is small), but we can avoid the clone by using
+            // `serde_json::from_str(&serde_json::to_string(entry)?)` which
+            // only borrows. However, that double-serializes. The cleanest
+            // fix is to deserialize from a borrowed value via `from_value`
+            // on a clone — but we can at least avoid the intermediate
+            // allocation by using `from_str` on the borrowed JSON.
+            //
+            // Actually the simplest improvement: just use from_value
+            // on the borrowed entry by taking a reference and letting
+            // serde consume it. But `from_value` requires `Value` (owned).
+            // The real fix is `serde_json::from_str(&entry.to_string())`
+            // which avoids cloning the subtree. For settings (small JSON
+            // objects) the difference is negligible, but it's cleaner.
             let detail: SiteSettingDetail =
-                serde_json::from_value(entry.clone()).with_context(|| {
+                serde_json::from_str(&entry.to_string()).with_context(|| {
                     format!(
                         "parsing site setting entry: {}",
                         entry.get("setting").and_then(|v| v.as_str()).unwrap_or("?")
@@ -100,16 +117,16 @@ impl DiscourseClient {
         // The admin site settings API returns all settings; we filter by name.
         let all = self.list_site_settings()?;
         // Response shape: { "site_settings": [ { "setting": "...", "value": ... }, ... ] }
-        let settings = all
+        // Iterate the borrowed array instead of cloning the entire settings list.
+        let arr = all
             .get("site_settings")
             .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        for entry in &settings {
+            .ok_or_else(|| anyhow!("site_settings response missing 'site_settings' array"))?;
+        for entry in arr {
             let name = entry.get("setting").and_then(|v| v.as_str()).unwrap_or("");
             if name == setting {
-                let value = entry.get("value").cloned().unwrap_or(Value::Null);
-                let display = match &value {
+                let value = entry.get("value").unwrap_or(&Value::Null);
+                let display = match value {
                     Value::String(s) => s.clone(),
                     Value::Null => String::new(),
                     other => other.to_string(),
