@@ -488,8 +488,10 @@ fn main() -> Result<()> {
                 category,
                 field,
                 value,
+                append,
+                remove,
             } => commands::category_def::category_set(
-                &config, &discourse, &category, &field, &value, dry_run,
+                &config, &discourse, &category, &field, &value, append, remove, dry_run,
             ),
             CategoryCommand::Rename {
                 discourse,

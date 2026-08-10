@@ -807,12 +807,15 @@ fn entry_field(e: &CategoryDefEntry, field: &str) -> Result<(String, Value)> {
     Ok(out)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn category_set(
     config: &Config,
     discourse_name: &str,
     category: &str,
     field: &str,
     value: &str,
+    append: bool,
+    remove: bool,
     dry_run: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -824,7 +827,17 @@ pub fn category_set(
     let def = find_def(&defs, category)?;
     let id = def.id.ok_or_else(|| not_found("category", category))?;
 
-    let params = field_to_set_params(field, value, &slug_to_id)?;
+    let params = if append || remove {
+        list_field_edit_params(
+            field,
+            &def.allowed_tags,
+            &def.allowed_tag_groups,
+            value,
+            append,
+        )?
+    } else {
+        field_to_set_params(field, value, &slug_to_id)?
+    };
 
     if dry_run {
         println!(
@@ -960,6 +973,57 @@ fn parse_permissions(value: &str) -> Result<Vec<(String, String)>> {
         params.push(("read_restricted".to_string(), "true".to_string()));
     }
     Ok(params)
+}
+
+/// Merge `edits` into `current` for a `--append`/`--remove` list-field edit.
+/// Append dedupes (an item already present is left in place, not duplicated);
+/// remove is a no-op for items not present. Pure, order-preserving.
+fn merge_list_field(current: &Option<Vec<String>>, edits: &[String], append: bool) -> Vec<String> {
+    let mut items = current.clone().unwrap_or_default();
+    if append {
+        for e in edits {
+            if !items.contains(e) {
+                items.push(e.clone());
+            }
+        }
+    } else {
+        items.retain(|i| !edits.contains(i));
+    }
+    items
+}
+
+/// Build the form params for a `--append`/`--remove` edit of a list field,
+/// against the field's current server-side value.
+fn list_field_edit_params(
+    field: &str,
+    current_allowed_tags: &Option<Vec<String>>,
+    current_allowed_tag_groups: &Option<Vec<String>>,
+    value: &str,
+    append: bool,
+) -> Result<Vec<(String, String)>> {
+    let current = match field.trim() {
+        "allowed_tags" => current_allowed_tags,
+        "allowed_tag_groups" => current_allowed_tag_groups,
+        other => {
+            return Err(anyhow!(
+                "--append/--remove only apply to list fields (allowed_tags, allowed_tag_groups), not '{}'",
+                other
+            ));
+        }
+    };
+    let edits = split_csv(value);
+    if edits.is_empty() {
+        return Err(anyhow!(
+            "--append/--remove requires a non-empty comma-separated value"
+        ));
+    }
+    let merged = merge_list_field(current, &edits, append);
+    let key = format!("{}[]", field.trim());
+    if merged.is_empty() {
+        Ok(vec![(key, String::new())])
+    } else {
+        Ok(merged.into_iter().map(|v| (key.clone(), v)).collect())
+    }
 }
 
 /// Build the form params for setting a single field.
@@ -1202,6 +1266,72 @@ mod tests {
     fn set_params_list_clears_on_empty() {
         let params = field_to_set_params("allowed_tags", "", &BTreeMap::new()).unwrap();
         assert_eq!(params, vec![("allowed_tags[]".to_string(), String::new())]);
+    }
+
+    #[test]
+    fn merge_list_field_appends_and_dedupes() {
+        let current = Some(vec!["a".to_string(), "b".to_string()]);
+        let edits = vec!["b".to_string(), "c".to_string()];
+        let merged = merge_list_field(&current, &edits, true);
+        assert_eq!(merged, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn merge_list_field_appends_onto_empty_current() {
+        let merged = merge_list_field(&None, &["a".to_string()], true);
+        assert_eq!(merged, vec!["a"]);
+    }
+
+    #[test]
+    fn merge_list_field_removes_present_items() {
+        let current = Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+        let edits = vec!["b".to_string()];
+        let merged = merge_list_field(&current, &edits, false);
+        assert_eq!(merged, vec!["a", "c"]);
+    }
+
+    #[test]
+    fn merge_list_field_remove_missing_item_is_noop() {
+        let current = Some(vec!["a".to_string()]);
+        let edits = vec!["z".to_string()];
+        let merged = merge_list_field(&current, &edits, false);
+        assert_eq!(merged, vec!["a"]);
+    }
+
+    #[test]
+    fn list_field_edit_params_appends_to_current() {
+        let current_tags = Some(vec!["one".to_string()]);
+        let params =
+            list_field_edit_params("allowed_tags", &current_tags, &None, "two,three", true)
+                .unwrap();
+        assert_eq!(
+            params,
+            vec![
+                ("allowed_tags[]".to_string(), "one".to_string()),
+                ("allowed_tags[]".to_string(), "two".to_string()),
+                ("allowed_tags[]".to_string(), "three".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn list_field_edit_params_remove_to_empty_clears_list() {
+        let current_tags = Some(vec!["one".to_string()]);
+        let params =
+            list_field_edit_params("allowed_tags", &current_tags, &None, "one", false).unwrap();
+        assert_eq!(params, vec![("allowed_tags[]".to_string(), String::new())]);
+    }
+
+    #[test]
+    fn list_field_edit_params_rejects_non_list_field() {
+        let err = list_field_edit_params("name", &None, &None, "x", true).unwrap_err();
+        assert!(err.to_string().contains("list fields"));
+    }
+
+    #[test]
+    fn list_field_edit_params_rejects_empty_value() {
+        let err = list_field_edit_params("allowed_tags", &None, &None, "", true).unwrap_err();
+        assert!(err.to_string().contains("non-empty"));
     }
 
     fn def(id: u64, name: &str) -> CategoryDefinition {

@@ -145,7 +145,7 @@ dsc category set  <discourse> <category> <field> <value>
 
 - `<category>` resolves by `id`, `slug`, or `name`.
 - `<field>` is one of: `name`, `slug`, `color`, `text_color`, `position`, `parent`, `read_restricted`, `description`, `topic_template`, `permissions`, `allowed_tags`, `allowed_tag_groups`, `minimum_required_tags`, `sort_order`, `default_view`, `subcategory_list_style`, `num_featured_topics`, `show_subcategory_list`.
-- List fields (`allowed_tags`, `allowed_tag_groups`) take a comma-separated value; an empty value clears the list.
+- List fields (`allowed_tags`, `allowed_tag_groups`) take a comma-separated value; an empty value clears the list. Pass `--append` or `--remove` (mutually exclusive) to add or remove the given comma-separated items instead of replacing the whole list - e.g. `dsc category set forum1 support allowed_tags urgent,bug --append`.
 - `permissions` takes `group:level,...` where level is `full`, `create_post`, or `readonly` (e.g. `staff:full`). Granting any group other than `everyone` also sets `read_restricted=true`, matching the admin UI.
 - `show`/`get` honour `--format text|json|yaml`; `set` honours the global `--dry-run`.
 
