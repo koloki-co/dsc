@@ -147,7 +147,8 @@ dsc category set  <DISCOURSE> <CATEGORY> <FIELD> <VALUE>    # set one field
 - `set` is a single `PUT /categories/{id}.json` with the one field. `--dry-run`
   prints the planned payload. For list-typed fields (`allowed_tags`,
   `allowed_tag_groups`), `<VALUE>` is comma-separated and replaces the list;
-  accept `--append`/`--remove` for additive edits (Phase 2).
+  mutually exclusive `--append`/`--remove` flags edit the list additively
+  instead.
 - `set permissions` is the one composite field: value is a map string like
   `everyone:full,staff:full` or, for restricted categories,
   `staff:full` (staff-only). Levels: `full` | `create_post` | `readonly`.
@@ -408,8 +409,14 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   already used by a different category; `--dry-run` prints the planned
   rename. `src/commands/category_def.rs` (`plan_rename`, `category_rename`);
   unit-tested (no live test, matching `tag rename`'s coverage).
-- [ ] `--append` / `--remove` for list fields on `category set` (`allowed_tags`,
-  `allowed_tag_groups`).
+- [x] `--append` / `--remove` for list fields on `category set` (`allowed_tags`,
+  `allowed_tag_groups`). **Status: implemented (unreleased).** Mutually
+  exclusive flags on `category set`; merge against the field's current
+  server-side value (dedupe on append, no-op on removing an absent item) and
+  send the resulting list as the field's `PUT` params, same as a full
+  replace. `src/commands/category_def.rs` (`merge_list_field`,
+  `list_field_edit_params`); unit-tested (no live test needed - pure list
+  merge logic).
 - [ ] `required_tag_groups` round-trip (list of `{name, min_tags}`).
 - [ ] `category_types` round-trip. The modern Discourse support category type is
   needed to enable accepted answers for York Music's Marketplace; it supersedes

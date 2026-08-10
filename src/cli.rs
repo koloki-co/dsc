@@ -1141,8 +1141,18 @@ pub enum CategoryCommand {
         /// Field name (e.g. description, topic_template, color).
         field: String,
         /// New value. For list fields (allowed_tags, allowed_tag_groups) use a
-        /// comma-separated list; for permissions use `group:level,...`.
+        /// comma-separated list; for permissions use `group:level,...`. With
+        /// `--append`/`--remove`, this is the comma-separated list of items to
+        /// add to or remove from the current list instead of replacing it.
         value: String,
+        /// Add items to a list field instead of replacing it (allowed_tags,
+        /// allowed_tag_groups only).
+        #[arg(long, conflicts_with = "remove")]
+        append: bool,
+        /// Remove items from a list field instead of replacing it
+        /// (allowed_tags, allowed_tag_groups only).
+        #[arg(long, conflicts_with = "append")]
+        remove: bool,
     },
     /// Compare two live category definitions.
     ///
@@ -2959,6 +2969,64 @@ mod tests {
         assert!(
             Cli::try_parse_from(["dsc", "explorer", "run", "forum", "42", "--limit", "0",])
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn category_set_list_edit_flags_parse_and_conflict() {
+        let append = Cli::try_parse_from([
+            "dsc",
+            "category",
+            "set",
+            "forum",
+            "support",
+            "allowed_tags",
+            "urgent",
+            "--append",
+        ])
+        .expect("category list append parses");
+        let Commands::Category {
+            command: CategoryCommand::Set { append, remove, .. },
+        } = append.command
+        else {
+            panic!("expected category set command");
+        };
+        assert!(append);
+        assert!(!remove);
+
+        let remove = Cli::try_parse_from([
+            "dsc",
+            "category",
+            "set",
+            "forum",
+            "support",
+            "allowed_tags",
+            "urgent",
+            "--remove",
+        ])
+        .expect("category list remove parses");
+        let Commands::Category {
+            command: CategoryCommand::Set { append, remove, .. },
+        } = remove.command
+        else {
+            panic!("expected category set command");
+        };
+        assert!(!append);
+        assert!(remove);
+
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
+                "category",
+                "set",
+                "forum",
+                "support",
+                "allowed_tags",
+                "urgent",
+                "--append",
+                "--remove",
+            ])
+            .is_err()
         );
     }
 
