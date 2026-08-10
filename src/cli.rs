@@ -2973,6 +2973,64 @@ mod tests {
     }
 
     #[test]
+    fn category_set_list_edit_flags_parse_and_conflict() {
+        let append = Cli::try_parse_from([
+            "dsc",
+            "category",
+            "set",
+            "forum",
+            "support",
+            "allowed_tags",
+            "urgent",
+            "--append",
+        ])
+        .expect("category list append parses");
+        let Commands::Category {
+            command: CategoryCommand::Set { append, remove, .. },
+        } = append.command
+        else {
+            panic!("expected category set command");
+        };
+        assert!(append);
+        assert!(!remove);
+
+        let remove = Cli::try_parse_from([
+            "dsc",
+            "category",
+            "set",
+            "forum",
+            "support",
+            "allowed_tags",
+            "urgent",
+            "--remove",
+        ])
+        .expect("category list remove parses");
+        let Commands::Category {
+            command: CategoryCommand::Set { append, remove, .. },
+        } = remove.command
+        else {
+            panic!("expected category set command");
+        };
+        assert!(!append);
+        assert!(remove);
+
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
+                "category",
+                "set",
+                "forum",
+                "support",
+                "allowed_tags",
+                "urgent",
+                "--append",
+                "--remove",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
     fn palette_pull_accepts_negative_builtin_id() {
         let cli = Cli::try_parse_from(["dsc", "theme", "palette", "pull", "forum", "-2"])
             .expect("negative built-in palette ID parses");

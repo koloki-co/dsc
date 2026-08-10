@@ -490,9 +490,18 @@ fn main() -> Result<()> {
                 value,
                 append,
                 remove,
-            } => commands::category_def::category_set(
-                &config, &discourse, &category, &field, &value, append, remove, dry_run,
-            ),
+            } => {
+                let list_edit = if append {
+                    Some(commands::category_def::CategoryListEdit::Append)
+                } else if remove {
+                    Some(commands::category_def::CategoryListEdit::Remove)
+                } else {
+                    None
+                };
+                commands::category_def::category_set(
+                    &config, &discourse, &category, &field, &value, list_edit, dry_run,
+                )
+            }
             CategoryCommand::Rename {
                 discourse,
                 category,
