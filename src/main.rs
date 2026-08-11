@@ -885,12 +885,14 @@ fn main() -> Result<()> {
                 region,
                 bucket,
                 no_test,
+                use_iam_profile,
             } => commands::backup_s3::setup_s3(
                 &config,
                 &discourse,
                 &region,
                 bucket.as_deref(),
                 no_test,
+                use_iam_profile,
                 dry_run,
             ),
 

@@ -119,6 +119,7 @@ pub fn setup_s3(
     region: &str,
     bucket: Option<&str>,
     no_test: bool,
+    use_iam_profile: bool,
     dry_run: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -129,7 +130,14 @@ pub fn setup_s3(
     let policy_pretty = serde_json::to_string_pretty(&policy_doc)?;
 
     if dry_run {
-        print_plan(&discourse.name, &names, region, &policy_pretty, no_test);
+        print_plan(
+            &discourse.name,
+            &names,
+            region,
+            &policy_pretty,
+            no_test,
+            use_iam_profile,
+        );
         return Ok(());
     }
 
@@ -161,63 +169,79 @@ pub fn setup_s3(
     ])?;
     println!("  created bucket {} (public access blocked)", names.bucket);
 
-    // 2. Single-bucket managed policy -> ARN.
-    let policy = aws_json(&[
-        "iam".into(),
-        "create-policy".into(),
-        "--policy-name".into(),
-        names.policy.clone(),
-        "--policy-document".into(),
-        policy_json,
-    ])?;
-    let policy_arn = policy
-        .get("Policy")
-        .and_then(|p| p.get("Arn"))
-        .and_then(|v| v.as_str())
-        .context("create-policy did not return a Policy ARN")?
-        .to_string();
-    println!("  created policy {}", names.policy);
+    // 2./3. With --use-iam-profile the EC2 instance role already carries the
+    // bucket permissions (provisioned outside dsc), so no dedicated IAM user
+    // or policy is minted here - only the bucket exists to be granted access to.
+    if use_iam_profile {
+        println!(
+            "  skipped IAM user/policy creation (--use-iam-profile); \
+             ensure the instance role can access s3://{}",
+            names.bucket
+        );
+    } else {
+        // Single-bucket managed policy -> ARN.
+        let policy = aws_json(&[
+            "iam".into(),
+            "create-policy".into(),
+            "--policy-name".into(),
+            names.policy.clone(),
+            "--policy-document".into(),
+            policy_json,
+        ])?;
+        let policy_arn = policy
+            .get("Policy")
+            .and_then(|p| p.get("Arn"))
+            .and_then(|v| v.as_str())
+            .context("create-policy did not return a Policy ARN")?
+            .to_string();
+        println!("  created policy {}", names.policy);
 
-    // 3. Dedicated user + attach + access key.
-    aws_run(&[
-        "iam".into(),
-        "create-user".into(),
-        "--user-name".into(),
-        names.user.clone(),
-    ])?;
-    aws_run(&[
-        "iam".into(),
-        "attach-user-policy".into(),
-        "--user-name".into(),
-        names.user.clone(),
-        "--policy-arn".into(),
-        policy_arn,
-    ])?;
-    let key = aws_json(&[
-        "iam".into(),
-        "create-access-key".into(),
-        "--user-name".into(),
-        names.user.clone(),
-    ])?;
-    let access_key_id = key
-        .get("AccessKey")
-        .and_then(|k| k.get("AccessKeyId"))
-        .and_then(|v| v.as_str())
-        .context("create-access-key did not return an AccessKeyId")?
-        .to_string();
-    let secret_access_key = key
-        .get("AccessKey")
-        .and_then(|k| k.get("SecretAccessKey"))
-        .and_then(|v| v.as_str())
-        .context("create-access-key did not return a SecretAccessKey")?
-        .to_string();
-    println!(
-        "  created user {} with access key {}",
-        names.user, access_key_id
-    );
+        // Dedicated user + attach + access key.
+        aws_run(&[
+            "iam".into(),
+            "create-user".into(),
+            "--user-name".into(),
+            names.user.clone(),
+        ])?;
+        aws_run(&[
+            "iam".into(),
+            "attach-user-policy".into(),
+            "--user-name".into(),
+            names.user.clone(),
+            "--policy-arn".into(),
+            policy_arn,
+        ])?;
+        let key = aws_json(&[
+            "iam".into(),
+            "create-access-key".into(),
+            "--user-name".into(),
+            names.user.clone(),
+        ])?;
+        let access_key_id = key
+            .get("AccessKey")
+            .and_then(|k| k.get("AccessKeyId"))
+            .and_then(|v| v.as_str())
+            .context("create-access-key did not return an AccessKeyId")?
+            .to_string();
+        let secret_access_key = key
+            .get("AccessKey")
+            .and_then(|k| k.get("SecretAccessKey"))
+            .and_then(|v| v.as_str())
+            .context("create-access-key did not return a SecretAccessKey")?
+            .to_string();
+        println!(
+            "  created user {} with access key {}",
+            names.user, access_key_id
+        );
 
-    // 4. Point Discourse at the bucket (the secret goes straight into the
-    //    setting, never into dsc.toml and never printed).
+        // Point Discourse at the bucket with the minted static credentials
+        // (the secret goes straight into the setting, never into dsc.toml and
+        // never printed).
+        client.update_site_setting("s3_access_key_id", &access_key_id)?;
+        client.update_site_setting("s3_secret_access_key", &secret_access_key)?;
+    }
+
+    // 4. Point Discourse at the bucket.
     // "Enable last": Discourse validates `backup_location=s3` against the S3
     // settings being present, so set the bucket/region/credentials FIRST and
     // flip `backup_location` to s3 only once they're in place. Doing it the
@@ -225,10 +249,15 @@ pub fn setup_s3(
     // half-configured. (Same pattern as enabling reply-by-email.)
     client.update_site_setting("s3_backup_bucket", &names.bucket)?;
     client.update_site_setting("s3_region", region)?;
-    client.update_site_setting("s3_access_key_id", &access_key_id)?;
-    client.update_site_setting("s3_secret_access_key", &secret_access_key)?;
+    if use_iam_profile {
+        client.update_site_setting("s3_use_iam_profile", "true")?;
+    }
     client.update_site_setting("backup_location", "s3")?;
-    println!("  set Discourse S3 backup settings (secret written to the setting, not stored)");
+    if use_iam_profile {
+        println!("  set Discourse S3 backup settings (s3_use_iam_profile, no static keys)");
+    } else {
+        println!("  set Discourse S3 backup settings (secret written to the setting, not stored)");
+    }
 
     // 5. Optional verification backup.
     if no_test {
@@ -271,24 +300,38 @@ fn wait_for_backup_object(bucket: &str) -> Result<bool> {
     Ok(false)
 }
 
-fn print_plan(forum: &str, names: &Names, region: &str, policy_pretty: &str, no_test: bool) {
+fn print_plan(
+    forum: &str,
+    names: &Names,
+    region: &str,
+    policy_pretty: &str,
+    no_test: bool,
+    use_iam_profile: bool,
+) {
     println!("[dry-run] S3 backup setup for {forum} (region {region})\n");
     println!("AWS resources to create:");
     println!(
         "  bucket  {}   (private; Block Public Access on; SSE-S3)",
         names.bucket
     );
-    println!(
-        "  policy  {}   (single-bucket, least privilege)",
-        names.policy
-    );
-    println!("  user    {}   (+ one access key)\n", names.user);
+    if use_iam_profile {
+        println!(
+            "  (--use-iam-profile: no IAM policy/user/access-key created; \
+             the instance role must already have access to this bucket)\n"
+        );
+    } else {
+        println!(
+            "  policy  {}   (single-bucket, least privilege)",
+            names.policy
+        );
+        println!("  user    {}   (+ one access key)\n", names.user);
 
-    println!("IAM policy document:");
-    for line in policy_pretty.lines() {
-        println!("  {line}");
+        println!("IAM policy document:");
+        for line in policy_pretty.lines() {
+            println!("  {line}");
+        }
+        println!();
     }
-    println!();
 
     println!("aws commands:");
     println!(
@@ -299,22 +342,29 @@ fn print_plan(forum: &str, names: &Names, region: &str, policy_pretty: &str, no_
         "  aws s3api put-public-access-block --bucket {} --public-access-block-configuration {}",
         names.bucket, PUBLIC_ACCESS_BLOCK
     );
-    println!(
-        "  aws iam create-policy --policy-name {} --policy-document <json above>",
-        names.policy
-    );
-    println!("  aws iam create-user --user-name {}", names.user);
-    println!(
-        "  aws iam attach-user-policy --user-name {} --policy-arn <policy ARN>",
-        names.user
-    );
-    println!("  aws iam create-access-key --user-name {}\n", names.user);
+    if !use_iam_profile {
+        println!(
+            "  aws iam create-policy --policy-name {} --policy-document <json above>",
+            names.policy
+        );
+        println!("  aws iam create-user --user-name {}", names.user);
+        println!(
+            "  aws iam attach-user-policy --user-name {} --policy-arn <policy ARN>",
+            names.user
+        );
+        println!("  aws iam create-access-key --user-name {}", names.user);
+    }
+    println!();
 
     println!("Discourse settings to set (in this order):");
     println!("  s3_backup_bucket     = {}", names.bucket);
     println!("  s3_region            = {region}");
-    println!("  s3_access_key_id     = <minted at run time>");
-    println!("  s3_secret_access_key = <minted at run time; never printed>");
+    if use_iam_profile {
+        println!("  s3_use_iam_profile   = true");
+    } else {
+        println!("  s3_access_key_id     = <minted at run time>");
+        println!("  s3_secret_access_key = <minted at run time; never printed>");
+    }
     println!("  backup_location      = s3   (enabled LAST, once the above are set)\n");
 
     if no_test {
