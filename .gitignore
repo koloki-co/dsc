@@ -20,7 +20,7 @@ demo-dsc.toml
 /completions/
 
 ### Private notes
-.marcus/
+.private/
 
 ### Reference PDFs / third-party copyrighted material (keep out of the repo)
 *.pdf
