@@ -160,7 +160,9 @@ fn update_all_parallel(
         }
     }
     for handle in handles {
-        let _ = handle.join();
+        handle
+            .join()
+            .map_err(|_| anyhow!("update worker panicked"))?;
     }
 
     if let Some(first) = errors.into_iter().next() {

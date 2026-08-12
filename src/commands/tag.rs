@@ -252,8 +252,8 @@ pub fn tag_pull(
     // description field (older Discourse versions may omit it).
     let mut tag_entries: Vec<TagEntry> = Vec::new();
     for t in &server_tags {
-        let description = if t.description.is_some() {
-            t.description.clone()
+        let description = if let Some(description) = &t.description {
+            description.clone()
         } else {
             client.get_tag_description(&t.text).unwrap_or(None)
         };
@@ -559,7 +559,7 @@ pub fn tag_push(
         server_tag_infos.iter().map(|t| t.text.clone()).collect();
     let server_descriptions: BTreeMap<String, Option<String>> = server_tag_infos
         .iter()
-        .map(|t| (t.text.clone(), t.description.clone()))
+        .map(|t| (t.text.clone(), t.description.clone().flatten()))
         .collect();
 
     // Group reconciliation needs the admin endpoint; fetch it up front so the

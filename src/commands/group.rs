@@ -58,9 +58,9 @@ pub fn group_info(
     let client = DiscourseClient::new(discourse)?;
     // Try the numeric ID path first; only list all groups for a name
     // fallback if the ID route returns 404.
-    let mut group = match client.fetch_group_detail(group_id, None) {
-        Ok(detail) => detail,
-        Err(_) => {
+    let mut group = match client.fetch_group_detail_by_id(group_id)? {
+        Some(detail) => detail,
+        None => {
             let group_summary = find_group_summary(&client, group_id)?;
             client.fetch_group_detail(group_summary.id, Some(&group_summary.name))?
         }
@@ -90,9 +90,9 @@ pub fn group_members(
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
-    let members = match client.fetch_group_members(group_id, None) {
-        Ok(m) => m,
-        Err(_) => {
+    let members = match client.fetch_group_members_by_id(group_id)? {
+        Some(members) => members,
+        None => {
             let group_summary = find_group_summary(&client, group_id)?;
             client.fetch_group_members(group_summary.id, Some(&group_summary.name))?
         }
@@ -135,9 +135,9 @@ pub fn group_copy(
     ensure_api_credentials(target_discourse)?;
 
     let source_client = DiscourseClient::new(source_discourse)?;
-    let mut group = match source_client.fetch_group_detail(group_id, None) {
-        Ok(detail) => detail,
-        Err(_) => {
+    let mut group = match source_client.fetch_group_detail_by_id(group_id)? {
+        Some(detail) => detail,
+        None => {
             let group_summary = find_group_summary(&source_client, group_id)?;
             source_client.fetch_group_detail(group_summary.id, Some(&group_summary.name))?
         }

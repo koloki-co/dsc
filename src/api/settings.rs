@@ -26,6 +26,11 @@ pub struct SiteSettingDetail {
     pub setting_type: String,
 }
 
+#[derive(Deserialize)]
+struct SiteSettingsResponse {
+    site_settings: Vec<SiteSettingDetail>,
+}
+
 impl DiscourseClient {
     /// Update a site setting by name (admin only).
     pub fn update_site_setting(&self, setting: &str, value: &str) -> Result<()> {
@@ -71,40 +76,17 @@ impl DiscourseClient {
     /// Returns one `SiteSettingDetail` per setting, preserving the
     /// `default`, `description`, `category`, and `type` fields.
     pub fn list_site_settings_detailed(&self) -> Result<Vec<SiteSettingDetail>> {
-        let raw = self.list_site_settings()?;
-        let arr = raw
-            .get("site_settings")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow!("site_settings response missing 'site_settings' array"))?;
-        let mut out = Vec::with_capacity(arr.len());
-        for entry in arr {
-            // serde_json::from_value takes ownership, but we can avoid
-            // cloning the entire entry by serializing only the borrow and
-            // re-parsing — cheaper for large entries. In practice
-            // `from_value(entry.clone())` is fine for settings catalogues
-            // (each entry is small), but we can avoid the clone by using
-            // `serde_json::from_str(&serde_json::to_string(entry)?)` which
-            // only borrows. However, that double-serializes. The cleanest
-            // fix is to deserialize from a borrowed value via `from_value`
-            // on a clone — but we can at least avoid the intermediate
-            // allocation by using `from_str` on the borrowed JSON.
-            //
-            // Actually the simplest improvement: just use from_value
-            // on the borrowed entry by taking a reference and letting
-            // serde consume it. But `from_value` requires `Value` (owned).
-            // The real fix is `serde_json::from_str(&entry.to_string())`
-            // which avoids cloning the subtree. For settings (small JSON
-            // objects) the difference is negligible, but it's cleaner.
-            let detail: SiteSettingDetail =
-                serde_json::from_str(&entry.to_string()).with_context(|| {
-                    format!(
-                        "parsing site setting entry: {}",
-                        entry.get("setting").and_then(|v| v.as_str()).unwrap_or("?")
-                    )
-                })?;
-            out.push(detail);
+        let response = self.get("/admin/site_settings.json")?;
+        let status = response.status();
+        let text = response
+            .text()
+            .context("reading site settings list response")?;
+        if !status.is_success() {
+            return Err(http_error("list site settings request", status, &text));
         }
-        Ok(out)
+        let body: SiteSettingsResponse =
+            serde_json::from_str(&text).context("parsing site settings list response")?;
+        Ok(body.site_settings)
     }
 
     /// Fetch a single site setting by name (admin only).
