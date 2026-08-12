@@ -50,6 +50,12 @@ impl DiscourseClient {
         Err(anyhow!("group not found: {}", group_id))
     }
 
+    /// Fetch group details by numeric ID. Returns `None` only when the ID
+    /// route returns 404; authentication and server failures remain errors.
+    pub fn fetch_group_detail_by_id(&self, group_id: u64) -> Result<Option<GroupDetail>> {
+        self.fetch_group_detail_by_path(&format!("/groups/{}.json", group_id))
+    }
+
     pub fn fetch_group_members(
         &self,
         group_id: u64,
@@ -66,6 +72,12 @@ impl DiscourseClient {
             }
         }
         Err(anyhow!("group not found: {}", group_id))
+    }
+
+    /// Fetch group members by numeric ID. Returns `None` only when the ID
+    /// route returns 404; authentication and server failures remain errors.
+    pub fn fetch_group_members_by_id(&self, group_id: u64) -> Result<Option<Vec<GroupMember>>> {
+        self.fetch_group_members_by_path(&format!("/groups/{}/members.json", group_id))
     }
 
     /// Create a group with detailed settings copied from a source group.

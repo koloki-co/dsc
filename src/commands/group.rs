@@ -56,8 +56,15 @@ pub fn group_info(
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
-    let group_summary = find_group_summary(&client, group_id)?;
-    let mut group = client.fetch_group_detail(group_summary.id, Some(&group_summary.name))?;
+    // Try the numeric ID path first; only list all groups for a name
+    // fallback if the ID route returns 404.
+    let mut group = match client.fetch_group_detail_by_id(group_id)? {
+        Some(detail) => detail,
+        None => {
+            let group_summary = find_group_summary(&client, group_id)?;
+            client.fetch_group_detail(group_summary.id, Some(&group_summary.name))?
+        }
+    };
     if !with_defaults {
         group.clear_notification_defaults();
     }
@@ -83,8 +90,13 @@ pub fn group_members(
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
-    let group_summary = find_group_summary(&client, group_id)?;
-    let members = client.fetch_group_members(group_summary.id, Some(&group_summary.name))?;
+    let members = match client.fetch_group_members_by_id(group_id)? {
+        Some(members) => members,
+        None => {
+            let group_summary = find_group_summary(&client, group_id)?;
+            client.fetch_group_members(group_summary.id, Some(&group_summary.name))?
+        }
+    };
     match format {
         ListFormat::Text => {
             if members.is_empty() {
@@ -123,9 +135,13 @@ pub fn group_copy(
     ensure_api_credentials(target_discourse)?;
 
     let source_client = DiscourseClient::new(source_discourse)?;
-    let group_summary = find_group_summary(&source_client, group_id)?;
-    let mut group =
-        source_client.fetch_group_detail(group_summary.id, Some(&group_summary.name))?;
+    let mut group = match source_client.fetch_group_detail_by_id(group_id)? {
+        Some(detail) => detail,
+        None => {
+            let group_summary = find_group_summary(&source_client, group_id)?;
+            source_client.fetch_group_detail(group_summary.id, Some(&group_summary.name))?
+        }
+    };
     group.name = format!("{}-copy", slugify(&group.name));
     if let Some(full_name) = group.full_name.clone() {
         group.full_name = Some(format!("Copy of {}", full_name));
@@ -151,6 +167,8 @@ pub fn group_copy(
     Ok(())
 }
 
+/// Try the numeric ID route for group detail first. Only list all groups
+/// to recover a name for the fallback path if the ID route 404s.
 fn find_group_summary(client: &DiscourseClient, group_id: u64) -> Result<GroupSummary> {
     let groups = client.fetch_groups()?;
     groups

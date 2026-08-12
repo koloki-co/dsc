@@ -3,7 +3,7 @@
 Runs remote OS and Discourse update workflows over SSH.
 
 ```
-dsc update <name|all> [-p [N]] [--skip-recent [DUR]] [--force] [--no-changelog] [--yes]
+dsc update <name|all> [-p [N]] [--skip-recent [DUR]] [--force] [--no-changelog] [--yes] [--branch <BRANCH>]
 dsc update log [--latest] [--since <DUR>] [--format text|md|json]
 ```
 
@@ -14,6 +14,7 @@ dsc update log [--latest] [--since <DUR>] [--format text|md|json]
 - `--force` — update even if a `./launcher rebuild` is already running on the host, or if the forum was updated recently (overrides both guards).
 - `--no-changelog` — skip changelog posting.
 - `--yes` (or `-y`) — auto-confirm the changelog post prompt (non-interactive mode).
+- `--branch <branch>` — Discourse branch to compare against (default: per-forum `discourse_branch` config key, or `latest` when unset). Use `stable` for sites that track the Discourse stable branch.
 
 ## Update workflow
 
@@ -21,7 +22,7 @@ dsc update log [--latest] [--since <DUR>] [--format text|md|json]
 2. Fetch the initial Discourse version and OS details.
 3. Check available 1 KiB blocks on `/` and compare them without whole-GiB rounding. If space is below the configured minimum, run the [disk recovery](#disk-guard-and-recovery) sequence before making any OS or Discourse change.
 4. Run the OS package update over SSH and reboot if applicable.
-5. Check whether the running Discourse commit matches the latest `stable` branch commit on GitHub. If they match, skip the rebuild.
+5. Check whether the running Discourse commit matches the latest commit on the configured branch (default `latest`, override with `--branch` or `discourse_branch` in `dsc.toml`). If they match, skip the rebuild.
 6. Run the Discourse rebuild (`./launcher rebuild app`) only if step 5 found a newer commit available.
 7. Fetch final version information, run Docker cleanup (`docker container prune -f && docker image prune -f`), and report root disk usage.
 8. Optionally post a changelog checklist to the configured topic.
@@ -77,7 +78,7 @@ Three independent gates can skip work; each is recorded in the [update log](#upd
 - **No `ssh_host`:** `dsc update all` skips any Discourse instance with no `ssh_host` configured (read-only references like Discourse Meta, or instances not managed via SSH).
 - **Rebuild already running:** at the very top of a forum's update (before the reboot), `dsc` checks for an in-flight `./launcher rebuild` on the host and skips the whole forum if one is found — so re-running never reboots a box mid-rebuild. Override with `--force`.
 - **Updated recently:** with `--skip-recent [DUR]`, a forum whose last successful update is within the window (default `24h`) is skipped entirely. Interactively (a TTY, no flag), `dsc` instead lists the recently-updated forums and asks **up front** whether to update them again — so a re-run to catch one straggler doesn't reboot the rest. Override with `--force`.
-- **Already up to date:** before the rebuild, `dsc` compares the running commit with the latest `discourse/discourse` `stable` commit on GitHub. If they match, only the *rebuild* is skipped (OS updates and reboot still run). Unreachable GitHub or unknown commit → rebuild proceeds (fail-open).
+- **Already up to date:** before the rebuild, `dsc` compares the running commit with the latest `discourse/discourse` commit on the configured branch (default `latest`) on GitHub. If they match, only the *rebuild* is skipped (OS updates and reboot still run). Unreachable GitHub or unknown commit → rebuild proceeds (fail-open).
 
 ## Update log
 
@@ -106,6 +107,11 @@ dsc update log --since 7d --format md
 | `DSC_SSH_STRICT_HOST_KEY_CHECKING` | `accept-new` | SSH host key checking mode (set empty to omit). |
 | `DSC_SSH_OPTIONS` | *(none)* | Extra SSH options (space-delimited). |
 | `DSC_DISCOURSE_MIN_FREE_GB` | `5` | Minimum free GiB required on `/` after automatic recovery. |
-| `DSC_DISCOURSE_BOOT_WAIT_SECS` | `15` | Seconds to wait after rebuild before fetching `about.json`. |
 | `DSC_UPDATE_LOG` | `$XDG_STATE_HOME/dsc/update.log` | Path to the append-only update log. |
 | `DSC_COLOR` | `auto` | ANSI color output (`auto`/`always`/`never`). `NO_COLOR` also disables color. |
+
+## Per-forum config keys
+
+| Key | Default | Description |
+|---|---|---|
+| `discourse_branch` | `latest` | Discourse branch to compare against during `dsc update`. Set to `stable` for sites that track the Discourse stable branch. The `--branch` CLI flag overrides this per-run. |

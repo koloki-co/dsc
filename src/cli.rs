@@ -111,6 +111,11 @@ pub enum Commands {
         /// unattended re-runs; interactively you're prompted about them instead.
         #[arg(long, num_args = 0..=1, default_missing_value = "24h", value_name = "DUR")]
         skip_recent: Option<String>,
+        /// Discourse branch to compare against (default: per-forum
+        /// `discourse_branch` config key, or `latest` when unset). Use
+        /// `stable` for sites that track the Discourse stable branch.
+        #[arg(long, value_name = "BRANCH")]
+        branch: Option<String>,
     },
     /// Manage custom emoji.
     #[command(visible_alias = "em")]

@@ -17,8 +17,19 @@ pub struct TagInfo {
     pub count: u64,
     #[serde(default)]
     pub pm_count: u64,
-    #[serde(default)]
-    pub description: Option<String>,
+    /// `Some(None)` means the list response explicitly supplied `null`; only
+    /// `None` means an older server omitted the field entirely.
+    #[serde(default, deserialize_with = "deserialize_present_description")]
+    pub description: Option<Option<String>>,
+}
+
+fn deserialize_present_description<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 #[derive(Debug, Deserialize)]
@@ -136,7 +147,7 @@ impl DiscourseClient {
     /// Delete a tag group.
     pub fn delete_tag_group(&self, group_id: u64) -> Result<()> {
         let path = format!("/tag_groups/{}.json", group_id);
-        let response = self.delete(&path)?;
+        let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         if !status.is_success() {
             let text = response.text().unwrap_or_default();
@@ -190,7 +201,7 @@ impl DiscourseClient {
     /// 2026.7.0).
     pub fn delete_tag(&self, tag_name: &str) -> Result<()> {
         let path = format!("/tag/{}.json", tag_name);
-        let response = self.delete(&path)?;
+        let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         if !status.is_success() {
             let text = response.text().unwrap_or_default();
@@ -240,5 +251,20 @@ impl DiscourseClient {
         // Confirm the post-update state by re-reading the topic; the PUT response
         // shape is awkward to depend on across versions.
         self.fetch_topic_tags(topic_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TagsResponse;
+
+    #[test]
+    fn tag_description_preserves_missing_vs_null() {
+        let missing: TagsResponse = serde_json::from_str(r#"{"tags":[{"id":1}]}"#).unwrap();
+        let null: TagsResponse =
+            serde_json::from_str(r#"{"tags":[{"id":1,"description":null}]}"#).unwrap();
+
+        assert_eq!(missing.tags[0].description, None);
+        assert_eq!(null.tags[0].description, Some(None));
     }
 }

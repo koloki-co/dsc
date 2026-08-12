@@ -26,6 +26,11 @@ pub struct SiteSettingDetail {
     pub setting_type: String,
 }
 
+#[derive(Deserialize)]
+struct SiteSettingsResponse {
+    site_settings: Vec<SiteSettingDetail>,
+}
+
 impl DiscourseClient {
     /// Update a site setting by name (admin only).
     pub fn update_site_setting(&self, setting: &str, value: &str) -> Result<()> {
@@ -71,23 +76,17 @@ impl DiscourseClient {
     /// Returns one `SiteSettingDetail` per setting, preserving the
     /// `default`, `description`, `category`, and `type` fields.
     pub fn list_site_settings_detailed(&self) -> Result<Vec<SiteSettingDetail>> {
-        let raw = self.list_site_settings()?;
-        let arr = raw
-            .get("site_settings")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| anyhow!("site_settings response missing 'site_settings' array"))?;
-        let mut out = Vec::with_capacity(arr.len());
-        for entry in arr {
-            let detail: SiteSettingDetail =
-                serde_json::from_value(entry.clone()).with_context(|| {
-                    format!(
-                        "parsing site setting entry: {}",
-                        entry.get("setting").and_then(|v| v.as_str()).unwrap_or("?")
-                    )
-                })?;
-            out.push(detail);
+        let response = self.get("/admin/site_settings.json")?;
+        let status = response.status();
+        let text = response
+            .text()
+            .context("reading site settings list response")?;
+        if !status.is_success() {
+            return Err(http_error("list site settings request", status, &text));
         }
-        Ok(out)
+        let body: SiteSettingsResponse =
+            serde_json::from_str(&text).context("parsing site settings list response")?;
+        Ok(body.site_settings)
     }
 
     /// Fetch a single site setting by name (admin only).
@@ -100,16 +99,16 @@ impl DiscourseClient {
         // The admin site settings API returns all settings; we filter by name.
         let all = self.list_site_settings()?;
         // Response shape: { "site_settings": [ { "setting": "...", "value": ... }, ... ] }
-        let settings = all
+        // Iterate the borrowed array instead of cloning the entire settings list.
+        let arr = all
             .get("site_settings")
             .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        for entry in &settings {
+            .ok_or_else(|| anyhow!("site_settings response missing 'site_settings' array"))?;
+        for entry in arr {
             let name = entry.get("setting").and_then(|v| v.as_str()).unwrap_or("");
             if name == setting {
-                let value = entry.get("value").cloned().unwrap_or(Value::Null);
-                let display = match &value {
+                let value = entry.get("value").unwrap_or(&Value::Null);
+                let display = match value {
                     Value::String(s) => s.clone(),
                     Value::Null => String::new(),
                     other => other.to_string(),

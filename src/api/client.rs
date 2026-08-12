@@ -100,15 +100,6 @@ impl DiscourseClient {
         Ok(self.client.put(url).timeout(REQUEST_TIMEOUT))
     }
 
-    pub(crate) fn delete(&self, path: &str) -> Result<reqwest::blocking::Response> {
-        let url = format!("{}{}", self.baseurl, path);
-        self.client
-            .delete(url)
-            .timeout(REQUEST_TIMEOUT)
-            .send()
-            .context("sending delete request")
-    }
-
     pub(crate) fn delete_builder(&self, path: &str) -> Result<RequestBuilder> {
         let url = format!("{}{}", self.baseurl, path);
         Ok(self.client.delete(url).timeout(REQUEST_TIMEOUT))
@@ -243,9 +234,21 @@ impl DiscourseClient {
         Ok(VersionInfo { version, commit })
     }
 
-    /// Fetch the current Discourse version (best-effort).
+    /// Fetch the current Discourse version (best-effort). Uses only
+    /// `/about.json`, avoiding the homepage request that `fetch_version_info`
+    /// makes to extract the commit hash.
     pub fn fetch_version(&self) -> Result<Option<String>> {
-        Ok(self.fetch_version_info()?.version)
+        let response = self.get("/about.json")?;
+        let status = response.status();
+        let text = response
+            .text()
+            .context("reading about.json response body")?;
+        if !status.is_success() {
+            return Ok(None);
+        }
+        let body: AboutResponse =
+            serde_json::from_str(&text).context("parsing about.json for version")?;
+        Ok(body.about.version.or(body.about.installed_version))
     }
 }
 

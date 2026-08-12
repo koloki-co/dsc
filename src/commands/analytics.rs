@@ -45,6 +45,33 @@ const REPORT_IDS: &[&str] = &[
     "moderators_activity",
 ];
 
+/// Report IDs used by each section. `posts` appears in both activity and
+/// health; the union is `REPORT_IDS`.
+const GROWTH_REPORT_IDS: &[&str] = &["new_contributors", "trust_level_growth"];
+const ACTIVITY_REPORT_IDS: &[&str] = &[
+    "topics",
+    "posts",
+    "topics_with_no_response",
+    "time_to_first_response",
+];
+const HEALTH_REPORT_IDS: &[&str] = &["likes", "posts", "flags", "moderators_activity"];
+
+/// The report IDs needed by the selected section(s), in `REPORT_IDS` order.
+fn required_report_ids(filter: &SectionFilter) -> Vec<&'static str> {
+    match filter {
+        SectionFilter::Growth => GROWTH_REPORT_IDS.to_vec(),
+        SectionFilter::Activity => ACTIVITY_REPORT_IDS.to_vec(),
+        SectionFilter::Health => HEALTH_REPORT_IDS.to_vec(),
+        SectionFilter::All => REPORT_IDS.to_vec(),
+    }
+}
+
+/// Report IDs whose previous-window `average` is not available in
+/// `prev_data` and therefore need a separate previous-window fetch in
+/// compare mode. Only `time_to_first_response` uses `average` (not
+/// `current_total`).
+const COMPARE_PREVIOUS_REPORT_IDS: &[&str] = &["time_to_first_response"];
+
 // ---------------------------------------------------------------------------
 // Public entry points
 // ---------------------------------------------------------------------------
@@ -93,13 +120,15 @@ pub fn analytics(
         format = AnalyticsFormat::Text;
     }
 
-    let cache = populate_cache(&client, &windows)?;
+    let compare = compare && !snapshot;
+    let cache = populate_cache(&client, &windows, &section_filter, compare)?;
     let report = build_report(
         discourse_name,
         &windows,
         &column_headers,
         section_filter,
         snapshot,
+        compare,
         &cache,
     );
     render(&report, format)
@@ -271,23 +300,38 @@ type ReportCache = HashMap<(String, usize), Option<AdminReport>>;
 /// staying below the burst limit is faster and more polite. 4 is empirical.
 const ANALYTICS_PARALLELISM: usize = 4;
 
-fn populate_cache(client: &DiscourseClient, windows: &[Window]) -> Result<ReportCache> {
+fn populate_cache(
+    client: &DiscourseClient,
+    windows: &[Window],
+    filter: &SectionFilter,
+    compare: bool,
+) -> Result<ReportCache> {
     let cache: Arc<Mutex<ReportCache>> = Arc::new(Mutex::new(HashMap::new()));
 
-    // Build the full task list, then dispatch with a bounded worker pool.
-    // We could do "parallel-within-window, sequential-between-window" but
-    // that lets each window finish its slowest call before the next one
-    // can start — pointless idle time. A flat task queue keeps the workers
-    // saturated.
+    // Determine which report IDs are needed and which windows to fetch.
+    //
+    // In compare mode, each
+    // current-window report already contains `prev_data` for the
+    // immediately preceding equal-length window, so we only need to fetch
+    // the previous window for report IDs whose `average` scalar is not
+    // derivable from `prev_data` (currently just `time_to_first_response`).
+    // Total-based metrics read `previous_total()` from the current window's
+    // `prev_data` instead.
+    let needed = required_report_ids(filter);
     let tasks: Vec<(String, usize, String, String)> = windows
         .iter()
         .enumerate()
         .flat_map(|(w_idx, window)| {
             let start = window.iso_date_since();
             let end = window.iso_date_until();
-            REPORT_IDS
-                .iter()
+            let ids: &[&str] = if compare && w_idx == 1 {
+                COMPARE_PREVIOUS_REPORT_IDS
+            } else {
+                &needed
+            };
+            ids.iter()
                 .map(move |id| (id.to_string(), w_idx, start.clone(), end.clone()))
+                .collect::<Vec<_>>()
         })
         .collect();
     let queue = Arc::new(Mutex::new(tasks.into_iter()));
@@ -324,9 +368,21 @@ fn report_at<'a>(cache: &'a ReportCache, id: &str, w: usize) -> Option<&'a Admin
 
 /// Per-window total for a single report. None when the report was
 /// missing OR Discourse returned no data.
-fn totals_for(cache: &ReportCache, id: &str, n_windows: usize) -> Vec<Option<f64>> {
+///
+/// In compare mode (2 windows), the previous window's total is derived
+/// from `prev_data` on the current-window report when the previous window
+/// was not fetched separately.
+fn totals_for(cache: &ReportCache, id: &str, n_windows: usize, compare: bool) -> Vec<Option<f64>> {
     (0..n_windows)
-        .map(|w| report_at(cache, id, w).map(|r: &AdminReport| r.current_total()))
+        .map(|w| {
+            if let Some(r) = report_at(cache, id, w) {
+                Some(r.current_total())
+            } else if compare && w == 1 && n_windows == 2 {
+                report_at(cache, id, 0).and_then(|r| r.previous_total())
+            } else {
+                None
+            }
+        })
         .collect()
 }
 
@@ -356,21 +412,22 @@ fn build_report(
     column_headers: &[String],
     filter: SectionFilter,
     snapshot: bool,
+    compare: bool,
     cache: &ReportCache,
 ) -> AnalyticsReport {
     let n = windows.len();
     let growth = if matches!(filter, SectionFilter::All | SectionFilter::Growth) {
-        Some(build_growth(cache, n))
+        Some(build_growth(cache, n, compare))
     } else {
         None
     };
     let activity = if matches!(filter, SectionFilter::All | SectionFilter::Activity) {
-        Some(build_activity(cache, n))
+        Some(build_activity(cache, n, compare))
     } else {
         None
     };
     let health = if matches!(filter, SectionFilter::All | SectionFilter::Health) {
-        Some(build_health(cache, n))
+        Some(build_health(cache, n, compare))
     } else {
         None
     };
@@ -386,7 +443,7 @@ fn build_report(
     }
 }
 
-fn build_growth(cache: &ReportCache, n: usize) -> Vec<Metric> {
+fn build_growth(cache: &ReportCache, n: usize, compare: bool) -> Vec<Metric> {
     vec![
         Metric::new(
             "new contributors",
@@ -395,7 +452,7 @@ fn build_growth(cache: &ReportCache, n: usize) -> Vec<Metric> {
             Unit::Count,
             n,
         )
-        .with_values(totals_for(cache, "new_contributors", n)),
+        .with_values(totals_for(cache, "new_contributors", n, compare)),
         Metric::new(
             "reactivated users",
             "reactivated_users",
@@ -427,16 +484,16 @@ fn build_growth(cache: &ReportCache, n: usize) -> Vec<Metric> {
             Unit::Count,
             n,
         )
-        .with_values(totals_for(cache, "trust_level_growth", n)),
+        .with_values(totals_for(cache, "trust_level_growth", n, compare)),
     ]
 }
 
-fn build_activity(cache: &ReportCache, n: usize) -> Vec<Metric> {
+fn build_activity(cache: &ReportCache, n: usize, compare: bool) -> Vec<Metric> {
     let mut out = Vec::new();
 
-    let topics = totals_for(cache, "topics", n);
-    let posts = totals_for(cache, "posts", n);
-    let no_response = totals_for(cache, "topics_with_no_response", n);
+    let topics = totals_for(cache, "topics", n, compare);
+    let posts = totals_for(cache, "posts", n, compare);
+    let no_response = totals_for(cache, "topics_with_no_response", n, compare);
 
     out.push(
         Metric::new(
@@ -522,11 +579,11 @@ fn build_activity(cache: &ReportCache, n: usize) -> Vec<Metric> {
     out
 }
 
-fn build_health(cache: &ReportCache, n: usize) -> Vec<Metric> {
+fn build_health(cache: &ReportCache, n: usize, compare: bool) -> Vec<Metric> {
     let mut out = Vec::new();
-    let likes = totals_for(cache, "likes", n);
-    let posts = totals_for(cache, "posts", n);
-    let mods = totals_for(cache, "moderators_activity", n);
+    let likes = totals_for(cache, "likes", n, compare);
+    let posts = totals_for(cache, "posts", n, compare);
+    let mods = totals_for(cache, "moderators_activity", n, compare);
 
     out.push(
         Metric::new(
@@ -556,7 +613,7 @@ fn build_health(cache: &ReportCache, n: usize) -> Vec<Metric> {
             Unit::Count,
             n,
         )
-        .with_values(totals_for(cache, "flags", n)),
+        .with_values(totals_for(cache, "flags", n, compare)),
     );
     out.push(
         Metric::new(
@@ -1137,6 +1194,35 @@ fn float_or_null(v: Option<f64>) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn two_column_snapshot_does_not_use_compare_prev_data() {
+        let mut cache = ReportCache::new();
+        cache.insert(
+            ("posts".to_string(), 0),
+            Some(AdminReport {
+                report_type: String::new(),
+                data: json!([{ "y": 10 }]),
+                prev_data: Some(json!([{ "y": 5 }])),
+                start_date: None,
+                end_date: None,
+                prev_start_date: None,
+                prev_end_date: None,
+                average: None,
+                higher_is_better: None,
+            }),
+        );
+
+        assert_eq!(
+            totals_for(&cache, "posts", 2, false),
+            vec![Some(10.0), None]
+        );
+        assert_eq!(
+            totals_for(&cache, "posts", 2, true),
+            vec![Some(10.0), Some(5.0)]
+        );
+    }
 
     #[test]
     fn metric_delta_pct_works_on_compare_layout() {

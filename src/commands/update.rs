@@ -36,6 +36,7 @@ pub fn update_one(
     yes: bool,
     force: bool,
     skip_recent: Option<Duration>,
+    branch_override: Option<&str>,
 ) -> Result<()> {
     let discourse =
         find_discourse(config, name).ok_or_else(|| anyhow!("discourse not found: {}", name))?;
@@ -49,7 +50,8 @@ pub fn update_one(
         return Ok(());
     }
 
-    update_and_log(discourse, post_changelog, yes, force)
+    let branch = resolve_branch(discourse, branch_override);
+    update_and_log(discourse, post_changelog, yes, force, &branch)
 }
 
 pub fn update_all(
@@ -59,6 +61,7 @@ pub fn update_all(
     yes: bool,
     force: bool,
     skip_recent: Option<Duration>,
+    branch_override: Option<&str>,
 ) -> Result<()> {
     let updatable: Vec<DiscourseConfig> = config
         .discourse
@@ -86,30 +89,85 @@ pub fn update_all(
 
     let Some(width) = parallel else {
         for discourse in &to_update {
-            update_and_log(discourse, post_changelog, yes, force)?;
+            let branch = resolve_branch(discourse, branch_override);
+            update_and_log(discourse, post_changelog, yes, force, &branch)?;
         }
         return Ok(());
     };
 
     let max_threads = parallel_worker_count(Some(width), to_update.len());
-    let mut handles: Vec<thread::JoinHandle<Result<()>>> = Vec::new();
-    for discourse in to_update {
-        if handles.len() >= max_threads
-            && let Some(handle) = handles.pop()
-        {
-            handle.join().expect("thread panicked")?;
-        }
-        let do_post = post_changelog;
-        let auto_yes = yes;
+    update_all_parallel(
+        &to_update,
+        max_threads,
+        post_changelog,
+        yes,
+        force,
+        branch_override,
+    )
+}
+
+/// Resolve the Discourse branch to compare against: CLI override takes
+/// priority, then the per-forum config key, then the default `latest`.
+fn resolve_branch(discourse: &DiscourseConfig, override_value: Option<&str>) -> String {
+    override_value
+        .map(|s| s.to_string())
+        .or_else(|| discourse.discourse_branch.clone())
+        .unwrap_or_else(|| "latest".to_string())
+}
+
+/// Run updates across a fixed worker pool pulling from a shared queue.
+/// Workers stay busy: when one finishes, the next forum starts immediately,
+/// regardless of which other workers are still running. All worker errors
+/// are collected before returning, so a single failure does not detach
+/// in-flight SSH sessions.
+fn update_all_parallel(
+    to_update: &[DiscourseConfig],
+    workers: usize,
+    post_changelog: bool,
+    yes: bool,
+    force: bool,
+    branch_override: Option<&str>,
+) -> Result<()> {
+    use std::sync::{Arc, Mutex};
+
+    let queue: Arc<Mutex<VecDeque<DiscourseConfig>>> =
+        Arc::new(Mutex::new(to_update.iter().cloned().collect()));
+    let (tx, rx) = mpsc::channel::<Result<()>>();
+
+    let mut handles = Vec::with_capacity(workers);
+    for _ in 0..workers {
+        let queue = Arc::clone(&queue);
+        let tx = tx.clone();
+        let branch_override = branch_override.map(|s| s.to_string());
         handles.push(thread::spawn(move || {
-            update_and_log(&discourse, do_post, auto_yes, force)
+            loop {
+                let next = queue.lock().ok().and_then(|mut q| q.pop_front());
+                let Some(discourse) = next else { break };
+                let branch = resolve_branch(&discourse, branch_override.as_deref());
+                let result = update_and_log(&discourse, post_changelog, yes, force, &branch);
+                if tx.send(result).is_err() {
+                    break;
+                }
+            }
         }));
     }
+    drop(tx);
 
+    let mut errors: Vec<anyhow::Error> = Vec::new();
+    for result in rx {
+        if let Err(e) = result {
+            errors.push(e);
+        }
+    }
     for handle in handles {
-        handle.join().expect("thread panicked")?;
+        handle
+            .join()
+            .map_err(|_| anyhow!("update worker panicked"))?;
     }
 
+    if let Some(first) = errors.into_iter().next() {
+        return Err(first);
+    }
     Ok(())
 }
 
@@ -120,8 +178,9 @@ fn update_and_log(
     post_changelog: bool,
     yes: bool,
     force: bool,
+    branch: &str,
 ) -> Result<()> {
-    match run_update(discourse, force) {
+    match run_update(discourse, force, branch) {
         Ok(UpdateOutcome::Updated(metadata)) => {
             let kind = if metadata.discourse_rebuilt {
                 LogKind::Updated
@@ -185,10 +244,12 @@ fn recent_skip_set(
         return HashSet::new();
     }
     let window = skip_recent.unwrap_or(DEFAULT_RECENT_WINDOW);
-    let recent: Vec<&str> = updatable
+    let forum_names: Vec<&str> = updatable.iter().map(|d| d.name.as_str()).collect();
+    let recent_set = update_log::recent_forum_set(&forum_names, window);
+    let recent: Vec<&str> = forum_names
         .iter()
-        .map(|d| d.name.as_str())
-        .filter(|n| update_log::updated_within(n, window))
+        .copied()
+        .filter(|n| recent_set.contains(*n))
         .collect();
     if recent.is_empty() {
         return HashSet::new();
@@ -752,7 +813,7 @@ fn rebuild_in_progress(target: &str) -> Result<bool> {
     Ok(run_ssh_command(target, REBUILD_CHECK_CMD)?.contains("REBUILDING"))
 }
 
-fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome> {
+fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<UpdateOutcome> {
     let client = DiscourseClient::new(discourse)?;
     let target = discourse
         .ssh_host
@@ -899,39 +960,40 @@ fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome>
         if std::env::var("DSC_SSH_OS_UPDATE_CMD").unwrap_or_default() != "echo OS packages updated"
         {
             stage(&discourse_label, "Waiting for server to come back online");
-            std::thread::sleep(std::time::Duration::from_secs(30));
+            let probe_interval = std::time::Duration::from_secs(10);
+            let max_attempts = 18; // ~3 minutes total at 10s intervals
             let mut attempts = 0;
-            let max_attempts = 12;
-            while attempts < max_attempts {
+            loop {
                 match ssh_probe(&target) {
                     Ok(true) => break,
                     Ok(false) | Err(_) => {
                         attempts += 1;
-                        if attempts < max_attempts {
-                            println!(
-                                "[{}] Still waiting for SSH (attempt {}/{})",
-                                discourse_label,
-                                attempts + 1,
+                        if attempts >= max_attempts {
+                            return Err(anyhow!(
+                                "Server did not come back online after reboot ({} attempts)",
                                 max_attempts
-                            );
-                            std::thread::sleep(std::time::Duration::from_secs(30));
+                            ));
                         }
+                        println!(
+                            "[{}] Still waiting for SSH (attempt {}/{})",
+                            discourse_label,
+                            attempts + 1,
+                            max_attempts
+                        );
+                        std::thread::sleep(probe_interval);
                     }
                 }
-            }
-            if attempts >= max_attempts {
-                return Err(anyhow!("Server did not come back online after reboot"));
             }
         }
     }
 
     stage(&discourse_label, "Checking if Discourse update is needed");
-    let discourse_up_to_date = is_discourse_up_to_date(before_info.commit.as_deref());
+    let discourse_up_to_date = is_discourse_up_to_date(before_info.commit.as_deref(), branch);
     let discourse_rebuilt = !discourse_up_to_date;
     if discourse_up_to_date {
         stage(
             &discourse_label,
-            "Discourse is already at the latest stable commit — skipping rebuild",
+            &format!("Discourse is already at the latest {branch} commit — skipping rebuild"),
         );
     } else {
         stage(&discourse_label, "Running Discourse update");
@@ -944,12 +1006,23 @@ fn run_update(discourse: &DiscourseConfig, force: bool) -> Result<UpdateOutcome>
         )?;
     }
     stage(&discourse_label, "Waiting for Discourse to serve pages");
-    let wait_secs = std::env::var("DSC_DISCOURSE_BOOT_WAIT_SECS")
-        .ok()
-        .and_then(|raw| raw.trim().parse::<u64>().ok())
-        .filter(|secs| *secs > 0)
-        .unwrap_or(15);
-    std::thread::sleep(std::time::Duration::from_secs(wait_secs));
+    // Poll the Discourse API instead of sleeping blindly. Try immediately
+    // (the rebuild may have already completed), then retry with a short
+    // backoff. `fetch_version_info_with_retry` below does the heavier
+    // retry; this just needs to confirm the server is responding.
+    let boot_poll_interval = std::time::Duration::from_secs(5);
+    let max_boot_polls = 12; // ~60s worst case at 5s intervals
+    for i in 0..max_boot_polls {
+        if client
+            .get("/about.json")
+            .is_ok_and(|r| r.status().is_success())
+        {
+            break;
+        }
+        if i + 1 < max_boot_polls {
+            std::thread::sleep(boot_poll_interval);
+        }
+    }
     stage(
         &discourse_label,
         "Fetching Discourse version (after update)",
@@ -1238,6 +1311,16 @@ fn build_ssh_command(target: &str, extra_options: &[&str]) -> Result<std::proces
     validate_ssh_target(target)?;
     let mut cmd = std::process::Command::new("ssh");
     cmd.arg("-o").arg("BatchMode=yes");
+    // Connection and liveness defaults so a black-holed host fails fast
+    // instead of hanging indefinitely. These are conservative for long
+    // rebuild commands: `ServerAliveInterval` sends a keepalive probe
+    // every 30s and drops the connection after 3 missed responses (90s),
+    // distinguishing a legitimately long operation from a dead session.
+    // `ConnectTimeout=10` matches the reboot probe and config check.
+    // `DSC_SSH_OPTIONS` can override any of these.
+    cmd.arg("-o").arg("ConnectTimeout=10");
+    cmd.arg("-o").arg("ServerAliveInterval=30");
+    cmd.arg("-o").arg("ServerAliveCountMax=3");
     if let Some(strict) = ssh_strict_host_key_checking() {
         cmd.arg("-o")
             .arg(format!("StrictHostKeyChecking={}", strict));
@@ -1466,16 +1549,17 @@ fn fetch_version_info_with_retry(client: &DiscourseClient, attempts: usize) -> R
     Err(last_err.unwrap_or_else(|| anyhow!("fetch version failed")))
 }
 
-/// Fetch the latest commit SHA on the `stable` branch of discourse/discourse
+/// Fetch the latest commit SHA on the given branch of discourse/discourse
 /// from the GitHub API. Returns `None` on any failure (network, rate limit,
 /// parse error) — callers treat that as "unknown, proceed with update".
-fn fetch_latest_discourse_commit() -> Option<String> {
+fn fetch_latest_discourse_commit(branch: &str) -> Option<String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .ok()?;
+    let url = format!("https://api.github.com/repos/discourse/discourse/commits/{branch}");
     let resp = client
-        .get("https://api.github.com/repos/discourse/discourse/commits/stable")
+        .get(&url)
         .header("Accept", "application/vnd.github.sha")
         .header("User-Agent", "dsc-cli")
         .send()
@@ -1492,8 +1576,8 @@ fn fetch_latest_discourse_commit() -> Option<String> {
 }
 
 /// Returns `true` if the running Discourse commit matches the latest available
-/// stable commit — meaning a rebuild would be a no-op.
-fn is_discourse_up_to_date(running_commit: Option<&str>) -> bool {
+/// commit on the configured branch — meaning a rebuild would be a no-op.
+fn is_discourse_up_to_date(running_commit: Option<&str>, branch: &str) -> bool {
     let Some(running) = running_commit else {
         return false;
     };
@@ -1501,7 +1585,7 @@ fn is_discourse_up_to_date(running_commit: Option<&str>) -> bool {
     if running.is_empty() {
         return false;
     }
-    let Some(latest) = fetch_latest_discourse_commit() else {
+    let Some(latest) = fetch_latest_discourse_commit(branch) else {
         return false;
     };
     // Compare by the shorter of the two — the running commit from the

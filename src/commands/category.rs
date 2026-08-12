@@ -83,12 +83,16 @@ pub fn category_copy(
     ensure_api_credentials(source_discourse)?;
     ensure_api_credentials(target_discourse)?;
     let source_client = DiscourseClient::new(source_discourse)?;
-    let category_id = resolve_category_id(&source_client, category)?;
-    let categories = source_client.fetch_categories()?;
-    let category = categories
-        .into_iter()
-        .find(|cat| cat.id == Some(category_id))
-        .ok_or_else(|| not_found("category", category_id))?;
+    let (category_id, maybe_category) = resolve_category_with_object(&source_client, category)?;
+    let category = if let Some(cat) = maybe_category {
+        cat
+    } else {
+        let categories = source_client.fetch_categories()?;
+        categories
+            .into_iter()
+            .find(|cat| cat.id == Some(category_id))
+            .ok_or_else(|| not_found("category", category_id))?
+    };
     let mut copied = category.clone();
     copied.name = format!("Copy of {}", category.name);
     copied.slug = format!("{}-copy", category.slug);
@@ -464,6 +468,32 @@ fn resolve_category_id(client: &DiscourseClient, category: &str) -> Result<u64> 
         .find(|cat| cat.slug == slug)
         .ok_or_else(|| not_found("category", slug))?;
     category.id.ok_or_else(|| not_found("category", slug))
+}
+
+/// Resolve a category identifier and return both the ID and the full
+/// `CategoryInfo` object when the catalogue was fetched. When the input
+/// is a numeric ID, the catalogue is not fetched and `None` is returned
+/// for the object (the caller must fetch it separately if needed).
+fn resolve_category_with_object(
+    client: &DiscourseClient,
+    category: &str,
+) -> Result<(u64, Option<CategoryInfo>)> {
+    if let Ok(id) = category.parse::<u64>() {
+        return Ok((id, None));
+    }
+    let slug = category.trim();
+    if slug.is_empty() {
+        return Err(anyhow!(
+            "missing category identifier for category operation"
+        ));
+    }
+    let categories = client.fetch_categories()?;
+    let found = categories
+        .into_iter()
+        .find(|cat| cat.slug == slug)
+        .ok_or_else(|| not_found("category", slug))?;
+    let id = found.id.ok_or_else(|| not_found("category", slug))?;
+    Ok((id, Some(found)))
 }
 
 fn flatten_categories(category: &CategoryInfo, out: &mut Vec<CategoryInfo>) {

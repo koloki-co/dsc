@@ -280,7 +280,13 @@ pub fn topic_delete(
     let client = DiscourseClient::new(discourse)?;
 
     for topic_id in topic_ids {
-        let brief = fetch_topic_brief(&client, *topic_id, dry_run)?;
+        // Fetch topic metadata only for dry-run display; live deletion
+        // reports the ID without an extra GET request per topic.
+        let brief = if dry_run {
+            fetch_topic_brief(&client, *topic_id, true)?
+        } else {
+            None
+        };
         let action = if purge {
             "permanently delete"
         } else {

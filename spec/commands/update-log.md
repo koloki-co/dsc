@@ -57,7 +57,7 @@ The skip happens at the **top of `run_update`**, before the OS update / reboot, 
 |---|---|---|
 | rebuild-lock | is a `./launcher rebuild` running now? | top of `run_update` |
 | skip-recent | did we fully update it within the window? | top of `run_update` |
-| skip-if-current | is it already on the latest stable commit? | after reboot, skips only the rebuild |
+| skip-if-current | is it already on the latest commit of the configured branch? | after reboot, skips only the rebuild |
 
 ## Phases
 
