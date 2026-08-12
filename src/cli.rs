@@ -1339,7 +1339,8 @@ pub enum BackupCommand {
     #[command(after_help = "Examples:
   dsc backup setup-s3 -n myforum                  # preview the full plan (review gate)
   dsc backup setup-s3 myforum --region eu-west-1
-  dsc backup setup-s3 myforum --no-test")]
+  dsc backup setup-s3 myforum --no-test
+  dsc backup setup-s3 myforum --use-iam-profile   # EC2 instance role, no static keys")]
     SetupS3 {
         /// Discourse name.
         discourse: String,
@@ -1352,6 +1353,11 @@ pub enum BackupCommand {
         /// Skip the verification backup after provisioning.
         #[arg(long)]
         no_test: bool,
+        /// Use the EC2 instance's IAM role instead of a dedicated IAM user and
+        /// access key: only the bucket is created, and Discourse is pointed at
+        /// it with `s3_use_iam_profile=true` rather than static credentials.
+        #[arg(long)]
+        use_iam_profile: bool,
     },
     /// Check recent S3 backup age and bucket growth across configured forums.
     #[command(visible_alias = "check")]

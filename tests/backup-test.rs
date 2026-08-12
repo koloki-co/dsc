@@ -55,6 +55,56 @@ api_username = "system"
 }
 
 #[test]
+fn setup_s3_dry_run_use_iam_profile_skips_user_and_keys() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "forum"
+baseurl = "https://forum.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(
+        &[
+            "backup",
+            "setup-s3",
+            "forum",
+            "--dry-run",
+            "--use-iam-profile",
+        ],
+        &config_path,
+    );
+    assert!(output.status.success(), "dry-run must not fail offline");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("s3_use_iam_profile   = true"));
+    assert!(!stdout.contains("create-access-key"));
+    assert!(!stdout.contains("create-user"));
+    assert!(!stdout.contains("s3_access_key_id"));
+}
+
+#[test]
+fn setup_s3_dry_run_default_still_plans_dedicated_user() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "forum"
+baseurl = "https://forum.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(&["backup", "setup-s3", "forum", "--dry-run"], &config_path);
+    assert!(output.status.success(), "dry-run must not fail offline");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("aws iam create-access-key --user-name forum-discourse-backup-user"));
+    assert!(stdout.contains("s3_use_iam_profile   = false"));
+    assert!(stdout.contains("s3_access_key_id     = <minted at run time>"));
+}
+
+#[test]
 fn backup_health_rejects_discourse_and_tags_together() {
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
