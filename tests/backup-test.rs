@@ -100,6 +100,7 @@ api_username = "system"
     assert!(output.status.success(), "dry-run must not fail offline");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("aws iam create-access-key --user-name forum-discourse-backup-user"));
+    assert!(stdout.contains("s3_use_iam_profile   = false"));
     assert!(stdout.contains("s3_access_key_id     = <minted at run time>"));
 }
 

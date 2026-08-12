@@ -239,6 +239,9 @@ pub fn setup_s3(
         // never printed).
         client.update_site_setting("s3_access_key_id", &access_key_id)?;
         client.update_site_setting("s3_secret_access_key", &secret_access_key)?;
+        // A prior --use-iam-profile run leaves this enabled. Disable it only
+        // after the replacement static credentials are stored.
+        client.update_site_setting("s3_use_iam_profile", "false")?;
     }
 
     // 4. Point Discourse at the bucket.
@@ -362,6 +365,7 @@ fn print_plan(
     if use_iam_profile {
         println!("  s3_use_iam_profile   = true");
     } else {
+        println!("  s3_use_iam_profile   = false");
         println!("  s3_access_key_id     = <minted at run time>");
         println!("  s3_secret_access_key = <minted at run time; never printed>");
     }
