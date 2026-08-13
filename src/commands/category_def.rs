@@ -35,6 +35,8 @@ const VALID_FIELDS: &[&str] = &[
     "allowed_tags",
     "allowed_tag_groups",
     "minimum_required_tags",
+    "required_tag_groups",
+    "category_types",
     "sort_order",
     "default_view",
     "subcategory_list_style",
@@ -87,6 +89,12 @@ pub struct CategoryDefEntry {
     pub allowed_tag_groups: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_required_tags: Option<u64>,
+    /// Tag groups whose tags are required on new topics in this category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_tag_groups: Option<Vec<RequiredTagGroupEntry>>,
+    /// Enabled category type IDs beyond the built-in `discussion` type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category_types: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -97,6 +105,14 @@ pub struct CategoryDefEntry {
     pub num_featured_topics: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub show_subcategory_list: Option<bool>,
+}
+
+/// One required tag-group rule in the portable category-definition file.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct RequiredTagGroupEntry {
+    pub name: String,
+    pub min_count: u64,
 }
 
 // ─── Permission level <-> label ───────────────────────────────────────────────
@@ -169,6 +185,26 @@ fn def_to_entry(def: &CategoryDefinition, id_to_slug: &BTreeMap<u64, String>) ->
         allowed_tags: nonempty_list(&def.allowed_tags),
         allowed_tag_groups: nonempty_list(&def.allowed_tag_groups),
         minimum_required_tags: def.minimum_required_tags.filter(|n| *n > 0),
+        required_tag_groups: def.required_tag_groups.as_ref().and_then(|groups| {
+            let groups: Vec<RequiredTagGroupEntry> = groups
+                .iter()
+                .filter_map(|group| {
+                    group.name.as_ref().map(|name| RequiredTagGroupEntry {
+                        name: name.clone(),
+                        min_count: group.min_count.unwrap_or_default(),
+                    })
+                })
+                .collect();
+            (!groups.is_empty()).then_some(groups)
+        }),
+        category_types: def.category_types.as_ref().and_then(|types| {
+            let types: Vec<String> = types
+                .keys()
+                .filter(|category_type| category_type.as_str() != "discussion")
+                .cloned()
+                .collect();
+            (!types.is_empty()).then_some(types)
+        }),
         sort_order: nonempty(&def.sort_order),
         default_view: nonempty(&def.default_view),
         subcategory_list_style: nonempty(&def.subcategory_list_style),
@@ -249,6 +285,31 @@ fn entry_to_params(
     if let Some(v) = entry.minimum_required_tags {
         p.push(("minimum_required_tags".to_string(), v.to_string()));
     }
+    if let Some(groups) = &entry.required_tag_groups {
+        if groups.is_empty() {
+            p.push(("required_tag_groups[][name]".to_string(), String::new()));
+        } else {
+            for group in groups {
+                p.push((
+                    "required_tag_groups[][name]".to_string(),
+                    group.name.clone(),
+                ));
+                p.push((
+                    "required_tag_groups[][min_count]".to_string(),
+                    group.min_count.to_string(),
+                ));
+            }
+        }
+    }
+    if let Some(types) = &entry.category_types {
+        if types.is_empty() {
+            p.push(("category_types[]".to_string(), String::new()));
+        } else {
+            for category_type in types {
+                p.push(("category_types[]".to_string(), category_type.clone()));
+            }
+        }
+    }
     push_opt(&mut p, "sort_order", &entry.sort_order);
     push_opt(&mut p, "default_view", &entry.default_view);
     push_opt(
@@ -325,6 +386,13 @@ fn opt_list_diff(a: &Option<Vec<String>>, b: &Option<Vec<String>>) -> bool {
     }
 }
 
+/// Discourse serialises a cleared list as absent, so treat empty and absent as
+/// equal while still preserving omission as "leave untouched".
+fn opt_vec_diff<T: PartialEq>(a: &Option<Vec<T>>, b: &Option<Vec<T>>) -> bool {
+    a.as_ref()
+        .is_some_and(|values| values.as_slice() != b.as_deref().unwrap_or_default())
+}
+
 /// Return the specified file fields that differ from the server. Omitted file
 /// fields are intentionally absent because `def push` leaves them untouched.
 fn changed_fields(e: &CategoryDefEntry, s: &CategoryDefEntry) -> Vec<&'static str> {
@@ -369,6 +437,12 @@ fn changed_fields(e: &CategoryDefEntry, s: &CategoryDefEntry) -> Vec<&'static st
     }
     if opt_diff(&e.minimum_required_tags, &s.minimum_required_tags) {
         fields.push("minimum_required_tags");
+    }
+    if opt_vec_diff(&e.required_tag_groups, &s.required_tag_groups) {
+        fields.push("required_tag_groups");
+    }
+    if opt_list_diff(&e.category_types, &s.category_types) {
+        fields.push("category_types");
     }
     if opt_diff(&e.sort_order, &s.sort_order) {
         fields.push("sort_order");
@@ -765,6 +839,17 @@ fn entry_field(e: &CategoryDefEntry, field: &str) -> Result<(String, Value)> {
         Some(l) => (l.join(", "), json!(l)),
         None => ("(unset)".to_string(), Value::Null),
     };
+    let required_tag_groups = |v: &Option<Vec<RequiredTagGroupEntry>>| match v {
+        Some(groups) => (
+            groups
+                .iter()
+                .map(|group| format!("{}:{}", group.name, group.min_count))
+                .collect::<Vec<_>>()
+                .join(", "),
+            json!(groups),
+        ),
+        None => ("(unset)".to_string(), Value::Null),
+    };
     let out = match field.trim() {
         "name" => (e.name.clone(), json!(e.name)),
         "slug" => optstr(&e.slug),
@@ -791,6 +876,8 @@ fn entry_field(e: &CategoryDefEntry, field: &str) -> Result<(String, Value)> {
         "allowed_tags" => optlist(&e.allowed_tags),
         "allowed_tag_groups" => optlist(&e.allowed_tag_groups),
         "minimum_required_tags" => optnum(e.minimum_required_tags),
+        "required_tag_groups" => required_tag_groups(&e.required_tag_groups),
+        "category_types" => optlist(&e.category_types),
         "sort_order" => optstr(&e.sort_order),
         "default_view" => optstr(&e.default_view),
         "subcategory_list_style" => optstr(&e.subcategory_list_style),
@@ -984,6 +1071,40 @@ fn parse_permissions(value: &str) -> Result<Vec<(String, String)>> {
     Ok(params)
 }
 
+/// Parse `Role:1,Genre:2` into the nested form Discourse expects.
+fn parse_required_tag_groups(value: &str) -> Result<Vec<(String, String)>> {
+    let mut params = Vec::new();
+    for pair in value.split(',') {
+        let pair = pair.trim();
+        if pair.is_empty() {
+            continue;
+        }
+        let (name, min_count) = pair
+            .rsplit_once(':')
+            .ok_or_else(|| anyhow!("required tag group '{}' must be name:min_count", pair))?;
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(anyhow!("required tag group name is empty"));
+        }
+        let min_count = min_count
+            .trim()
+            .parse::<u64>()
+            .with_context(|| format!("required tag group '{}' has an invalid min_count", name))?;
+        params.push(("required_tag_groups[][name]".to_string(), name.to_string()));
+        params.push((
+            "required_tag_groups[][min_count]".to_string(),
+            min_count.to_string(),
+        ));
+    }
+    if params.is_empty() {
+        return Ok(vec![(
+            "required_tag_groups[][name]".to_string(),
+            String::new(),
+        )]);
+    }
+    Ok(params)
+}
+
 /// Merge `edits` into `current` for a `--append`/`--remove` list-field edit.
 /// Append dedupes (an item already present is left in place, not duplicated);
 /// remove is a no-op for items not present. Pure, order-preserving.
@@ -1086,6 +1207,8 @@ fn field_to_set_params(
             })?;
             one("minimum_required_tags", value.to_string())
         }
+        "required_tag_groups" => parse_required_tag_groups(value)?,
+        "category_types" => list("category_types[]", value),
         "allowed_tags" => list("allowed_tags[]", value),
         "allowed_tag_groups" => list("allowed_tag_groups[]", value),
         "permissions" => parse_permissions(value)?,
@@ -1257,6 +1380,94 @@ mod tests {
         let mut file = entry("General");
         file.allowed_tags = Some(vec!["a".to_string(), "b".to_string()]);
         assert!(changed_fields(&file, &server).is_empty());
+    }
+
+    #[test]
+    fn required_tag_groups_round_trip_through_entry_and_params() {
+        let mut category = def(3, "Marketplace");
+        category.required_tag_groups = Some(vec![crate::api::RequiredTagGroup {
+            name: Some("Role".to_string()),
+            min_count: Some(2),
+        }]);
+
+        let entry = def_to_entry(&category, &BTreeMap::new());
+        assert_eq!(
+            entry.required_tag_groups,
+            Some(vec![RequiredTagGroupEntry {
+                name: "Role".to_string(),
+                min_count: 2,
+            }])
+        );
+
+        let params = entry_to_params(&entry, &BTreeMap::new()).unwrap();
+        assert!(params.contains(&(
+            "required_tag_groups[][name]".to_string(),
+            "Role".to_string()
+        )));
+        assert!(params.contains(&(
+            "required_tag_groups[][min_count]".to_string(),
+            "2".to_string()
+        )));
+    }
+
+    #[test]
+    fn category_types_round_trip_as_sorted_extra_ids() {
+        let mut category = def(3, "Marketplace");
+        category.category_types = Some(BTreeMap::from([
+            ("support".to_string(), json!({})),
+            ("discussion".to_string(), json!({})),
+        ]));
+
+        let entry = def_to_entry(&category, &BTreeMap::new());
+        assert_eq!(entry.category_types, Some(vec!["support".to_string()]));
+
+        let params = entry_to_params(&entry, &BTreeMap::new()).unwrap();
+        assert!(params.contains(&("category_types[]".to_string(), "support".to_string())));
+    }
+
+    #[test]
+    fn empty_required_tag_groups_match_an_absent_server_value() {
+        let mut file = entry("Marketplace");
+        file.required_tag_groups = Some(Vec::new());
+        assert!(changed_fields(&file, &entry("Marketplace")).is_empty());
+    }
+
+    #[test]
+    fn set_params_parse_required_tag_groups_and_empty_value_clears_them() {
+        let params =
+            field_to_set_params("required_tag_groups", "Role:1,Genre:2", &BTreeMap::new()).unwrap();
+        assert_eq!(
+            params,
+            vec![
+                (
+                    "required_tag_groups[][name]".to_string(),
+                    "Role".to_string()
+                ),
+                (
+                    "required_tag_groups[][min_count]".to_string(),
+                    "1".to_string(),
+                ),
+                (
+                    "required_tag_groups[][name]".to_string(),
+                    "Genre".to_string()
+                ),
+                (
+                    "required_tag_groups[][min_count]".to_string(),
+                    "2".to_string(),
+                ),
+            ]
+        );
+        assert_eq!(
+            field_to_set_params("required_tag_groups", "", &BTreeMap::new()).unwrap(),
+            vec![("required_tag_groups[][name]".to_string(), String::new(),)]
+        );
+    }
+
+    #[test]
+    fn set_params_rejects_invalid_required_tag_group() {
+        let err =
+            field_to_set_params("required_tag_groups", "Role:many", &BTreeMap::new()).unwrap_err();
+        assert!(err.to_string().contains("invalid min_count"));
     }
 
     #[test]

@@ -116,6 +116,15 @@ pub struct GroupPermission {
     pub permission_type: u8,
 }
 
+/// One tag group whose tags are required when creating a topic in a category.
+#[derive(Debug, Deserialize, Serialize, Clone, PartialEq, Eq)]
+pub struct RequiredTagGroup {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub min_count: Option<u64>,
+}
+
 /// The full definition of a category (from `/categories.json?show_permissions=true`).
 ///
 /// Distinct from the sparse [`CategoryInfo`] used by `category list`: this carries
@@ -157,6 +166,12 @@ pub struct CategoryDefinition {
     pub allowed_tag_groups: Option<Vec<String>>,
     #[serde(default)]
     pub minimum_required_tags: Option<u64>,
+    #[serde(default)]
+    pub required_tag_groups: Option<Vec<RequiredTagGroup>>,
+    /// Registered category types keyed by type ID. The metadata values are
+    /// server-defined, so definition sync preserves only their stable keys.
+    #[serde(default)]
+    pub category_types: Option<std::collections::BTreeMap<String, serde_json::Value>>,
     #[serde(default)]
     pub sort_order: Option<String>,
     #[serde(default)]
