@@ -196,7 +196,8 @@ categories:
     allowed_tags: [guitarist, bassist, drummer, vocalist]   # optional; restricts the tag picker to these
     allowed_tag_groups: [Role, Genre]                        # optional; tag groups whose members are pickable here
     minimum_required_tags: 1                                 # optional; topics must carry >= N tags
-    # required_tag_groups:                                   # optional; list of {name, min_tags} (Phase 2)
+    # required_tag_groups:                                   # optional; list of {name, min_count} (Phase 2)
+    # category_types: [support]                              # optional; extra enabled category type IDs (Phase 2; `discussion` is implicit)
 
     # Optional display/ordering knobs (omit to keep server defaults):
     sort_order: null
@@ -343,7 +344,7 @@ Form params (all optional except name on create):
   description, topic_template, position, read_restricted,
   permissions[<group_name>] = full | create_post | readonly,   # one per group
   allowed_tags[]=, allowed_tag_groups[]=,
-  minimum_required_tags, required_tag_groups[][name]= / required_tag_groups[][min_tags]=,
+  minimum_required_tags, required_tag_groups[][name]= / required_tag_groups[][min_count]=,
   sort_order, default_view, subcategory_list_style, num_featured_topics,
   show_subcategory_list, all_topics_wiki, default_latest_period_days,
   minimum_required_trust_level, min_personal_message_trust_level, mailinglist_mirror
@@ -417,8 +418,8 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   replace. `src/commands/category_def.rs` (`merge_list_field`,
   `list_field_edit_params`); unit-tested (no live test needed - pure list
   merge logic).
-- [ ] `required_tag_groups` round-trip (list of `{name, min_tags}`).
-- [ ] `category_types` round-trip. The modern Discourse support category type is
+- [x] `required_tag_groups` round-trip (list of `{name, min_count}`). **Status: implemented (unreleased).** Reads the category-list response and writes `required_tag_groups[][name]` / `required_tag_groups[][min_count]` form parameters. `category set` accepts `group:min_count,...` and an empty value clears the rules.
+- [x] `category_types` round-trip. **Status: implemented (unreleased).** Reads the stable type IDs beyond the built-in `discussion` type from the category-list response and writes `category_types[]` form parameters. `category set` accepts a comma-separated type list. The modern Discourse support category type is
   needed to enable accepted answers for York Music's Marketplace; it supersedes
   the invalid category-level `solved_enabled` field.
 - [ ] `parent` resolution by name as well as slug; validation that the parent
