@@ -65,7 +65,7 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 
 ### Cross-forum (the multi-install headline)
 
-- [ ] **R19 - `dsc search all <query>`** - merged fan-out search.
+- [x] **R19 - `dsc search all <query>`** - merged fan-out search across every configured forum, printing one combined, forum-tagged result list. Continues past a single forum's failure (missing credentials, unreachable) so the rest of the fleet's results still land; exits non-zero if any forum could not be searched.
 - [ ] **R20 - `dsc report all <name>`** - aggregate a report across forums.
 - [ ] **R21 - `dsc user find <email>`** - GDPR "which forum has this person" lookup.
 - [ ] **R22 - `dsc backup create --all`** - reuse the `update all` parallel pattern for fleet backups.

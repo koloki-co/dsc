@@ -422,13 +422,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: ExplorerCommand,
     },
-    /// Search topics on a Discourse.
+    /// Search topics on a Discourse, or `all` to fan out across every
+    /// configured forum and print one merged, forum-tagged result list.
     #[command(visible_alias = "s")]
     #[command(after_help = "Examples:
   dsc search myforum \"status:open category:bugs\"
-  dsc search myforum @alice -f json")]
+  dsc search myforum @alice -f json
+  dsc search all \"category:security\" -f json")]
     Search {
-        /// Discourse name.
+        /// Discourse name, or `all` to search every configured forum.
         discourse: String,
         /// Search query (passed through verbatim, including any
         /// Discourse filter syntax like `category:foo` or `@user`).

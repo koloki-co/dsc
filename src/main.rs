@@ -1346,7 +1346,10 @@ fn main() -> Result<()> {
             discourse,
             query,
             format,
-        } => commands::search::search(&config, &discourse, &query, format),
+        } => match discourse.as_str() {
+            "all" => commands::search::search_all(&config, &query, format),
+            name => commands::search::search(&config, name, &query, format),
+        },
 
         Commands::Analytics {
             discourse,
