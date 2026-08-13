@@ -345,6 +345,7 @@ Form params (all optional except name on create):
   permissions[<group_name>] = full | create_post | readonly,   # one per group
   allowed_tags[]=, allowed_tag_groups[]=,
   minimum_required_tags, required_tag_groups[][name]= / required_tag_groups[][min_count]=,
+  category_types[]=,
   sort_order, default_view, subcategory_list_style, num_featured_topics,
   show_subcategory_list, all_topics_wiki, default_latest_period_days,
   minimum_required_trust_level, min_personal_message_trust_level, mailinglist_mirror

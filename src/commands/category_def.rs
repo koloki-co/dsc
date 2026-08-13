@@ -92,7 +92,7 @@ pub struct CategoryDefEntry {
     /// Tag groups whose tags are required on new topics in this category.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub required_tag_groups: Option<Vec<RequiredTagGroupEntry>>,
-    /// Enabled category type IDs. `discussion` is the built-in base type.
+    /// Enabled category type IDs beyond the built-in `discussion` type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category_types: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
