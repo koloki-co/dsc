@@ -4,7 +4,61 @@
 
 mod common;
 use common::*;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{TcpListener, TcpStream};
 use tempfile::TempDir;
+
+/// A mock Discourse that answers every request with a fixed status, ignoring
+/// path and method - `backup create`'s only interest is the response status.
+fn start_mock(status: u16) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock listener");
+    let addr = listener.local_addr().expect("mock addr");
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            handle(stream, status);
+        }
+    });
+    format!("http://{addr}")
+}
+
+fn handle(mut stream: TcpStream, status: u16) {
+    let mut reader = BufReader::new(match stream.try_clone() {
+        Ok(s) => s,
+        Err(_) => return,
+    });
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).is_err() || request_line.trim().is_empty() {
+        return;
+    }
+    let mut content_length = 0usize;
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).is_err() || line == "\r\n" || line == "\n" {
+            break;
+        }
+        let lower = line.to_ascii_lowercase();
+        if let Some(v) = lower.strip_prefix("content-length:") {
+            content_length = v.trim().parse().unwrap_or(0);
+        }
+    }
+    let mut body = vec![0u8; content_length];
+    if content_length > 0 {
+        let _ = reader.read_exact(&mut body);
+    }
+
+    let (status_line, body) = if status == 200 {
+        ("HTTP/1.1 200 OK", "{}".to_string())
+    } else {
+        ("HTTP/1.1 503 Service Unavailable", "{}".to_string())
+    };
+    let response = format!(
+        "{status_line}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
+}
 
 #[test]
 #[ignore = "live compatibility test; run through s/test-live"]
@@ -125,5 +179,66 @@ tags = ["production"]
     assert!(
         String::from_utf8_lossy(&output.stderr)
             .contains("cannot pass <discourse> together with --tags")
+    );
+}
+
+#[test]
+fn backup_create_all_fans_out_to_every_configured_forum() {
+    let alpha_url = start_mock(200);
+    let beta_url = start_mock(200);
+
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"alpha\"\nbaseurl = \"{alpha_url}\"\napikey = \"k\"\napi_username = \"tester\"\n\n[[discourse]]\nname = \"beta\"\nbaseurl = \"{beta_url}\"\napikey = \"k\"\napi_username = \"tester\"\n"
+        ),
+    );
+
+    let output = run_dsc(&["backup", "create", "all"], &config_path);
+    assert!(
+        output.status.success(),
+        "backup create all failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("alpha: backup requested"));
+    assert!(stdout.contains("beta: backup requested"));
+}
+
+#[test]
+fn backup_create_all_reports_per_forum_failures_without_stopping_the_fleet() {
+    let alpha_url = start_mock(200);
+    let down_url = start_mock(503);
+
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"alpha\"\nbaseurl = \"{alpha_url}\"\napikey = \"k\"\napi_username = \"tester\"\n\n[[discourse]]\nname = \"down\"\nbaseurl = \"{down_url}\"\napikey = \"k\"\napi_username = \"tester\"\n"
+        ),
+    );
+
+    let output = run_dsc(&["backup", "create", "all"], &config_path);
+    assert!(
+        !output.status.success(),
+        "backup create all should fail overall when one forum errors"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("alpha: backup requested"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("down: backup failed"));
+}
+
+#[test]
+fn backup_create_all_requires_configured_discourses() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(&dir, "");
+    let output = run_dsc(&["backup", "create", "all"], &config_path);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no discourses configured"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

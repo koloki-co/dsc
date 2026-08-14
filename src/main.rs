@@ -852,9 +852,10 @@ fn main() -> Result<()> {
         },
 
         Commands::Backup { command } => match command {
-            BackupCommand::Create { discourse } => {
-                commands::backup::backup_create(&config, &discourse)
-            }
+            BackupCommand::Create { discourse } => match discourse.as_str() {
+                "all" => commands::backup::backup_create_all(&config),
+                name => commands::backup::backup_create(&config, name),
+            },
 
             BackupCommand::List {
                 discourse,

@@ -1296,9 +1296,12 @@ pub enum GroupCommand {
 #[command(next_display_order = None)]
 pub enum BackupCommand {
     /// Create a new backup.
+    #[command(after_help = "Examples:
+  dsc backup create myforum
+  dsc backup create all")]
     #[command(visible_alias = "cr")]
     Create {
-        /// Discourse name.
+        /// Discourse name, or `all` to create a backup on every configured forum.
         discourse: String,
     },
     /// List backups.
