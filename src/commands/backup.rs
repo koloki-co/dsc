@@ -24,6 +24,41 @@ pub fn backup_create(config: &Config, discourse_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Fan out `backup create` to every configured forum. Continues past
+/// per-forum failures (missing credentials, unreachable forum) so one bad
+/// entry doesn't block the rest of the fleet; fails at the end if any forum
+/// could not be backed up.
+pub fn backup_create_all(config: &Config) -> Result<()> {
+    if config.discourse.is_empty() {
+        return Err(anyhow!("no discourses configured"));
+    }
+
+    let mut failed = 0usize;
+    for discourse in &config.discourse {
+        match backup_create_one(discourse) {
+            Ok(()) => println!("{}: backup requested", discourse.name),
+            Err(e) => {
+                failed += 1;
+                eprintln!("{}: backup failed - {e}", discourse.name);
+            }
+        }
+    }
+
+    if failed > 0 {
+        return Err(anyhow!(
+            "backup creation failed on {failed} of {} forum(s)",
+            config.discourse.len()
+        ));
+    }
+    Ok(())
+}
+
+fn backup_create_one(discourse: &DiscourseConfig) -> Result<()> {
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+    client.create_backup()
+}
+
 pub fn backup_list(
     config: &Config,
     discourse_name: &str,

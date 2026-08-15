@@ -29,9 +29,18 @@ Requires the [`aws` CLI](https://docs.aws.amazon.com/cli/) and its normal ambien
 
 ```
 dsc backup create <discourse>
+dsc backup create --all
 ```
 
 Triggers a backup on the specified Discourse. The backup is created server-side; it is not downloaded locally.
+
+Use `--all` to trigger a backup on every configured forum:
+
+```bash
+dsc backup create --all
+```
+
+Continues past a forum that fails (missing credentials, unreachable) so one bad entry doesn't stop the rest of the fleet; exits non-zero if any forum failed.
 
 ## dsc backup list
 
