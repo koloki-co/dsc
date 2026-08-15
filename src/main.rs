@@ -852,9 +852,10 @@ fn main() -> Result<()> {
         },
 
         Commands::Backup { command } => match command {
-            BackupCommand::Create { discourse } => match discourse.as_str() {
-                "all" => commands::backup::backup_create_all(&config),
-                name => commands::backup::backup_create(&config, name),
+            BackupCommand::Create { discourse, all } => match (all, discourse.as_deref()) {
+                (true, None) => commands::backup::backup_create_all(&config),
+                (false, Some(name)) => commands::backup::backup_create(&config, name),
+                _ => Err(anyhow!("specify a discourse name or --all")),
             },
 
             BackupCommand::List {

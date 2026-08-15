@@ -195,10 +195,10 @@ fn backup_create_all_fans_out_to_every_configured_forum() {
         ),
     );
 
-    let output = run_dsc(&["backup", "create", "all"], &config_path);
+    let output = run_dsc(&["backup", "create", "--all"], &config_path);
     assert!(
         output.status.success(),
-        "backup create all failed: {}",
+        "backup create --all failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -219,10 +219,10 @@ fn backup_create_all_reports_per_forum_failures_without_stopping_the_fleet() {
         ),
     );
 
-    let output = run_dsc(&["backup", "create", "all"], &config_path);
+    let output = run_dsc(&["backup", "create", "--all"], &config_path);
     assert!(
         !output.status.success(),
-        "backup create all should fail overall when one forum errors"
+        "backup create --all should fail overall when one forum errors"
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("alpha: backup requested"));
@@ -234,7 +234,7 @@ fn backup_create_all_reports_per_forum_failures_without_stopping_the_fleet() {
 fn backup_create_all_requires_configured_discourses() {
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(&dir, "");
-    let output = run_dsc(&["backup", "create", "all"], &config_path);
+    let output = run_dsc(&["backup", "create", "--all"], &config_path);
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr).contains("no discourses configured"),

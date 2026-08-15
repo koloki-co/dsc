@@ -1298,11 +1298,15 @@ pub enum BackupCommand {
     /// Create a new backup.
     #[command(after_help = "Examples:
   dsc backup create myforum
-  dsc backup create all")]
+  dsc backup create --all")]
     #[command(visible_alias = "cr")]
     Create {
-        /// Discourse name, or `all` to create a backup on every configured forum.
-        discourse: String,
+        /// Discourse name.
+        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        discourse: Option<String>,
+        /// Create a backup on every configured forum.
+        #[arg(long)]
+        all: bool,
     },
     /// List backups.
     #[command(visible_alias = "ls")]
