@@ -172,6 +172,9 @@ pub struct CategoryDefinition {
     /// server-defined, so definition sync preserves only their stable keys.
     #[serde(default)]
     pub category_types: Option<std::collections::BTreeMap<String, serde_json::Value>>,
+    /// Complete category custom fields, available from `/c/{id}/show.json`.
+    #[serde(default)]
+    pub custom_fields: Option<std::collections::BTreeMap<String, serde_json::Value>>,
     #[serde(default)]
     pub sort_order: Option<String>,
     #[serde(default)]
@@ -188,6 +191,12 @@ pub struct CategoryDefinition {
 #[derive(Debug, Deserialize)]
 pub struct CategoryDefinitionsResponse {
     pub category_list: CategoryDefinitionList,
+}
+
+/// Response payload for `/c/{id}/show.json`.
+#[derive(Debug, Deserialize)]
+pub struct CategoryDefinitionResponse {
+    pub category: CategoryDefinition,
 }
 
 /// Category definition listing.

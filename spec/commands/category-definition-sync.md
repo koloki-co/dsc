@@ -198,6 +198,8 @@ categories:
     minimum_required_tags: 1                                 # optional; topics must carry >= N tags
     # required_tag_groups:                                   # optional; list of {name, min_count} (Phase 2)
     # category_types: [support]                              # optional; extra enabled category type IDs (Phase 2; `discussion` is implicit)
+    # custom_fields:                                         # optional; complete map, omitted = leave untouched
+    #   enable_accepted_answers: "true"
 
     # Optional display/ordering knobs (omit to keep server defaults):
     sort_order: null
@@ -425,9 +427,8 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   the invalid category-level `solved_enabled` field.
 - [ ] `parent` resolution by name as well as slug; validation that the parent
   exists before push (clear error instead of a 4xx from the API).
-- [ ] `topic_title_placeholder`, logo/background asset fields, `custom_fields`,
-  `icon`/`emoji` — surface as `category set` fields once the asset-upload path
-  is decided.
+- [x] `custom_fields` round-trip. **Status: implemented (unreleased).** Reads each category's complete custom-field map from `/c/{id}/show.json`; applies changes via JSON `PUT /categories/{id}.json`, using nulls to remove keys omitted from a specified file map. `category set` accepts a complete scalar-valued JSON object. Object and array values are rejected because Discourse stringifies them. Verified reversibly on koloki-demo.
+- [ ] `topic_title_placeholder`, logo/background asset fields, `icon`/`emoji` — surface as `category set` fields once the asset-upload path is decided.
 
 ### Phase 3 — nice to have
 

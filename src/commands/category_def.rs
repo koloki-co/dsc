@@ -37,6 +37,7 @@ const VALID_FIELDS: &[&str] = &[
     "minimum_required_tags",
     "required_tag_groups",
     "category_types",
+    "custom_fields",
     "sort_order",
     "default_view",
     "subcategory_list_style",
@@ -95,6 +96,9 @@ pub struct CategoryDefEntry {
     /// Enabled category type IDs beyond the built-in `discussion` type.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub category_types: Option<Vec<String>>,
+    /// Complete category custom-field map with stable scalar values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_fields: Option<BTreeMap<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -205,12 +209,63 @@ fn def_to_entry(def: &CategoryDefinition, id_to_slug: &BTreeMap<u64, String>) ->
                 .collect();
             (!types.is_empty()).then_some(types)
         }),
+        custom_fields: def
+            .custom_fields
+            .clone()
+            .filter(|fields| !fields.is_empty()),
         sort_order: nonempty(&def.sort_order),
         default_view: nonempty(&def.default_view),
         subcategory_list_style: nonempty(&def.subcategory_list_style),
         num_featured_topics: def.num_featured_topics,
         show_subcategory_list: def.show_subcategory_list,
     }
+}
+
+/// Enrich category-list definitions with the complete custom-field maps exposed
+/// by the per-category endpoint. The list endpoint may only preload a subset.
+fn enrich_custom_fields(client: &DiscourseClient, defs: &mut [CategoryDefinition]) -> Result<()> {
+    for def in defs {
+        let id = def
+            .id
+            .ok_or_else(|| anyhow!("category definition is missing its id"))?;
+        def.custom_fields = client.fetch_category_definition(id)?.custom_fields;
+    }
+    Ok(())
+}
+
+/// Build a JSON merge patch for category custom fields. Discourse removes a
+/// custom field when it receives a null value for that key.
+fn custom_fields_patch(
+    desired: &BTreeMap<String, Value>,
+    current: Option<&BTreeMap<String, Value>>,
+) -> BTreeMap<String, Value> {
+    let mut patch = BTreeMap::new();
+    let current = current.cloned().unwrap_or_default();
+    for (key, value) in desired {
+        if current.get(key) != Some(value) {
+            patch.insert(key.clone(), value.clone());
+        }
+    }
+    for key in current.keys() {
+        if !desired.contains_key(key) {
+            patch.insert(key.clone(), Value::Null);
+        }
+    }
+    patch
+}
+
+/// Arbitrary custom-field objects and arrays are stringified by Discourse's
+/// category endpoint. Refuse them rather than create a non-idempotent file.
+fn validate_custom_fields(fields: &BTreeMap<String, Value>) -> Result<()> {
+    for (key, value) in fields {
+        if !matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_)) {
+            return Err(anyhow!(
+                "custom field '{}' must have a string, number, or boolean value",
+                key
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn id_to_slug_map(defs: &[CategoryDefinition]) -> BTreeMap<u64, String> {
@@ -393,6 +448,11 @@ fn opt_vec_diff<T: PartialEq>(a: &Option<Vec<T>>, b: &Option<Vec<T>>) -> bool {
         .is_some_and(|values| values.as_slice() != b.as_deref().unwrap_or_default())
 }
 
+fn opt_map_diff(a: &Option<BTreeMap<String, Value>>, b: &Option<BTreeMap<String, Value>>) -> bool {
+    a.as_ref()
+        .is_some_and(|values| values != b.as_ref().unwrap_or(&BTreeMap::new()))
+}
+
 /// Return the specified file fields that differ from the server. Omitted file
 /// fields are intentionally absent because `def push` leaves them untouched.
 fn changed_fields(e: &CategoryDefEntry, s: &CategoryDefEntry) -> Vec<&'static str> {
@@ -443,6 +503,9 @@ fn changed_fields(e: &CategoryDefEntry, s: &CategoryDefEntry) -> Vec<&'static st
     }
     if opt_list_diff(&e.category_types, &s.category_types) {
         fields.push("category_types");
+    }
+    if opt_map_diff(&e.custom_fields, &s.custom_fields) {
+        fields.push("custom_fields");
     }
     if opt_diff(&e.sort_order, &s.sort_order) {
         fields.push("sort_order");
@@ -512,7 +575,8 @@ pub fn category_def_pull(
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
 
-    let defs = client.fetch_category_definitions()?;
+    let mut defs = client.fetch_category_definitions()?;
+    enrich_custom_fields(&client, &mut defs)?;
     let id_to_slug = id_to_slug_map(&defs);
 
     let mut entries: Vec<CategoryDefEntry> =
@@ -567,7 +631,14 @@ pub fn category_def_push(
         anyhow::bail!("unsupported categories file version: {}", file.version);
     }
 
-    let defs = client.fetch_category_definitions()?;
+    let mut defs = client.fetch_category_definitions()?;
+    if file
+        .categories
+        .iter()
+        .any(|entry| entry.custom_fields.is_some())
+    {
+        enrich_custom_fields(&client, &mut defs)?;
+    }
     let id_to_slug = id_to_slug_map(&defs);
     let slug_to_id = slug_to_id_map(&defs);
     let server_entries: Vec<CategoryDefEntry> =
@@ -615,20 +686,64 @@ pub fn category_def_push(
     for (entry, action) in file.categories.iter().zip(&plan) {
         match action.kind {
             DefActionKind::Create => {
+                if let Some(custom_fields) = &entry.custom_fields {
+                    validate_custom_fields(custom_fields)?;
+                }
                 let params = entry_to_params(entry, &slug_to_id)?;
                 let id = client
                     .create_category_def(&params)
                     .with_context(|| format!("creating category '{}'", entry.name))?;
+                if let Some(custom_fields) = &entry.custom_fields {
+                    client
+                        .update_category_custom_fields(
+                            id,
+                            &custom_fields_patch(custom_fields, None),
+                        )
+                        .with_context(|| {
+                            format!("setting custom fields on category '{}'", entry.name)
+                        })?;
+                }
                 println!("  + created: {} (id {})", entry.name, id);
             }
             DefActionKind::Update => {
                 let id = action
                     .server_id
                     .ok_or_else(|| anyhow!("internal: update without a server id"))?;
-                let params = entry_to_params(entry, &slug_to_id)?;
-                client
-                    .update_category(id, &params)
-                    .with_context(|| format!("updating category '{}'", entry.name))?;
+                if action.changed_fields.contains(&"custom_fields") {
+                    let custom_fields = entry
+                        .custom_fields
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("internal: custom-fields update without a value"))?;
+                    validate_custom_fields(custom_fields)?;
+                }
+                if action
+                    .changed_fields
+                    .iter()
+                    .any(|field| *field != "custom_fields")
+                {
+                    let params = entry_to_params(entry, &slug_to_id)?;
+                    client
+                        .update_category(id, &params)
+                        .with_context(|| format!("updating category '{}'", entry.name))?;
+                }
+                if action.changed_fields.contains(&"custom_fields") {
+                    let current = server_entries
+                        .iter()
+                        .find(|server| server.id == Some(id))
+                        .and_then(|server| server.custom_fields.as_ref());
+                    let custom_fields = entry
+                        .custom_fields
+                        .as_ref()
+                        .ok_or_else(|| anyhow!("internal: custom-fields update without a value"))?;
+                    client
+                        .update_category_custom_fields(
+                            id,
+                            &custom_fields_patch(custom_fields, current),
+                        )
+                        .with_context(|| {
+                            format!("updating custom fields on category '{}'", entry.name)
+                        })?;
+                }
                 println!("  ~ updated: {} (id {})", entry.name, id);
             }
             DefActionKind::Unchanged => {}
@@ -660,7 +775,7 @@ fn load_category_diff_side(
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
-    let entry = resolve_entry(&client, category)?;
+    let entry = resolve_entry(&client, category, true)?;
     Ok(CategoryDiffSide {
         label: format!("{} / {}", discourse.name, entry.name),
         entry,
@@ -769,8 +884,15 @@ fn find_def<'a>(defs: &'a [CategoryDefinition], category: &str) -> Result<&'a Ca
         .ok_or_else(|| not_found("category", category))
 }
 
-fn resolve_entry(client: &DiscourseClient, category: &str) -> Result<CategoryDefEntry> {
-    let defs = client.fetch_category_definitions()?;
+fn resolve_entry(
+    client: &DiscourseClient,
+    category: &str,
+    include_custom_fields: bool,
+) -> Result<CategoryDefEntry> {
+    let mut defs = client.fetch_category_definitions()?;
+    if include_custom_fields {
+        enrich_custom_fields(client, &mut defs)?;
+    }
     let id_to_slug = id_to_slug_map(&defs);
     let def = find_def(&defs, category)?;
     Ok(def_to_entry(def, &id_to_slug))
@@ -785,7 +907,7 @@ pub fn category_show(
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
-    let entry = resolve_entry(&client, category)?;
+    let entry = resolve_entry(&client, category, true)?;
     emit_result(format, &entry, &entry_text(&entry))
 }
 
@@ -816,7 +938,7 @@ pub fn category_get(
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
-    let entry = resolve_entry(&client, category)?;
+    let entry = resolve_entry(&client, category, field.trim() == "custom_fields")?;
     let (text, value) = entry_field(&entry, field)?;
     emit_result(format, &value, &text)
 }
@@ -878,6 +1000,10 @@ fn entry_field(e: &CategoryDefEntry, field: &str) -> Result<(String, Value)> {
         "minimum_required_tags" => optnum(e.minimum_required_tags),
         "required_tag_groups" => required_tag_groups(&e.required_tag_groups),
         "category_types" => optlist(&e.category_types),
+        "custom_fields" => match &e.custom_fields {
+            Some(fields) => (serde_json::to_string(fields)?, json!(fields)),
+            None => ("(unset)".to_string(), Value::Null),
+        },
         "sort_order" => optstr(&e.sort_order),
         "default_view" => optstr(&e.default_view),
         "subcategory_list_style" => optstr(&e.subcategory_list_style),
@@ -913,10 +1039,38 @@ pub fn category_set(
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
 
-    let defs = client.fetch_category_definitions()?;
+    let mut defs = client.fetch_category_definitions()?;
+    if field.trim() == "custom_fields" {
+        enrich_custom_fields(&client, &mut defs)?;
+    }
     let slug_to_id = slug_to_id_map(&defs);
     let def = find_def(&defs, category)?;
     let id = def.id.ok_or_else(|| not_found("category", category))?;
+
+    if field.trim() == "custom_fields" && list_edit.is_none() {
+        let desired = parse_custom_fields(value)?;
+        let patch = custom_fields_patch(&desired, def.custom_fields.as_ref());
+        if patch.is_empty() {
+            println!(
+                "Category '{}' (id {}) custom_fields unchanged",
+                category, id
+            );
+            return Ok(());
+        }
+        if dry_run {
+            println!(
+                "[dry-run] would PUT /categories/{}.json with JSON: {}",
+                id,
+                serde_json::to_string(&json!({ "custom_fields": patch }))?
+            );
+            return Ok(());
+        }
+        client
+            .update_category_custom_fields(id, &patch)
+            .with_context(|| format!("setting custom_fields on category '{}'", category))?;
+        println!("Set custom_fields on category '{}' (id {})", category, id);
+        return Ok(());
+    }
 
     let params = if let Some(edit) = list_edit {
         let Some(params) = list_field_edit_params(
@@ -1103,6 +1257,17 @@ fn parse_required_tag_groups(value: &str) -> Result<Vec<(String, String)>> {
         )]);
     }
     Ok(params)
+}
+
+fn parse_custom_fields(value: &str) -> Result<BTreeMap<String, Value>> {
+    let value: Value =
+        serde_json::from_str(value).context("custom_fields must be a JSON object")?;
+    let Value::Object(fields) = value else {
+        return Err(anyhow!("custom_fields must be a JSON object"));
+    };
+    let fields: BTreeMap<String, Value> = fields.into_iter().collect();
+    validate_custom_fields(&fields)?;
+    Ok(fields)
 }
 
 /// Merge `edits` into `current` for a `--append`/`--remove` list-field edit.
@@ -1430,6 +1595,51 @@ mod tests {
         let mut file = entry("Marketplace");
         file.required_tag_groups = Some(Vec::new());
         assert!(changed_fields(&file, &entry("Marketplace")).is_empty());
+    }
+
+    #[test]
+    fn custom_fields_patch_updates_and_removes_only_changed_keys() {
+        let desired = BTreeMap::from([
+            ("enabled".to_string(), json!(true)),
+            ("priority".to_string(), json!(2)),
+        ]);
+        let current = BTreeMap::from([
+            ("enabled".to_string(), json!(false)),
+            ("obsolete".to_string(), json!("remove me")),
+            ("unchanged".to_string(), json!("keep")),
+        ]);
+        let mut desired = desired;
+        desired.insert("unchanged".to_string(), json!("keep"));
+
+        assert_eq!(
+            custom_fields_patch(&desired, Some(&current)),
+            BTreeMap::from([
+                ("enabled".to_string(), json!(true)),
+                ("obsolete".to_string(), Value::Null),
+                ("priority".to_string(), json!(2)),
+            ])
+        );
+    }
+
+    #[test]
+    fn custom_fields_compare_empty_with_an_absent_server_value() {
+        let mut file = entry("Marketplace");
+        file.custom_fields = Some(BTreeMap::new());
+        assert!(changed_fields(&file, &entry("Marketplace")).is_empty());
+    }
+
+    #[test]
+    fn parse_custom_fields_requires_a_json_object() {
+        assert_eq!(
+            parse_custom_fields(r#"{"enabled":true,"priority":2}"#).unwrap(),
+            BTreeMap::from([
+                ("enabled".to_string(), json!(true)),
+                ("priority".to_string(), json!(2)),
+            ])
+        );
+        assert!(parse_custom_fields("[]").is_err());
+        assert!(parse_custom_fields(r#"{"roles":["staff"]}"#).is_err());
+        assert!(parse_custom_fields("not json").is_err());
     }
 
     #[test]
