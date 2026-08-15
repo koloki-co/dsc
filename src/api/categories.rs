@@ -5,8 +5,8 @@
 use super::client::{DiscourseClient, json_page_path};
 use super::error::http_error;
 use super::models::{
-    CategoriesResponse, CategoryDefinition, CategoryDefinitionsResponse, CategoryInfo,
-    CategoryResponse, CreateCategoryResponse,
+    CategoriesResponse, CategoryDefinition, CategoryDefinitionResponse,
+    CategoryDefinitionsResponse, CategoryInfo, CategoryResponse, CreateCategoryResponse,
 };
 use anyhow::{Context, Result, anyhow};
 use reqwest::StatusCode;
@@ -132,6 +132,23 @@ impl DiscourseClient {
         Ok(body.category_list.categories)
     }
 
+    /// Fetch one category's complete definition. Unlike the category-list
+    /// endpoint, this includes its complete custom-field map.
+    pub fn fetch_category_definition(&self, id: u64) -> Result<CategoryDefinition> {
+        let path = format!("/c/{id}/show.json");
+        let response = self.get(&path)?;
+        let status = response.status();
+        let text = response
+            .text()
+            .context("reading category definition response body")?;
+        if !status.is_success() {
+            return Err(http_error("category definition request", status, &text));
+        }
+        let body: CategoryDefinitionResponse =
+            serde_json::from_str(&text).context("reading category definition json")?;
+        Ok(body.category)
+    }
+
     /// Create a category from raw form params, returning the new category's ID.
     /// The caller assembles the definition params (name is required); this is
     /// the full-definition counterpart to [`create_category`], which sends only
@@ -161,6 +178,30 @@ impl DiscourseClient {
             .context("reading update category response body")?;
         if !status.is_success() {
             return Err(http_error("update category request", status, &text));
+        }
+        Ok(())
+    }
+
+    /// Merge category custom fields using Discourse's JSON API. A null value
+    /// removes that key, so callers can reconcile a complete file snapshot.
+    pub fn update_category_custom_fields(
+        &self,
+        id: u64,
+        fields: &std::collections::BTreeMap<String, Value>,
+    ) -> Result<()> {
+        let path = format!("/categories/{id}.json");
+        let payload = serde_json::json!({ "custom_fields": fields });
+        let response = self.send_retrying(|| Ok(self.put(&path)?.json(&payload)))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .context("reading category custom-fields response body")?;
+        if !status.is_success() {
+            return Err(http_error(
+                "update category custom fields request",
+                status,
+                &text,
+            ));
         }
         Ok(())
     }

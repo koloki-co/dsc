@@ -1149,7 +1149,8 @@ pub enum CategoryCommand {
         field: String,
         /// New value. List fields (allowed_tags, allowed_tag_groups,
         /// category_types) use a comma-separated list; required_tag_groups
-        /// uses `group:min_count,...`; permissions use `group:level,...`.
+        /// uses `group:min_count,...`; custom_fields uses a scalar-valued JSON object;
+        /// permissions use `group:level,...`.
         /// With `--append`/`--remove`, this is the comma-separated list of
         /// items to add to or remove from the current list instead of replacing it.
         value: String,
