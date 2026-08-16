@@ -103,6 +103,22 @@ fn find_matches_by_exact_email_across_every_forum() {
     assert_eq!(rows[0]["forum"], "alpha");
     assert_eq!(rows[0]["username"], "jane_d");
     assert_eq!(rows[0]["id"], 42);
+    for field in [
+        "email",
+        "name",
+        "trust_level",
+        "admin",
+        "moderator",
+        "suspended",
+        "silenced",
+        "last_seen_at",
+        "created_at",
+    ] {
+        assert!(
+            rows[0].get(field).is_none(),
+            "user find must not expose {field}"
+        );
+    }
 
     let text_output = run_dsc(&["user", "find", "jane@example.com"], &config);
     assert!(text_output.status.success());

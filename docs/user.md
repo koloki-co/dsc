@@ -29,7 +29,7 @@ Shows id, username, name, email (if returned by the server), trust level, role, 
 dsc user find <email> [--format text|json|yaml]
 ```
 
-GDPR "which forum has this person" lookup: searches every configured forum for an account whose email matches, and prints forum-tagged matches (or nothing, if the address isn't registered anywhere in the fleet). Continues past per-forum failures (missing credentials, unreachable forum) so one bad entry doesn't block the rest of the fleet; exits non-zero if any forum could not be searched.
+GDPR "which forum has this person" lookup: searches every configured forum for an account whose email matches, and prints only the matching forum, user ID, and username (or nothing, if the address isn't registered anywhere in the fleet). Continues past per-forum failures (missing credentials, unreachable forum) so one bad entry doesn't block the rest of the fleet; exits non-zero if any forum could not be searched.
 
 ```bash
 dsc user find jane@example.com

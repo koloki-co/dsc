@@ -149,7 +149,8 @@ pub fn user_find(config: &Config, email: &str, format: ListFormat) -> Result<()>
         match find_one(discourse, email) {
             Ok(users) => matches.extend(users.into_iter().map(|user| ForumMatch {
                 forum: discourse.name.clone(),
-                user,
+                id: user.id,
+                username: user.username,
             })),
             Err(e) => {
                 failed += 1;
@@ -168,8 +169,8 @@ pub fn user_find(config: &Config, email: &str, format: ListFormat) -> Result<()>
                     println!(
                         "{:<forum_width$}  {}  id:{}",
                         m.forum,
-                        m.user.username,
-                        m.user.id,
+                        m.username,
+                        m.id,
                         forum_width = forum_width
                     );
                 }
@@ -208,8 +209,8 @@ fn find_one(discourse: &DiscourseConfig, email: &str) -> Result<Vec<UserSummary>
 #[derive(Serialize)]
 struct ForumMatch {
     forum: String,
-    #[serde(flatten)]
-    user: UserSummary,
+    id: i64,
+    username: String,
 }
 
 pub fn user_suspend(
