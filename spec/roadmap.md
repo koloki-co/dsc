@@ -67,7 +67,7 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 
 - [x] **R19 - `dsc search all <query>`** - merged fan-out search across every configured forum, printing one combined, forum-tagged result list. Continues past a single forum's failure (missing credentials, unreachable) so the rest of the fleet's results still land; exits non-zero if any forum could not be searched.
 - [ ] **R20 - `dsc report all <name>`** - aggregate a report across forums.
-- [ ] **R21 - `dsc user find <email>`** - GDPR "which forum has this person" lookup.
+- [x] **R21 - `dsc user find <email>`** - GDPR "which forum has this person" lookup: fans out an admin user search across every configured forum, following the `search all`/`backup create --all` pattern, and prints forum-tagged matches on an exact (case-insensitive) email match.
 - [x] **R22 - `dsc backup create --all`** - fans `backup create` out across every configured forum, following the same fan-out pattern as `search all`: continues past a forum that fails (missing credentials, unreachable) so one bad entry doesn't stop the rest of the fleet, and exits non-zero if any forum failed.
 
 

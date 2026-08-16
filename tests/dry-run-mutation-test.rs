@@ -837,6 +837,7 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "topic pull",
     "update log",
     "user activity",
+    "user find",
     "user groups list",
     "user info",
     "user list",
