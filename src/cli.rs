@@ -2172,6 +2172,18 @@ pub enum UserCommand {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
+    /// GDPR "which forum has this person" lookup: search every configured
+    /// forum for an account matching an email address.
+    #[command(after_help = "Examples:
+  dsc user find jane@example.com
+  dsc user find jane@example.com --format json")]
+    Find {
+        /// Email address to search for.
+        email: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
     /// Suspend a user.
     #[command(visible_alias = "sus")]
     Suspend {

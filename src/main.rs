@@ -740,6 +740,9 @@ fn main() -> Result<()> {
                 username,
                 format,
             } => commands::user::user_info(&config, &discourse, &username, format),
+            UserCommand::Find { email, format } => {
+                commands::user::user_find(&config, &email, format)
+            }
             UserCommand::Suspend {
                 discourse,
                 username,

@@ -23,6 +23,22 @@ dsc user info <discourse> <username> [--format text|json|yaml]
 
 Shows id, username, name, email (if returned by the server), trust level, role, suspension / silence state, last-seen, created-at, post count, and group count.
 
+## dsc user find
+
+```text
+dsc user find <email> [--format text|json|yaml]
+```
+
+GDPR "which forum has this person" lookup: searches every configured forum for an account whose email matches, and prints forum-tagged matches (or nothing, if the address isn't registered anywhere in the fleet). Continues past per-forum failures (missing credentials, unreachable forum) so one bad entry doesn't block the rest of the fleet; exits non-zero if any forum could not be searched.
+
+```bash
+dsc user find jane@example.com
+# alpha  jane_d  id:42
+# beta   jane    id:7
+
+dsc user find jane@example.com --format json
+```
+
 ## dsc user suspend
 
 ```text

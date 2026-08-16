@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use crate::api::{DiscourseClient, UserAction};
+use crate::api::{DiscourseClient, UserAction, UserSummary};
 use crate::cli::ListFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
-use crate::config::Config;
+use crate::config::{Config, DiscourseConfig};
 use crate::utils::{normalize_baseurl, parse_since_cutoff};
 use anyhow::{Context, Result, anyhow};
+use serde::Serialize;
 use std::io::{self, Read};
 
 pub fn user_list(
@@ -127,6 +128,88 @@ pub fn user_info(
         }
     }
     Ok(())
+}
+
+/// GDPR "which forum has this person" lookup: search every configured forum
+/// for an account whose email matches, and print forum-tagged matches.
+/// Continues past per-forum failures (missing credentials, unreachable
+/// forum) so one bad entry doesn't block the rest of the fleet; fails at the
+/// end if any forum could not be searched.
+pub fn user_find(config: &Config, email: &str, format: ListFormat) -> Result<()> {
+    if !email.contains('@') {
+        return Err(anyhow!("invalid email: {:?}", email));
+    }
+    if config.discourse.is_empty() {
+        return Err(anyhow!("no discourses configured"));
+    }
+
+    let mut matches: Vec<ForumMatch> = Vec::new();
+    let mut failed = 0usize;
+    for discourse in &config.discourse {
+        match find_one(discourse, email) {
+            Ok(users) => matches.extend(users.into_iter().map(|user| ForumMatch {
+                forum: discourse.name.clone(),
+                user,
+            })),
+            Err(e) => {
+                failed += 1;
+                eprintln!("{}: user search failed - {e}", discourse.name);
+            }
+        }
+    }
+
+    match format {
+        ListFormat::Text => {
+            if matches.is_empty() {
+                println!("No account found for {} on any configured forum.", email);
+            } else {
+                let forum_width = matches.iter().map(|m| m.forum.len()).max().unwrap_or(4);
+                for m in &matches {
+                    println!(
+                        "{:<forum_width$}  {}  id:{}",
+                        m.forum,
+                        m.user.username,
+                        m.user.id,
+                        forum_width = forum_width
+                    );
+                }
+            }
+        }
+        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&matches)?),
+        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&matches)?),
+    }
+
+    if failed > 0 {
+        return Err(anyhow!(
+            "user search failed on {failed} of {} forum(s)",
+            config.discourse.len()
+        ));
+    }
+    Ok(())
+}
+
+fn find_one(discourse: &DiscourseConfig, email: &str) -> Result<Vec<UserSummary>> {
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+    let hits = client.admin_search_users(email)?;
+    // admin_search_users matches username/name/email loosely; narrow to an
+    // exact (case-insensitive) email match so a GDPR lookup doesn't report
+    // unrelated accounts that merely share a substring.
+    Ok(hits
+        .into_iter()
+        .filter(|u| {
+            u.email
+                .as_deref()
+                .is_some_and(|e| e.eq_ignore_ascii_case(email))
+        })
+        .collect())
+}
+
+#[derive(Serialize)]
+struct ForumMatch {
+    forum: String,
+    #[serde(flatten)]
+    user: UserSummary,
 }
 
 pub fn user_suspend(
