@@ -1,14 +1,16 @@
 # `dsc backup setup-s3` - provision an S3 backup bucket + scoped IAM user and point Discourse at it
 
 > **Status: Phase 1 implemented (unreleased); Phase 2's `--use-iam-profile`
-> shipped.** `dsc backup setup-s3 <discourse>` creates a bucket + single-bucket
-> policy + user + key (via `aws` CLI), sets the Discourse S3 settings (using
-> the fixed `update_site_setting` path), runs an optional verification backup,
-> and has a complete offline `--dry-run`. With `--use-iam-profile`, the policy
-> and user/key creation are skipped and Discourse is pointed at S3 with
-> `s3_use_iam_profile=true` instead of static credentials. `--reuse-user` and
-> `--all`/`--tags` remain planned, as does Phase 3 (native SDK, `--retention`,
-> and fleet `backup health`).
+> and `--all`/`--tags` shipped.** `dsc backup setup-s3 <discourse>` creates a
+> bucket + single-bucket policy + user + key (via `aws` CLI), sets the
+> Discourse S3 settings (using the fixed `update_site_setting` path), runs an
+> optional verification backup, and has a complete offline `--dry-run`. With
+> `--use-iam-profile`, the policy and user/key creation are skipped and
+> Discourse is pointed at S3 with `s3_use_iam_profile=true` instead of static
+> credentials. `--all`/`--tags` fan the whole flow out across the configured
+> fleet, mirroring `dsc backup create --all`/`dsc backup health --tags`, and
+> continue past a per-forum failure. `--reuse-user` remains planned, as does
+> Phase 3 (native SDK, `--retention`, and fleet `backup health`).
 
 Spec for one-command setup of off-site Discourse backups on Amazon S3. Goal: replace a ~15-step AWS-console + Discourse-settings runbook with a single `dsc` command. Driver: the Koloki fleet - every self-hosted forum needs off-site backups, and the secure pattern (one bucket + one dedicated single-bucket IAM user per forum) is set up by hand in the AWS console for each one. Production runbook in use since 2023-01.
 
@@ -130,7 +132,7 @@ Caveat (2026-06-24): `dsc setting set` does not persist site settings reliably (
 
 - [ ] `--reuse-user` / idempotent re-run + key rotation (`create-access-key`, update the setting, optionally deactivate the old key).
 - [x] `--use-iam-profile` path (EC2 instance role, no static keys): skips policy/user/access-key creation, still creates the bucket, and sets `s3_use_iam_profile=true` in place of `s3_access_key_id`/`s3_secret_access_key`.
-- [ ] `--all` / `--tags` to set up backups across multiple forums (mirrors `dsc backup create --all`).
+- [x] `--all` / `--tags` to set up backups across multiple forums (mirrors `dsc backup create --all`). Continues past a per-forum failure and exits non-zero if any forum could not be provisioned; `--bucket` is rejected alongside `--all`/`--tags` since every forum must derive its own bucket name.
 
 ### Phase 3 - nice to have
 

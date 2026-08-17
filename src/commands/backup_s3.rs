@@ -3,9 +3,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::api::DiscourseClient;
+use crate::commands::backup::selected_discourses;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
 use crate::config::Config;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::process::Command;
 use std::thread::sleep;
@@ -283,6 +284,56 @@ pub fn setup_s3(
              asynchronously - re-check with `aws s3 ls s3://{}/ --recursive` shortly.",
             names.bucket, names.bucket
         );
+    }
+    Ok(())
+}
+
+/// Fan out `backup setup-s3` to every configured forum, optionally filtered
+/// by `--tags`. Continues past a per-forum failure (AWS provisioning error,
+/// unreachable forum, bucket name already taken) so one bad entry doesn't
+/// stop the rest of the fleet; fails at the end if any forum could not be
+/// provisioned. Each forum derives its own bucket/policy/user names, so a
+/// `--bucket` override is not accepted here.
+pub fn setup_s3_all(
+    config: &Config,
+    tags: Option<&str>,
+    region: &str,
+    no_test: bool,
+    use_iam_profile: bool,
+    dry_run: bool,
+) -> Result<()> {
+    let discourses = selected_discourses(config, None, tags)?;
+    if discourses.is_empty() {
+        return Err(anyhow!("no discourses configured matching the given tags"));
+    }
+
+    let mut failed = 0usize;
+    for (index, discourse) in discourses.iter().enumerate() {
+        if index > 0 {
+            println!();
+        }
+        match setup_s3(
+            config,
+            &discourse.name,
+            region,
+            None,
+            no_test,
+            use_iam_profile,
+            dry_run,
+        ) {
+            Ok(()) => {}
+            Err(e) => {
+                failed += 1;
+                eprintln!("{}: setup-s3 failed - {e}", discourse.name);
+            }
+        }
+    }
+
+    if failed > 0 {
+        return Err(anyhow!(
+            "setup-s3 failed on {failed} of {} forum(s)",
+            discourses.len()
+        ));
     }
     Ok(())
 }

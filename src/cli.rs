@@ -1351,15 +1351,25 @@ pub enum BackupCommand {
   dsc backup setup-s3 -n myforum                  # preview the full plan (review gate)
   dsc backup setup-s3 myforum --region eu-west-1
   dsc backup setup-s3 myforum --no-test
-  dsc backup setup-s3 myforum --use-iam-profile   # EC2 instance role, no static keys")]
+  dsc backup setup-s3 myforum --use-iam-profile   # EC2 instance role, no static keys
+  dsc backup setup-s3 -n --all                    # preview across every configured forum
+  dsc backup setup-s3 --tags production --use-iam-profile")]
     SetupS3 {
-        /// Discourse name.
-        discourse: String,
+        /// Discourse name. Omit with --all or --tags to fan out across the fleet.
+        #[arg(required_unless_present_any = ["all", "tags"], conflicts_with_all = ["all", "tags"])]
+        discourse: Option<String>,
+        /// Provision S3 backups on every configured forum.
+        #[arg(long, conflicts_with = "tags")]
+        all: bool,
+        /// Provision S3 backups on forums matching these tags (comma/semicolon separated, match-any).
+        #[arg(long, value_name = "tag1,tag2", conflicts_with = "all")]
+        tags: Option<String>,
         /// AWS region for the bucket.
         #[arg(long, default_value = "eu-west-2")]
         region: String,
-        /// Bucket name (default: `<name>-discourse-backups`).
-        #[arg(long)]
+        /// Bucket name (default: `<name>-discourse-backups`). Not usable with --all/--tags,
+        /// since every forum would collide on the same bucket name.
+        #[arg(long, conflicts_with_all = ["all", "tags"])]
         bucket: Option<String>,
         /// Skip the verification backup after provisioning.
         #[arg(long)]
