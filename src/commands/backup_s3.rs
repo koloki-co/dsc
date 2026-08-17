@@ -4,7 +4,7 @@
 
 use crate::api::DiscourseClient;
 use crate::commands::backup::selected_discourses;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{ensure_api_credentials, parse_tags, select_discourse};
 use crate::config::Config;
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
@@ -302,9 +302,16 @@ pub fn setup_s3_all(
     use_iam_profile: bool,
     dry_run: bool,
 ) -> Result<()> {
+    if tags.is_some_and(|raw| parse_tags(raw).is_empty()) {
+        bail!("--tags must include at least one non-empty tag");
+    }
     let discourses = selected_discourses(config, None, tags)?;
     if discourses.is_empty() {
-        return Err(anyhow!("no discourses configured matching the given tags"));
+        return Err(if tags.is_some() {
+            anyhow!("no discourses configured matching the given tags")
+        } else {
+            anyhow!("no discourses configured")
+        });
     }
 
     let mut failed = 0usize;

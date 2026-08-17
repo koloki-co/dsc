@@ -9,8 +9,10 @@
 > Discourse is pointed at S3 with `s3_use_iam_profile=true` instead of static
 > credentials. `--all`/`--tags` fan the whole flow out across the configured
 > fleet, mirroring `dsc backup create --all`/`dsc backup health --tags`, and
-> continue past a per-forum failure. `--reuse-user` remains planned, as does
-> Phase 3 (native SDK, `--retention`, and fleet `backup health`).
+> continue past a per-forum failure. Empty tag filters are rejected so they
+> cannot accidentally target the whole fleet. `--reuse-user` remains planned,
+> as does Phase 3 (native SDK and `--retention`). Fleet `backup health` has
+> shipped separately.
 
 Spec for one-command setup of off-site Discourse backups on Amazon S3. Goal: replace a ~15-step AWS-console + Discourse-settings runbook with a single `dsc` command. Driver: the Koloki fleet - every self-hosted forum needs off-site backups, and the secure pattern (one bucket + one dedicated single-bucket IAM user per forum) is set up by hand in the AWS console for each one. Production runbook in use since 2023-01.
 
@@ -38,6 +40,8 @@ It is fiddly, error-prone (easy to over-scope the policy or mis-name things), an
 ```text
 dsc backup setup-s3 <discourse> [--region <r>] [--bucket <name>] [--reuse-user]
                                 [--use-iam-profile] [--no-test] [--dry-run]
+dsc backup setup-s3 (--all | --tags <tag1,tag2,...>) [--region <r>]
+                    [--use-iam-profile] [--no-test] [--dry-run]
 ```
 
 - Derives names from the `dsc.toml` entry's `name` (default scheme, overridable with `--bucket`):
@@ -132,13 +136,13 @@ Caveat (2026-06-24): `dsc setting set` does not persist site settings reliably (
 
 - [ ] `--reuse-user` / idempotent re-run + key rotation (`create-access-key`, update the setting, optionally deactivate the old key).
 - [x] `--use-iam-profile` path (EC2 instance role, no static keys): skips policy/user/access-key creation, still creates the bucket, and sets `s3_use_iam_profile=true` in place of `s3_access_key_id`/`s3_secret_access_key`.
-- [x] `--all` / `--tags` to set up backups across multiple forums (mirrors `dsc backup create --all`). Continues past a per-forum failure and exits non-zero if any forum could not be provisioned; `--bucket` is rejected alongside `--all`/`--tags` since every forum must derive its own bucket name.
+- [x] `--all` / `--tags` to set up backups across multiple forums (mirrors `dsc backup create --all`). Continues past a per-forum failure and exits non-zero if any forum could not be provisioned; empty tag filters are rejected; `--bucket` is rejected alongside `--all`/`--tags` since every forum must derive its own bucket name.
 
 ### Phase 3 - nice to have
 
 - [ ] Optional native AWS SDK backend (drop the `aws` CLI dependency).
 - [ ] `--retention <days>` lifecycle rule (expire old backups in the bucket).
-- [ ] `dsc backup health` - fleet report of destination, latest actual S3 object, age, archive size, and total bucket object count/size. Spec: [backup-health](backup-health.md).
+- [x] `dsc backup health` - fleet report of destination, latest actual S3 object, age, archive size, and total bucket object count/size. Spec: [backup-health](backup-health.md).
 
 ## Backward compatibility
 

@@ -93,7 +93,7 @@ Defaults derive from the forum's config name:
 
 With `--use-iam-profile` (for forums running on an EC2 instance role that already has bucket access), only the bucket is created - no IAM policy, user, or access key - and Discourse is pointed at S3 with `s3_use_iam_profile=true` instead of static credentials.
 
-Use `--all` to provision every configured forum, or `--tags` to provision a fleet subset (mirrors `dsc backup create --all` and `dsc backup health --tags`). Each forum still derives its own bucket/policy/user names, so `--bucket` cannot be combined with `--all`/`--tags`. Fan-out continues past a per-forum failure so one bad entry doesn't stop the rest of the fleet, and exits non-zero if any forum could not be provisioned.
+Use `--all` to provision every configured forum, or `--tags` to provision a fleet subset (mirrors `dsc backup create --all` and `dsc backup health --tags`). An empty `--tags` value is rejected rather than interpreted as the whole fleet. Each forum still derives its own bucket/policy/user names, so `--bucket` cannot be combined with `--all`/`--tags`. Fan-out continues past a per-forum failure so one bad entry doesn't stop the rest of the fleet, and exits non-zero if any forum could not be provisioned.
 
 **Requirements & safety:**
 
