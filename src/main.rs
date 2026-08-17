@@ -887,19 +887,32 @@ fn main() -> Result<()> {
 
             BackupCommand::SetupS3 {
                 discourse,
+                all,
+                tags,
                 region,
                 bucket,
                 no_test,
                 use_iam_profile,
-            } => commands::backup_s3::setup_s3(
-                &config,
-                &discourse,
-                &region,
-                bucket.as_deref(),
-                no_test,
-                use_iam_profile,
-                dry_run,
-            ),
+            } => match (all || tags.is_some(), discourse.as_deref()) {
+                (true, None) => commands::backup_s3::setup_s3_all(
+                    &config,
+                    tags.as_deref(),
+                    &region,
+                    no_test,
+                    use_iam_profile,
+                    dry_run,
+                ),
+                (false, Some(name)) => commands::backup_s3::setup_s3(
+                    &config,
+                    name,
+                    &region,
+                    bucket.as_deref(),
+                    no_test,
+                    use_iam_profile,
+                    dry_run,
+                ),
+                _ => Err(anyhow!("specify a discourse name, or --all/--tags")),
+            },
 
             BackupCommand::Health {
                 discourse,

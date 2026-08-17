@@ -315,7 +315,7 @@ pub fn backup_health(
     Ok(())
 }
 
-fn selected_discourses<'a>(
+pub(crate) fn selected_discourses<'a>(
     config: &'a Config,
     discourse_name: Option<&str>,
     tags: Option<&str>,

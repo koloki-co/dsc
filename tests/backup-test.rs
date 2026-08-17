@@ -242,3 +242,174 @@ fn backup_create_all_requires_configured_discourses() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+#[test]
+fn setup_s3_all_dry_run_fans_out_to_every_configured_forum() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "alpha"
+baseurl = "https://alpha.example"
+apikey = "secret"
+api_username = "system"
+
+[[discourse]]
+name = "beta"
+baseurl = "https://beta.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(&["backup", "setup-s3", "--all", "--dry-run"], &config_path);
+    assert!(
+        output.status.success(),
+        "dry-run fan-out must not fail offline: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("S3 backup setup for alpha"));
+    assert!(stdout.contains("S3 backup setup for beta"));
+}
+
+#[test]
+fn setup_s3_all_dry_run_respects_tags_filter() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "alpha"
+baseurl = "https://alpha.example"
+apikey = "secret"
+api_username = "system"
+tags = ["production"]
+
+[[discourse]]
+name = "beta"
+baseurl = "https://beta.example"
+apikey = "secret"
+api_username = "system"
+tags = ["staging"]
+"#,
+    );
+    let output = run_dsc(
+        &["backup", "setup-s3", "--tags", "production", "--dry-run"],
+        &config_path,
+    );
+    assert!(
+        output.status.success(),
+        "dry-run fan-out must not fail offline: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("S3 backup setup for alpha"));
+    assert!(!stdout.contains("S3 backup setup for beta"));
+}
+
+#[test]
+fn setup_s3_all_rejects_an_empty_tags_filter() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "alpha"
+baseurl = "https://alpha.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(
+        &["backup", "setup-s3", "--tags", ",;", "--dry-run"],
+        &config_path,
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--tags must include at least one non-empty tag"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn setup_s3_all_continues_after_a_forum_failure() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "missing-credentials"
+baseurl = "https://missing.example"
+
+[[discourse]]
+name = "configured"
+baseurl = "https://configured.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(&["backup", "setup-s3", "--all", "--dry-run"], &config_path);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("missing-credentials: setup-s3 failed"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("S3 backup setup for configured"),
+        "stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+}
+
+#[test]
+fn setup_s3_all_requires_configured_discourses() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(&dir, "");
+    let output = run_dsc(&["backup", "setup-s3", "--all", "--dry-run"], &config_path);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("no discourses configured"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn setup_s3_rejects_bucket_override_with_all() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "alpha"
+baseurl = "https://alpha.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(
+        &[
+            "backup",
+            "setup-s3",
+            "--all",
+            "--bucket",
+            "shared-bucket",
+            "--dry-run",
+        ],
+        &config_path,
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("cannot be used with"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn setup_s3_requires_discourse_or_all_or_tags() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(&dir, "");
+    let output = run_dsc(&["backup", "setup-s3", "--dry-run"], &config_path);
+    assert!(!output.status.success());
+}
