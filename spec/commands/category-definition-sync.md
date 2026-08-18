@@ -425,8 +425,16 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 - [x] `category_types` round-trip. **Status: implemented (unreleased).** Reads the stable type IDs beyond the built-in `discussion` type from the category-list response and writes `category_types[]` form parameters. `category set` accepts a comma-separated type list. The modern Discourse support category type is
   needed to enable accepted answers for York Music's Marketplace; it supersedes
   the invalid category-level `solved_enabled` field.
-- [ ] `parent` resolution by name as well as slug; validation that the parent
-  exists before push (clear error instead of a 4xx from the API).
+- [x] `parent` resolution by name as well as slug; validation that the parent
+  exists before push (clear error instead of a 4xx from the API). **Status:
+  implemented (unreleased).** `def push` (including `--dry-run`) now
+  validates every file entry's `parent` reference against the server's
+  current categories, by slug first then by name, before any writes happen;
+  an unresolvable reference fails with one error naming every offending
+  entry, rather than a 4xx partway through applying earlier entries.
+  An ambiguous name is rejected with guidance to use the unique slug.
+  `category set parent` resolves the same way. `src/commands/category_def.rs`
+  (`resolve_parent_id`, `validate_parents`); unit-tested.
 - [x] `custom_fields` round-trip. **Status: implemented (unreleased).** Reads each category's complete custom-field map from `/c/{id}/show.json`; applies changes via JSON `PUT /categories/{id}.json`, using nulls to remove keys omitted from a specified file map. `category set` accepts a complete scalar-valued JSON object. Object and array values are rejected because Discourse stringifies them. Verified reversibly on koloki-demo.
 - [ ] `topic_title_placeholder`, logo/background asset fields, `icon`/`emoji` — surface as `category set` fields once the asset-upload path is decided.
 
