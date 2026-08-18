@@ -1384,7 +1384,7 @@ pub enum BackupCommand {
     #[command(visible_alias = "check")]
     #[command(after_help = "Examples:
   dsc backup health
-  dsc backup health myforum --max-age 1
+  dsc backup health myforum --max-age 14
   dsc backup health --tags production -f json")]
     Health {
         /// Optional Discourse name. Omit to check every configured forum.
@@ -1392,9 +1392,9 @@ pub enum BackupCommand {
         /// Filter by tags (comma/semicolon separated, match-any).
         #[arg(long, value_name = "tag1,tag2")]
         tags: Option<String>,
-        /// Maximum acceptable whole days since the latest S3 backup.
-        #[arg(long, default_value_t = 2)]
-        max_age: u64,
+        /// Relax the site backup-frequency threshold to at least this many days.
+        #[arg(long)]
+        max_age: Option<u64>,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: OutputFormat,

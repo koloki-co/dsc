@@ -8,22 +8,24 @@ Create, list, download, restore, and set up off-site (S3) backups.
 dsc backup health [<discourse>] [--tags <tag1,tag2,...>] [--max-age <days>] [--format text|json|yaml|csv]
 ```
 
-Checks actual S3 objects rather than Discourse's backup catalogue. With no `<discourse>`, checks every configured forum; use `--tags` to select a fleet subset. Every row reports the latest S3 backup archive, its age, its size, total bucket size, and total object count. Forums using local backups are reported as `NOT_S3`.
+Checks actual S3 objects rather than Discourse's backup catalogue. With no `<discourse>`, checks every configured forum; use `--tags` to select a fleet subset. Every row reports the latest S3 backup archive, its age, its size, total bucket size, total object count, and configured backup frequency. Forums using local backups are reported as `NOT_S3`.
 
-The default `--max-age 2` marks a forum `STALE` when its latest archive is over two whole days old. `MISSING`, `STALE`, `MISCONFIGURED`, `INACCESSIBLE`, or `UNKNOWN` rows make the command exit non-zero after printing all selected rows, making it suitable for monitoring.
+The command reads each forum's `backup_frequency` site setting and marks its latest archive `STALE` only when its age in whole days exceeds that configured interval. `--max-age` can relax the threshold for an invocation but cannot make it stricter than the forum's own schedule. A frequency of `0` is reported as `DISABLED`, not stale. `MISSING`, `STALE`, `MISCONFIGURED`, `INACCESSIBLE`, or `UNKNOWN` rows make the command exit non-zero after printing all selected rows, making it suitable for monitoring.
+
+Text and CSV rows are written and flushed as each S3 query completes. JSON and YAML remain buffered until every forum has completed so they are emitted as one valid, stable document. Long backup filenames are shortened in the middle in text tables only; structured output always retains the complete key.
 
 ```bash
 # Check every configured forum
 dsc backup health
 
-# Investigate one forum with a one-day freshness threshold
-dsc backup health myforum --max-age 1
+# Allow up to fourteen days without overriding a more relaxed site schedule
+dsc backup health myforum --max-age 14
 
 # Export a production fleet report for automation
 dsc backup health --tags production --format json
 ```
 
-Requires the [`aws` CLI](https://docs.aws.amazon.com/cli/) and its normal ambient credential chain. The existing single-bucket backup IAM policy already grants the required `s3:ListBucket` permission. This command is read-only: it never creates backups, changes settings, or deletes objects.
+Requires the [`aws` CLI](https://docs.aws.amazon.com/cli/). Bucket, region, optional `s3_endpoint`, backup frequency, and S3 credentials are read from each Discourse's admin site settings. Static credentials are passed only to the child process environment and are never printed or stored by `dsc`; forums using `s3_use_iam_profile` retain the normal ambient AWS credential chain. Custom endpoints such as DigitalOcean Spaces are passed to `aws s3api` with `--endpoint-url`. This command is read-only: it never creates backups, changes settings, or deletes objects.
 
 ## dsc backup create
 
