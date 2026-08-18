@@ -286,10 +286,59 @@ fn slug_to_id_map(defs: &[CategoryDefinition]) -> BTreeMap<String, u64> {
         .collect()
 }
 
+fn name_to_id_map(defs: &[CategoryDefinition]) -> BTreeMap<String, u64> {
+    defs.iter()
+        .filter_map(|d| d.id.map(|id| (d.name.clone(), id)))
+        .collect()
+}
+
+/// Resolve a `parent` reference against the server's current categories,
+/// trying slug first (stable, preferred) then name.
+fn resolve_parent_id(
+    parent: &str,
+    slug_to_id: &BTreeMap<String, u64>,
+    name_to_id: &BTreeMap<String, u64>,
+) -> Option<u64> {
+    slug_to_id
+        .get(parent)
+        .or_else(|| name_to_id.get(parent))
+        .copied()
+}
+
+/// Check every file entry's `parent` reference resolves against the server
+/// *before* any writes happen, so a typo surfaces as one clear error instead
+/// of a mid-push 4xx after earlier entries have already been created/updated.
+fn validate_parents(
+    file: &[CategoryDefEntry],
+    slug_to_id: &BTreeMap<String, u64>,
+    name_to_id: &BTreeMap<String, u64>,
+) -> Result<()> {
+    let unresolved: Vec<String> = file
+        .iter()
+        .filter_map(|entry| {
+            let parent = entry.parent.as_ref()?;
+            if resolve_parent_id(parent, slug_to_id, name_to_id).is_some() {
+                None
+            } else {
+                Some(format!("'{}' -> parent '{}'", entry.name, parent))
+            }
+        })
+        .collect();
+    if unresolved.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "parent category not found on the server (by slug or name) for: {}",
+            unresolved.join(", ")
+        ))
+    }
+}
+
 /// Build the form params for a whole entry (create or full update).
 fn entry_to_params(
     entry: &CategoryDefEntry,
     slug_to_id: &BTreeMap<String, u64>,
+    name_to_id: &BTreeMap<String, u64>,
 ) -> Result<Vec<(String, String)>> {
     let mut p: Vec<(String, String)> = vec![("name".to_string(), entry.name.clone())];
     let push_opt = |p: &mut Vec<(String, String)>, key: &str, v: &Option<String>| {
@@ -304,9 +353,9 @@ fn entry_to_params(
         p.push(("position".to_string(), v.to_string()));
     }
     if let Some(parent) = &entry.parent {
-        let pid = slug_to_id.get(parent).ok_or_else(|| {
+        let pid = resolve_parent_id(parent, slug_to_id, name_to_id).ok_or_else(|| {
             anyhow!(
-                "parent category '{}' not found on the server (create it first, or fix the slug)",
+                "parent category '{}' not found on the server by slug or name (create it first, or fix the reference)",
                 parent
             )
         })?;
@@ -641,8 +690,11 @@ pub fn category_def_push(
     }
     let id_to_slug = id_to_slug_map(&defs);
     let slug_to_id = slug_to_id_map(&defs);
+    let name_to_id = name_to_id_map(&defs);
     let server_entries: Vec<CategoryDefEntry> =
         defs.iter().map(|d| def_to_entry(d, &id_to_slug)).collect();
+
+    validate_parents(&file.categories, &slug_to_id, &name_to_id)?;
 
     let plan = plan_push(&file.categories, &server_entries);
 
@@ -689,7 +741,7 @@ pub fn category_def_push(
                 if let Some(custom_fields) = &entry.custom_fields {
                     validate_custom_fields(custom_fields)?;
                 }
-                let params = entry_to_params(entry, &slug_to_id)?;
+                let params = entry_to_params(entry, &slug_to_id, &name_to_id)?;
                 let id = client
                     .create_category_def(&params)
                     .with_context(|| format!("creating category '{}'", entry.name))?;
@@ -721,7 +773,7 @@ pub fn category_def_push(
                     .iter()
                     .any(|field| *field != "custom_fields")
                 {
-                    let params = entry_to_params(entry, &slug_to_id)?;
+                    let params = entry_to_params(entry, &slug_to_id, &name_to_id)?;
                     client
                         .update_category(id, &params)
                         .with_context(|| format!("updating category '{}'", entry.name))?;
@@ -1044,6 +1096,7 @@ pub fn category_set(
         enrich_custom_fields(&client, &mut defs)?;
     }
     let slug_to_id = slug_to_id_map(&defs);
+    let name_to_id = name_to_id_map(&defs);
     let def = find_def(&defs, category)?;
     let id = def.id.ok_or_else(|| not_found("category", category))?;
 
@@ -1086,7 +1139,7 @@ pub fn category_set(
         };
         params
     } else {
-        field_to_set_params(field, value, &slug_to_id)?
+        field_to_set_params(field, value, &slug_to_id, &name_to_id)?
     };
 
     if dry_run {
@@ -1334,6 +1387,7 @@ fn field_to_set_params(
     field: &str,
     value: &str,
     slug_to_id: &BTreeMap<String, u64>,
+    name_to_id: &BTreeMap<String, u64>,
 ) -> Result<Vec<(String, String)>> {
     let one = |k: &str, v: String| vec![(k.to_string(), v)];
     let list = |key: &str, value: &str| -> Vec<(String, String)> {
@@ -1357,10 +1411,13 @@ fn field_to_set_params(
             one("position", value.to_string())
         }
         "parent" => {
-            let slug = value.trim();
-            let pid = slug_to_id
-                .get(slug)
-                .ok_or_else(|| anyhow!("parent category '{}' not found on the server", slug))?;
+            let parent = value.trim();
+            let pid = resolve_parent_id(parent, slug_to_id, name_to_id).ok_or_else(|| {
+                anyhow!(
+                    "parent category '{}' not found on the server by slug or name",
+                    parent
+                )
+            })?;
             one("parent_category_id", pid.to_string())
         }
         "read_restricted" => one("read_restricted", parse_bool(value)?.to_string()),
@@ -1498,7 +1555,7 @@ mod tests {
     fn category_definition_params_normalize_terminal_description_line_endings() {
         let mut category = entry("General");
         category.description = Some("Description\r\n".to_string());
-        let params = entry_to_params(&category, &BTreeMap::new()).unwrap();
+        let params = entry_to_params(&category, &BTreeMap::new(), &BTreeMap::new()).unwrap();
         assert!(params.contains(&("description".to_string(), "Description".to_string())));
     }
 
@@ -1564,7 +1621,7 @@ mod tests {
             }])
         );
 
-        let params = entry_to_params(&entry, &BTreeMap::new()).unwrap();
+        let params = entry_to_params(&entry, &BTreeMap::new(), &BTreeMap::new()).unwrap();
         assert!(params.contains(&(
             "required_tag_groups[][name]".to_string(),
             "Role".to_string()
@@ -1586,7 +1643,7 @@ mod tests {
         let entry = def_to_entry(&category, &BTreeMap::new());
         assert_eq!(entry.category_types, Some(vec!["support".to_string()]));
 
-        let params = entry_to_params(&entry, &BTreeMap::new()).unwrap();
+        let params = entry_to_params(&entry, &BTreeMap::new(), &BTreeMap::new()).unwrap();
         assert!(params.contains(&("category_types[]".to_string(), "support".to_string())));
     }
 
@@ -1644,8 +1701,13 @@ mod tests {
 
     #[test]
     fn set_params_parse_required_tag_groups_and_empty_value_clears_them() {
-        let params =
-            field_to_set_params("required_tag_groups", "Role:1,Genre:2", &BTreeMap::new()).unwrap();
+        let params = field_to_set_params(
+            "required_tag_groups",
+            "Role:1,Genre:2",
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert_eq!(
             params,
             vec![
@@ -1668,41 +1730,66 @@ mod tests {
             ]
         );
         assert_eq!(
-            field_to_set_params("required_tag_groups", "", &BTreeMap::new()).unwrap(),
+            field_to_set_params(
+                "required_tag_groups",
+                "",
+                &BTreeMap::new(),
+                &BTreeMap::new()
+            )
+            .unwrap(),
             vec![("required_tag_groups[][name]".to_string(), String::new(),)]
         );
     }
 
     #[test]
     fn set_params_rejects_invalid_required_tag_group() {
-        let err =
-            field_to_set_params("required_tag_groups", "Role:many", &BTreeMap::new()).unwrap_err();
+        let err = field_to_set_params(
+            "required_tag_groups",
+            "Role:many",
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("invalid min_count"));
     }
 
     #[test]
     fn set_params_permissions_imply_read_restricted() {
-        let params = field_to_set_params("permissions", "staff:full", &BTreeMap::new()).unwrap();
+        let params = field_to_set_params(
+            "permissions",
+            "staff:full",
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert!(params.contains(&("permissions[staff]".to_string(), "1".to_string())));
         assert!(params.contains(&("read_restricted".to_string(), "true".to_string())));
     }
 
     #[test]
     fn set_params_everyone_only_stays_public() {
-        let params = field_to_set_params("permissions", "everyone:full", &BTreeMap::new()).unwrap();
+        let params = field_to_set_params(
+            "permissions",
+            "everyone:full",
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
         assert!(params.contains(&("permissions[everyone]".to_string(), "1".to_string())));
         assert!(!params.iter().any(|(k, _)| k == "read_restricted"));
     }
 
     #[test]
     fn set_params_unknown_field_errors() {
-        let err = field_to_set_params("bogus", "x", &BTreeMap::new()).unwrap_err();
+        let err =
+            field_to_set_params("bogus", "x", &BTreeMap::new(), &BTreeMap::new()).unwrap_err();
         assert!(err.to_string().contains("unknown category field"));
     }
 
     #[test]
     fn set_params_list_clears_on_empty() {
-        let params = field_to_set_params("allowed_tags", "", &BTreeMap::new()).unwrap();
+        let params =
+            field_to_set_params("allowed_tags", "", &BTreeMap::new(), &BTreeMap::new()).unwrap();
         assert_eq!(params, vec![("allowed_tags[]".to_string(), String::new())]);
     }
 
@@ -1883,7 +1970,29 @@ mod tests {
         slug_to_id.insert("parent-cat".to_string(), 42u64);
         let mut e = entry("Child");
         e.parent = Some("parent-cat".to_string());
-        let params = entry_to_params(&e, &slug_to_id).unwrap();
+        let params = entry_to_params(&e, &slug_to_id, &BTreeMap::new()).unwrap();
+        assert!(params.contains(&("parent_category_id".to_string(), "42".to_string())));
+    }
+
+    #[test]
+    fn entry_to_params_resolves_parent_name() {
+        let mut name_to_id = BTreeMap::new();
+        name_to_id.insert("Parent Cat".to_string(), 42u64);
+        let mut e = entry("Child");
+        e.parent = Some("Parent Cat".to_string());
+        let params = entry_to_params(&e, &BTreeMap::new(), &name_to_id).unwrap();
+        assert!(params.contains(&("parent_category_id".to_string(), "42".to_string())));
+    }
+
+    #[test]
+    fn entry_to_params_prefers_slug_over_name_on_conflict() {
+        let mut slug_to_id = BTreeMap::new();
+        slug_to_id.insert("parent-cat".to_string(), 42u64);
+        let mut name_to_id = BTreeMap::new();
+        name_to_id.insert("parent-cat".to_string(), 99u64);
+        let mut e = entry("Child");
+        e.parent = Some("parent-cat".to_string());
+        let params = entry_to_params(&e, &slug_to_id, &name_to_id).unwrap();
         assert!(params.contains(&("parent_category_id".to_string(), "42".to_string())));
     }
 
@@ -1891,7 +2000,41 @@ mod tests {
     fn entry_to_params_unknown_parent_errors() {
         let mut e = entry("Child");
         e.parent = Some("nope".to_string());
-        assert!(entry_to_params(&e, &BTreeMap::new()).is_err());
+        let err = entry_to_params(&e, &BTreeMap::new(), &BTreeMap::new()).unwrap_err();
+        assert!(err.to_string().contains("by slug or name"));
+    }
+
+    #[test]
+    fn validate_parents_passes_when_all_resolve() {
+        let mut slug_to_id = BTreeMap::new();
+        slug_to_id.insert("parent-cat".to_string(), 1u64);
+        let mut name_to_id = BTreeMap::new();
+        name_to_id.insert("Other Parent".to_string(), 2u64);
+        let mut a = entry("Child A");
+        a.parent = Some("parent-cat".to_string());
+        let mut b = entry("Child B");
+        b.parent = Some("Other Parent".to_string());
+        assert!(validate_parents(&[a, b], &slug_to_id, &name_to_id).is_ok());
+    }
+
+    #[test]
+    fn validate_parents_reports_every_unresolvable_entry_before_any_write() {
+        let mut a = entry("Child A");
+        a.parent = Some("nope".to_string());
+        let mut b = entry("Child B");
+        b.parent = Some("also-nope".to_string());
+        let err = validate_parents(&[a, b], &BTreeMap::new(), &BTreeMap::new()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Child A"));
+        assert!(msg.contains("nope"));
+        assert!(msg.contains("Child B"));
+        assert!(msg.contains("also-nope"));
+    }
+
+    #[test]
+    fn validate_parents_ignores_entries_without_a_parent() {
+        let a = entry("Top Level");
+        assert!(validate_parents(&[a], &BTreeMap::new(), &BTreeMap::new()).is_ok());
     }
 
     #[test]
