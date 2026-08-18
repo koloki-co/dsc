@@ -432,6 +432,7 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   current categories, by slug first then by name, before any writes happen;
   an unresolvable reference fails with one error naming every offending
   entry, rather than a 4xx partway through applying earlier entries.
+  An ambiguous name is rejected with guidance to use the unique slug.
   `category set parent` resolves the same way. `src/commands/category_def.rs`
   (`resolve_parent_id`, `validate_parents`); unit-tested.
 - [x] `custom_fields` round-trip. **Status: implemented (unreleased).** Reads each category's complete custom-field map from `/c/{id}/show.json`; applies changes via JSON `PUT /categories/{id}.json`, using nulls to remove keys omitted from a specified file map. `category set` accepts a complete scalar-valued JSON object. Object and array values are rejected because Discourse stringifies them. Verified reversibly on koloki-demo.

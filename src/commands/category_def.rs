@@ -72,7 +72,7 @@ pub struct CategoryDefEntry {
     pub text_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
-    /// Parent category slug (or null for a top-level category).
+    /// Parent category slug or unambiguous name (or null for a top-level category).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -286,10 +286,14 @@ fn slug_to_id_map(defs: &[CategoryDefinition]) -> BTreeMap<String, u64> {
         .collect()
 }
 
-fn name_to_id_map(defs: &[CategoryDefinition]) -> BTreeMap<String, u64> {
-    defs.iter()
-        .filter_map(|d| d.id.map(|id| (d.name.clone(), id)))
-        .collect()
+fn name_to_ids_map(defs: &[CategoryDefinition]) -> BTreeMap<String, Vec<u64>> {
+    let mut names = BTreeMap::<String, Vec<u64>>::new();
+    for def in defs {
+        if let Some(id) = def.id {
+            names.entry(def.name.clone()).or_default().push(id);
+        }
+    }
+    names
 }
 
 /// Resolve a `parent` reference against the server's current categories,
@@ -297,12 +301,20 @@ fn name_to_id_map(defs: &[CategoryDefinition]) -> BTreeMap<String, u64> {
 fn resolve_parent_id(
     parent: &str,
     slug_to_id: &BTreeMap<String, u64>,
-    name_to_id: &BTreeMap<String, u64>,
-) -> Option<u64> {
-    slug_to_id
-        .get(parent)
-        .or_else(|| name_to_id.get(parent))
-        .copied()
+    name_to_ids: &BTreeMap<String, Vec<u64>>,
+) -> Result<Option<u64>> {
+    if let Some(id) = slug_to_id.get(parent) {
+        return Ok(Some(*id));
+    }
+    match name_to_ids.get(parent).map(Vec::as_slice) {
+        None => Ok(None),
+        Some([id]) => Ok(Some(*id)),
+        Some(ids) => Err(anyhow!(
+            "parent category name '{}' is ambiguous (matches {} categories); use its unique slug",
+            parent,
+            ids.len()
+        )),
+    }
 }
 
 /// Check every file entry's `parent` reference resolves against the server
@@ -311,26 +323,26 @@ fn resolve_parent_id(
 fn validate_parents(
     file: &[CategoryDefEntry],
     slug_to_id: &BTreeMap<String, u64>,
-    name_to_id: &BTreeMap<String, u64>,
+    name_to_ids: &BTreeMap<String, Vec<u64>>,
 ) -> Result<()> {
-    let unresolved: Vec<String> = file
+    let invalid: Vec<String> = file
         .iter()
         .filter_map(|entry| {
             let parent = entry.parent.as_ref()?;
-            if resolve_parent_id(parent, slug_to_id, name_to_id).is_some() {
-                None
-            } else {
-                Some(format!("'{}' -> parent '{}'", entry.name, parent))
+            match resolve_parent_id(parent, slug_to_id, name_to_ids) {
+                Ok(Some(_)) => None,
+                Ok(None) => Some(format!(
+                    "'{}' -> parent '{}' was not found by slug or name",
+                    entry.name, parent
+                )),
+                Err(error) => Some(format!("'{}' -> {error}", entry.name)),
             }
         })
         .collect();
-    if unresolved.is_empty() {
+    if invalid.is_empty() {
         Ok(())
     } else {
-        Err(anyhow!(
-            "parent category not found on the server (by slug or name) for: {}",
-            unresolved.join(", ")
-        ))
+        Err(anyhow!("invalid parent categories: {}", invalid.join(", ")))
     }
 }
 
@@ -338,7 +350,7 @@ fn validate_parents(
 fn entry_to_params(
     entry: &CategoryDefEntry,
     slug_to_id: &BTreeMap<String, u64>,
-    name_to_id: &BTreeMap<String, u64>,
+    name_to_ids: &BTreeMap<String, Vec<u64>>,
 ) -> Result<Vec<(String, String)>> {
     let mut p: Vec<(String, String)> = vec![("name".to_string(), entry.name.clone())];
     let push_opt = |p: &mut Vec<(String, String)>, key: &str, v: &Option<String>| {
@@ -353,11 +365,8 @@ fn entry_to_params(
         p.push(("position".to_string(), v.to_string()));
     }
     if let Some(parent) = &entry.parent {
-        let pid = resolve_parent_id(parent, slug_to_id, name_to_id).ok_or_else(|| {
-            anyhow!(
-                "parent category '{}' not found on the server by slug or name (create it first, or fix the reference)",
-                parent
-            )
+        let pid = resolve_parent_id(parent, slug_to_id, name_to_ids)?.ok_or_else(|| {
+            anyhow!("parent category '{}' not found on the server by slug or name (create it first, or fix the reference)", parent)
         })?;
         p.push(("parent_category_id".to_string(), pid.to_string()));
     }
@@ -690,11 +699,11 @@ pub fn category_def_push(
     }
     let id_to_slug = id_to_slug_map(&defs);
     let slug_to_id = slug_to_id_map(&defs);
-    let name_to_id = name_to_id_map(&defs);
+    let name_to_ids = name_to_ids_map(&defs);
     let server_entries: Vec<CategoryDefEntry> =
         defs.iter().map(|d| def_to_entry(d, &id_to_slug)).collect();
 
-    validate_parents(&file.categories, &slug_to_id, &name_to_id)?;
+    validate_parents(&file.categories, &slug_to_id, &name_to_ids)?;
 
     let plan = plan_push(&file.categories, &server_entries);
 
@@ -741,7 +750,7 @@ pub fn category_def_push(
                 if let Some(custom_fields) = &entry.custom_fields {
                     validate_custom_fields(custom_fields)?;
                 }
-                let params = entry_to_params(entry, &slug_to_id, &name_to_id)?;
+                let params = entry_to_params(entry, &slug_to_id, &name_to_ids)?;
                 let id = client
                     .create_category_def(&params)
                     .with_context(|| format!("creating category '{}'", entry.name))?;
@@ -773,7 +782,7 @@ pub fn category_def_push(
                     .iter()
                     .any(|field| *field != "custom_fields")
                 {
-                    let params = entry_to_params(entry, &slug_to_id, &name_to_id)?;
+                    let params = entry_to_params(entry, &slug_to_id, &name_to_ids)?;
                     client
                         .update_category(id, &params)
                         .with_context(|| format!("updating category '{}'", entry.name))?;
@@ -1096,7 +1105,7 @@ pub fn category_set(
         enrich_custom_fields(&client, &mut defs)?;
     }
     let slug_to_id = slug_to_id_map(&defs);
-    let name_to_id = name_to_id_map(&defs);
+    let name_to_ids = name_to_ids_map(&defs);
     let def = find_def(&defs, category)?;
     let id = def.id.ok_or_else(|| not_found("category", category))?;
 
@@ -1139,7 +1148,7 @@ pub fn category_set(
         };
         params
     } else {
-        field_to_set_params(field, value, &slug_to_id, &name_to_id)?
+        field_to_set_params(field, value, &slug_to_id, &name_to_ids)?
     };
 
     if dry_run {
@@ -1387,7 +1396,7 @@ fn field_to_set_params(
     field: &str,
     value: &str,
     slug_to_id: &BTreeMap<String, u64>,
-    name_to_id: &BTreeMap<String, u64>,
+    name_to_ids: &BTreeMap<String, Vec<u64>>,
 ) -> Result<Vec<(String, String)>> {
     let one = |k: &str, v: String| vec![(k.to_string(), v)];
     let list = |key: &str, value: &str| -> Vec<(String, String)> {
@@ -1412,7 +1421,7 @@ fn field_to_set_params(
         }
         "parent" => {
             let parent = value.trim();
-            let pid = resolve_parent_id(parent, slug_to_id, name_to_id).ok_or_else(|| {
+            let pid = resolve_parent_id(parent, slug_to_id, name_to_ids)?.ok_or_else(|| {
                 anyhow!(
                     "parent category '{}' not found on the server by slug or name",
                     parent
@@ -1976,11 +1985,11 @@ mod tests {
 
     #[test]
     fn entry_to_params_resolves_parent_name() {
-        let mut name_to_id = BTreeMap::new();
-        name_to_id.insert("Parent Cat".to_string(), 42u64);
+        let mut name_to_ids = BTreeMap::new();
+        name_to_ids.insert("Parent Cat".to_string(), vec![42u64]);
         let mut e = entry("Child");
         e.parent = Some("Parent Cat".to_string());
-        let params = entry_to_params(&e, &BTreeMap::new(), &name_to_id).unwrap();
+        let params = entry_to_params(&e, &BTreeMap::new(), &name_to_ids).unwrap();
         assert!(params.contains(&("parent_category_id".to_string(), "42".to_string())));
     }
 
@@ -1988,12 +1997,23 @@ mod tests {
     fn entry_to_params_prefers_slug_over_name_on_conflict() {
         let mut slug_to_id = BTreeMap::new();
         slug_to_id.insert("parent-cat".to_string(), 42u64);
-        let mut name_to_id = BTreeMap::new();
-        name_to_id.insert("parent-cat".to_string(), 99u64);
+        let mut name_to_ids = BTreeMap::new();
+        name_to_ids.insert("parent-cat".to_string(), vec![99u64]);
         let mut e = entry("Child");
         e.parent = Some("parent-cat".to_string());
-        let params = entry_to_params(&e, &slug_to_id, &name_to_id).unwrap();
+        let params = entry_to_params(&e, &slug_to_id, &name_to_ids).unwrap();
         assert!(params.contains(&("parent_category_id".to_string(), "42".to_string())));
+    }
+
+    #[test]
+    fn entry_to_params_rejects_an_ambiguous_parent_name() {
+        let mut name_to_ids = BTreeMap::new();
+        name_to_ids.insert("Repeated Name".to_string(), vec![42u64, 99u64]);
+        let mut e = entry("Child");
+        e.parent = Some("Repeated Name".to_string());
+        let err = entry_to_params(&e, &BTreeMap::new(), &name_to_ids).unwrap_err();
+        assert!(err.to_string().contains("ambiguous"));
+        assert!(err.to_string().contains("use its unique slug"));
     }
 
     #[test]
@@ -2008,13 +2028,13 @@ mod tests {
     fn validate_parents_passes_when_all_resolve() {
         let mut slug_to_id = BTreeMap::new();
         slug_to_id.insert("parent-cat".to_string(), 1u64);
-        let mut name_to_id = BTreeMap::new();
-        name_to_id.insert("Other Parent".to_string(), 2u64);
+        let mut name_to_ids = BTreeMap::new();
+        name_to_ids.insert("Other Parent".to_string(), vec![2u64]);
         let mut a = entry("Child A");
         a.parent = Some("parent-cat".to_string());
         let mut b = entry("Child B");
         b.parent = Some("Other Parent".to_string());
-        assert!(validate_parents(&[a, b], &slug_to_id, &name_to_id).is_ok());
+        assert!(validate_parents(&[a, b], &slug_to_id, &name_to_ids).is_ok());
     }
 
     #[test]
