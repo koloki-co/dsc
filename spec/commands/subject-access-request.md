@@ -136,7 +136,7 @@ admin API is not formally versioned. Endpoints `dsc` already uses are marked.)
   staged/active flags. (`dsc user info` currently uses the thinner public
   `/u/{username}.json`.)
 - **Resolve email -> account** (new-ish): `GET /admin/users/list/all.json?email=<email>`
-  or the filter param, then take the id. (Mirrors the planned `dsc user find`.)
+  or the filter param, then take the id. (Mirrors the implemented `dsc user find`.)
 - **Authored posts** (have): `fetch_user_actions` with the post filters; fetch
   each post's raw via the existing topic/post path.
 - **Private messages** (have): the `dsc pm list` path

@@ -372,7 +372,7 @@ fn print_plan(
     println!("[dry-run] S3 backup setup for {forum} (region {region})\n");
     println!("AWS resources to create:");
     println!(
-        "  bucket  {}   (private; Block Public Access on; SSE-S3)",
+        "  bucket  {}   (private; Block Public Access on; AWS-default SSE-S3)",
         names.bucket
     );
     if use_iam_profile {

@@ -115,4 +115,4 @@ dsc backup setup-s3 -n --all
 dsc backup setup-s3 --tags production --use-iam-profile
 ```
 
-> Phase 1 covers the create-everything flow; `--use-iam-profile` and `--all`/`--tags` have since shipped. `--reuse-user` (idempotent re-runs / key rotation) is planned - see [spec/commands/backup-s3-setup.md](../spec/commands/backup-s3-setup.md).
+> Phase 1 covers the create-everything flow; `--use-iam-profile` and `--all`/`--tags` are implemented on `main`. `--reuse-user` (idempotent re-runs / key rotation) is planned - see the [backup S3 setup spec](https://github.com/koloki-co/dsc/blob/main/spec/commands/backup-s3-setup.md).

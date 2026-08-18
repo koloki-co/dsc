@@ -162,7 +162,7 @@ pub fn user_find(config: &Config, email: &str, format: ListFormat) -> Result<()>
     match format {
         ListFormat::Text => {
             if matches.is_empty() {
-                println!("No account found for {} on any configured forum.", email);
+                println!("No account found on any configured forum.");
             } else {
                 let forum_width = matches.iter().map(|m| m.forum.len()).max().unwrap_or(4);
                 for m in &matches {

@@ -131,7 +131,7 @@ If auto-tag fails before pushing its tag, repair the workflow in a normal PR, th
 - Config structures and helpers: [src/config.rs](../src/config.rs)
 - Utility helpers (slugify, I/O): [src/utils.rs](../src/utils.rs)
 - Example configuration: [dsc.example.toml](../dsc.example.toml)
-- CLI design standards: [spec/cli-design.md](../spec/cli-design.md); internals/release: [spec/spec.md](../spec/spec.md)
+- CLI design standards: [spec/cli-design.md](https://github.com/koloki-co/dsc/blob/main/spec/cli-design.md); internals/release: [spec/spec.md](https://github.com/koloki-co/dsc/blob/main/spec/spec.md)
 - Project scripts: [s/](../s) (house style - see below)
 - Windows installer sources: [wix/](../wix) - MSI build artefacts consumed by the cargo-dist Windows target, not invoked directly during development
 

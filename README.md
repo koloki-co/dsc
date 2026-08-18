@@ -32,13 +32,13 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 | Area | Works now | On the roadmap |
 |---|---|---|
 | **Topics & posts** | pull / push / sync as Markdown, reply, create, rename (`topic title`), set tags, full-thread export; per-post edit / delete / move | — |
-| **Categories** | list; pull / push a whole category as Markdown with durable `topic_id` binding, a reviewable dry-run plan, `--updates-only` and `--no-bump`; copy | MkDocs ↔ Discourse admonition & link conversion |
+| **Categories** | list; pull / push a whole category as Markdown with durable `topic_id` binding, a reviewable dry-run plan, `--updates-only`, `--no-bump`, admonition/link conversion; declarative definition pull/push/diff/set/rename | definition assets and guarded prune |
 | **Tags** | pull / push the taxonomy, rename, per-topic tag / untag | — |
 | **Site settings** | get / set / list, pull / push snapshots, diff two sources, **audit one setting across every forum** | — |
-| **Themes & palettes** | list / install / remove / pull / push / duplicate / show; component settings; enable / disable; attach / detach; colour palettes | per-field SCSS editing, asset upload + bind, remote component update |
-| **Users & access** | list / info, suspend / silence, promote / demote, group membership, activity export, create, password reset, email change; invites; private messages; API keys; **one-shot SAR / GDPR export** | scoped API keys, find-user-by-email |
-| **Backups, emoji, uploads** | backup create / list / pull / push / restore, bulk emoji, file upload | backup-all |
-| **Fleet (multi-install)** | one config for N forums, tag filtering, write a setting across matching installs, audit a setting across all, update-all over SSH | cross-forum search & aggregate reports |
+| **Themes & palettes** | list / install / remove / pull / push / duplicate / show; component settings and fields; assets; enable / disable; attach / detach; colour palettes; remote update | — |
+| **Users & access** | list / info / find-by-email, suspend / silence, promote / demote, group membership, activity export, create, password reset, email change; invites; private messages; API keys; **one-shot SAR / GDPR export** | scoped API keys |
+| **Backups, emoji, uploads** | backup create / list / pull / push / restore, fleet backup creation and S3 health/setup, bulk emoji, file upload | S3 key rotation and retention |
+| **Fleet (multi-install)** | one config for N forums, tag filtering, write/audit settings, update-all over SSH, cross-forum search and user lookup, backup fan-out | aggregate reports |
 | **Server lifecycle** | `harden` a fresh box, stages 1-2 (new sudo user, pubkey auth, sshd lockdown to a non-standard port); `update` over SSH with skip-if-current | `harden` stage 3 - firewall, Docker, swap, fail2ban (config keys wired, SSH execution pending); one-shot `dsc install` provisioning |
 | **Reporting** | analytics snapshot (growth / activity / health); saved Data Explorer query inspection/execution; `log staff` audit-trail inspection | dashboard reports, notifications |
 

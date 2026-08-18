@@ -4,6 +4,7 @@ Search topics on a Discourse install.
 
 ```text
 dsc search <discourse> <query> [--format text|json|yaml]
+dsc search all <query> [--format text|json|yaml]
 ```
 
 Hits `/search.json?q=…` and prints the matching topics. The query is passed through verbatim, so any Discourse search filter syntax works (`status:open`, `category:foo`, `tags:bug`, `@user`, etc.).
@@ -20,6 +21,17 @@ dsc search myforum "release notes" --format json        # full structured output
 ```
 
 Each result includes `id`, `title`, `slug`, `posts_count`, `category_id`, and `tags`.
+
+## Search every forum
+
+`dsc search all <query>` runs the same query against every configured forum and combines the results. Text output prefixes each row with the forum name; JSON and YAML add a `forum` field to each normal search result. The command continues after an individual forum fails so successful results still reach stdout, reports failures on stderr, and exits non-zero if any forum could not be searched.
+
+```bash
+dsc search all "tags:bug status:open"
+dsc search all "release notes" --format json | jq -r '.[] | [.forum, .id] | @tsv'
+```
+
+`all` is currently a reserved positional selector, so a configured forum named `all` cannot be addressed by this command. Fleet selector normalization is tracked in the roadmap.
 
 ## Examples
 

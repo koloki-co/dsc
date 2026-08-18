@@ -143,6 +143,10 @@ fn find_reports_no_match_when_nobody_has_the_address() {
     assert!(output.status.success());
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(text.contains("No account found"));
+    assert!(
+        !text.contains("missing@example.com"),
+        "the searched email must not be retained in normal output"
+    );
 }
 
 #[test]

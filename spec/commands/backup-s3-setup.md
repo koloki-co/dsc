@@ -49,7 +49,7 @@ dsc backup setup-s3 (--all | --tags <tag1,tag2,...>) [--region <r>]
   - policy  `s3-single-bucket-<name>-discourse-backups`
   - user    `<name>-discourse-backup-user`
 - Default `--region eu-west-2` (the runbook default; override per customer / country).
-- Provisions AWS (via the `aws` CLI - see dependency note): create the private bucket (Block Public Access on, SSE-S3, versioning off, object-ownership BucketOwnerEnforced), create the single-bucket managed policy, create the IAM user, attach the policy, mint one access key.
+- Provisions AWS (via the `aws` CLI - see dependency note): creates the bucket and explicitly enables Block Public Access, relying on current AWS new-bucket defaults for SSE-S3, versioning-disabled, and BucketOwnerEnforced object ownership; creates the single-bucket managed policy and IAM user, attaches the policy, and mints one access key.
 - Configures Discourse over the admin API: `backup_location=s3`, `s3_backup_bucket`, `s3_region`, and the minted `s3_access_key_id` / `s3_secret_access_key` (or skip the keys and set `s3_use_iam_profile=true` with `--use-iam-profile` when running on an EC2 instance role).
 - Unless `--no-test`, runs a `dsc backup create` and confirms the object appears in the bucket (`aws s3 ls`), then reports pass/fail.
 - `--dry-run` prints the full plan - resolved names, the exact policy JSON, the `aws` commands, and the settings diff - and touches nothing. This is the review gate before acting on a cloud account, so it must be complete.
