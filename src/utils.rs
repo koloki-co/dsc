@@ -470,12 +470,41 @@ fn discourse_color_code(key: &str) -> u8 {
     COLORS[hash % COLORS.len()]
 }
 
-pub fn color_discourse_label(label: &str, key: &str) -> String {
-    if !color_allowed_for_stdout() {
-        return label.to_string();
+/// Parse a strict `#RRGGBB` hex colour into its RGB components. Any other
+/// shape (missing `#`, wrong length, non-hex digits, short `#RGB` forms)
+/// returns `None` so callers can fall back rather than error.
+pub fn parse_hex_color(value: &str) -> Option<(u8, u8, u8)> {
+    let digits = value.strip_prefix('#')?;
+    if digits.len() != 6 || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let r = u8::from_str_radix(&digits[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&digits[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&digits[4..6], 16).ok()?;
+    Some((r, g, b))
+}
+
+/// Render `label` with `update_colour` (a validated `#RRGGBB`) as a 24-bit
+/// ANSI truecolour, falling back to the deterministic hash-based colour
+/// keyed on `key` when `update_colour` is absent or does not parse.
+fn discourse_label_ansi(label: &str, key: &str, update_colour: Option<&str>) -> String {
+    if let Some((r, g, b)) = update_colour.and_then(parse_hex_color) {
+        return format!("\x1b[1;38;2;{};{};{}m{}\x1b[0m", r, g, b, label);
     }
     let code = discourse_color_code(key);
     format!("\x1b[1;{}m{}\x1b[0m", code, label)
+}
+
+/// Colour a per-forum label for terminal output. `update_colour`, when
+/// `Some` and a valid `#RRGGBB` value, is used as a truecolour override;
+/// otherwise `key` (typically the Discourse's `name`) is hashed into one
+/// of twelve ANSI colours. Respects `NO_COLOR`/`DSC_COLOR` and returns the
+/// plain label unchanged when colour output is not allowed.
+pub fn color_discourse_label(label: &str, key: &str, update_colour: Option<&str>) -> String {
+    if !color_allowed_for_stdout() {
+        return label.to_string();
+    }
+    discourse_label_ansi(label, key, update_colour)
 }
 
 /// Parse a `--since`-style value. Accepts either a relative duration
@@ -568,6 +597,38 @@ mod tests {
         assert!(atomic_write(&path, "second", false).is_err());
         atomic_write(&path, "second", true).unwrap();
         assert_eq!(fs::read_to_string(path).unwrap(), "second");
+    }
+
+    #[test]
+    fn parse_hex_color_accepts_strict_rrggbb() {
+        assert_eq!(parse_hex_color("#3f8f77"), Some((0x3f, 0x8f, 0x77)));
+        assert_eq!(parse_hex_color("#FFFFFF"), Some((255, 255, 255)));
+    }
+
+    #[test]
+    fn parse_hex_color_rejects_malformed_values() {
+        assert_eq!(parse_hex_color("3f8f77"), None); // missing '#'
+        assert_eq!(parse_hex_color("#fff"), None); // short form
+        assert_eq!(parse_hex_color("#3f8f7"), None); // too short
+        assert_eq!(parse_hex_color("#3f8f77a"), None); // too long
+        assert_eq!(parse_hex_color("#zzzzzz"), None); // non-hex digits
+        assert_eq!(parse_hex_color(""), None);
+    }
+
+    #[test]
+    fn discourse_label_ansi_uses_truecolour_when_update_colour_valid() {
+        let out = discourse_label_ansi("myforum", "myforum", Some("#3f8f77"));
+        assert_eq!(out, "\x1b[1;38;2;63;143;119mmyforum\x1b[0m");
+    }
+
+    #[test]
+    fn discourse_label_ansi_falls_back_to_hash_when_update_colour_absent_or_invalid() {
+        let expected = format!("\x1b[1;{}mmyforum\x1b[0m", discourse_color_code("myforum"));
+        assert_eq!(discourse_label_ansi("myforum", "myforum", None), expected);
+        assert_eq!(
+            discourse_label_ansi("myforum", "myforum", Some("not-a-colour")),
+            expected
+        );
     }
 
     #[cfg(unix)]

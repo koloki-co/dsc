@@ -31,7 +31,7 @@ Required before announcing on [meta.discourse.org](https://meta.discourse.org). 
 ### CLI / distribution
 
 - [x] **R45 - Zsh completion installer compatibility** - `dsc completions install` now writes Zsh completions to the shared `~/.zfunc` user-completion directory, matching the house convention and other Marcus Baw CLIs. Custom completion directories remain supported through `--dir`.
-- [ ] **R47 - Theme-derived `dsc update` label colours** - replace the current deterministic hash-based ANSI label colour with an optional, validated per-Discourse key colour derived from its active theme/palette and cached in `dsc.toml`. Preserve `NO_COLOR`/`DSC_COLOR` behaviour and the hash fallback; the update workflow must not silently rewrite configuration. Driver: operators want multi-forum update output to visually match each forum's identity. Spec: [update-theme-colour](commands/update-theme-colour.md).
+- [~] **R47 - Theme-derived `dsc update` label colours** - Phase 2 implemented on `main`: optional, validated `update_colour` (`#RRGGBB`) per `[[discourse]]` renders as a 24-bit truecolour label, falling back to the deterministic hash-based ANSI colour when unset or invalid; `NO_COLOR`/`DSC_COLOR`/non-TTY behaviour is preserved and `dsc update` never writes configuration. Remaining: Phase 1 discovery against a live Discourse theme/colour-scheme API, and the Phase 3 explicit refresh command that reads/chooses/writes the value. Driver: operators want multi-forum update output to visually match each forum's identity. Spec: [update-theme-colour](commands/update-theme-colour.md).
 
 ### Ops reliability
 

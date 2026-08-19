@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use crate::utils::{atomic_write_private, expand_tilde_path};
+use crate::utils::{atomic_write_private, expand_tilde_path, parse_hex_color};
 use anyhow::{Context, Result, anyhow};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
@@ -127,6 +127,12 @@ pub struct DiscourseConfig {
     /// is used by sites that prefer less frequent updates. Default: `latest`.
     #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
     pub discourse_branch: Option<String>,
+    /// Cached theme-derived key colour for `dsc update` labels, as a strict
+    /// `#RRGGBB` value. A cache of a user-selected colour, not an authority
+    /// refreshed on every update; `dsc update` never writes this back. An
+    /// unset or invalid value falls back to the deterministic hash colour.
+    #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
+    pub update_colour: Option<String>,
 }
 
 impl fmt::Debug for DiscourseConfig {
@@ -147,6 +153,7 @@ impl fmt::Debug for DiscourseConfig {
             .field("app_yml_path", &self.app_yml_path)
             .field("docker_rootless", &self.docker_rootless)
             .field("discourse_branch", &self.discourse_branch)
+            .field("update_colour", &self.update_colour)
             .finish()
     }
 }
@@ -159,6 +166,7 @@ pub fn load_config(path: &Path) -> Result<Config> {
     let raw = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     let config: Config = toml::from_str(&raw).with_context(|| "parsing config")?;
     warn_on_discourse_names(&config);
+    warn_on_invalid_update_colour(&config);
     Ok(config)
 }
 
@@ -192,6 +200,19 @@ fn warn_on_discourse_names(config: &Config) {
             eprintln!(
                 "Warning: discourse name '{}' contains whitespace. Prefer a short, slugified name without spaces; use 'fullname' for display.",
                 discourse.name
+            );
+        }
+    }
+}
+
+fn warn_on_invalid_update_colour(config: &Config) {
+    for discourse in &config.discourse {
+        if let Some(value) = discourse.update_colour.as_deref()
+            && parse_hex_color(value).is_none()
+        {
+            eprintln!(
+                "Warning: discourse '{}' has invalid update_colour '{}' (expected '#RRGGBB'); falling back to the default label colour.",
+                discourse.name, value
             );
         }
     }
@@ -369,6 +390,59 @@ mod tests {
         let debug = format!("{discourse:?}");
         assert!(debug.contains("#####REDACTED#####"));
         assert!(!debug.contains("never-print-this-secret"));
+    }
+
+    #[test]
+    fn update_colour_parses_from_toml() {
+        let config: Config = toml::from_str(
+            r##"
+            [[discourse]]
+            name = "myforum"
+            baseurl = "https://forum.example.com"
+            update_colour = "#3f8f77"
+            "##,
+        )
+        .unwrap();
+        assert_eq!(
+            config.discourse[0].update_colour.as_deref(),
+            Some("#3f8f77")
+        );
+    }
+
+    #[test]
+    fn update_colour_empty_string_is_none() {
+        let config: Config = toml::from_str(
+            r#"
+            [[discourse]]
+            name = "myforum"
+            baseurl = "https://forum.example.com"
+            update_colour = ""
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.discourse[0].update_colour, None);
+    }
+
+    #[test]
+    fn warn_on_invalid_update_colour_does_not_panic_on_malformed_or_valid_values() {
+        let config = Config {
+            discourse: vec![
+                DiscourseConfig {
+                    name: "bad".to_string(),
+                    baseurl: "https://bad.example".to_string(),
+                    update_colour: Some("not-a-colour".to_string()),
+                    ..DiscourseConfig::default()
+                },
+                DiscourseConfig {
+                    name: "good".to_string(),
+                    baseurl: "https://good.example".to_string(),
+                    update_colour: Some("#3f8f77".to_string()),
+                    ..DiscourseConfig::default()
+                },
+            ],
+            ..Config::default()
+        };
+        warn_on_invalid_update_colour(&config);
     }
 
     #[test]
