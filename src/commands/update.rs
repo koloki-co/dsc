@@ -1384,7 +1384,7 @@ fn discourse_display_name(discourse: &DiscourseConfig) -> String {
 
 fn colored_discourse_display(discourse: &DiscourseConfig) -> String {
     let label = discourse_display_name(discourse);
-    color_discourse_label(&label, &discourse.name)
+    color_discourse_label(&label, &discourse.name, discourse.update_colour.as_deref())
 }
 
 fn get_os_version(target: &str) -> Result<Option<String>> {

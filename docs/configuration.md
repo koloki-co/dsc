@@ -58,6 +58,7 @@ tags = ["production", "client-a"]
 | `changelog_topic_id` | for changelog | Topic ID for update changelog posts. |
 | `tags` | no | Labels for organising installs; used with `--tags` filtering. |
 | `discourse_branch` | no | Discourse branch to compare against during `dsc update` (default: `latest`). Set to `stable` for sites that track the Discourse stable branch. The `--branch` CLI flag overrides this per-run. |
+| `update_colour` | no | Cached theme-derived key colour for `dsc update` labels, as a strict `#RRGGBB` value (e.g. `"#3f8f77"`). A cache, not an authority refreshed on every update - `dsc update` never writes it back. Unset or invalid values fall back to the deterministic hash-based label colour; an invalid value warns on config load. Respects `NO_COLOR`/`DSC_COLOR` and non-terminal output like any other coloured label. |
 | `enabled` | no | Defaults to `true`. Set `false` to skip in bulk operations. |
 
 ## Notes

@@ -26,6 +26,7 @@ ssh_host = "forum.example.com"                     # host used by `dsc update` o
 docker_rootless = false                             # true if `dsc harden` installed Docker rootless (optional)
 tags = ["production", "uk"]                        # free-form tags; used by `--tags` filters (optional)
 changelog_topic_id = 123                           # topic id to post rebuild changelogs into (optional)
+# update_colour = "#3f8f77"                        # theme-derived key colour for `dsc update` labels (optional)
 
 [[discourse]]
 name = "otherforum"

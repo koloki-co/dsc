@@ -45,9 +45,9 @@ Confirm how the default active theme is identified, how it relates to `color_sch
 
 ### Phase 2 - configuration and rendering
 
-- [ ] Add and validate optional `update_colour` configuration, docs, and schema output.
-- [ ] Render configured truecolour labels while preserving existing `NO_COLOR`, `DSC_COLOR`, non-TTY, and hash-fallback behaviour.
-- [ ] Add configuration parsing and terminal-output regression coverage.
+- [x] Add and validate optional `update_colour` configuration, docs, and schema output. Implemented on `main`: `DiscourseConfig.update_colour` accepts a strict `#RRGGBB` string (empty string treated as unset, like other optional string fields); an invalid value warns on config load and falls back rather than erroring.
+- [x] Render configured truecolour labels while preserving existing `NO_COLOR`, `DSC_COLOR`, non-TTY, and hash-fallback behaviour. `color_discourse_label` takes an optional `update_colour` override and emits 24-bit ANSI (`\x1b[1;38;2;r;g;bm`) when it parses, otherwise falls back to the existing twelve-colour hash.
+- [x] Add configuration parsing and terminal-output regression coverage. See `src/config.rs` (`update_colour_parses_from_toml`, `update_colour_empty_string_is_none`, `warn_on_invalid_update_colour_does_not_panic_on_malformed_or_valid_values`) and `src/utils.rs` (`parse_hex_color_*`, `discourse_label_ansi_*`).
 
 ### Phase 3 - refresh ergonomics
 
