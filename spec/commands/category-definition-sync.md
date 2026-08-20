@@ -189,6 +189,8 @@ categories:
       **Paid / unpaid:**
       **Links:**
 
+    topic_title_placeholder: "Genre, instrument, and location"   # optional; placeholder shown in the title field when composing here
+
     permissions:                # optional; map group_name -> level. Omit entirely = "default".
       everyone: full            #   levels: full | create_post | readonly
       # staff: full              #   a restricted, staff-only category = {staff: full} (and read_restricted: true)
@@ -325,9 +327,8 @@ uploaded_logo, uploaded_logo_dark, uploaded_background, uploaded_background_dark
 `topic_count`, `post_count`, `topics_day/week/month/year/all_time`,
 `topics`, `can_edit`, `notification_level`, `topic_url`, `description_excerpt`
 (derived from description), `description_text` (rendered), `subcategory_ids`
-(derived from `parent`), `topic_title_placeholder` (Phase 2), `style_type/icon/
-emoji/uploaded_logo*/uploaded_background*` (Phase 2 — asset upload is its own
-problem), `custom_fields` (Phase 2).
+(derived from `parent`), `style_type/icon/emoji/uploaded_logo*/uploaded_background*`
+(Phase 2 — asset upload is its own problem).
 
 Note: `/c/{id}.json` returns the **topic list**, not the category definition —
 do not use it for definitions. The categories list endpoint is the right read.
@@ -436,7 +437,8 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   `category set parent` resolves the same way. `src/commands/category_def.rs`
   (`resolve_parent_id`, `validate_parents`); unit-tested.
 - [x] `custom_fields` round-trip. **Status: implemented (unreleased).** Reads each category's complete custom-field map from `/c/{id}/show.json`; applies changes via JSON `PUT /categories/{id}.json`, using nulls to remove keys omitted from a specified file map. `category set` accepts a complete scalar-valued JSON object. Object and array values are rejected because Discourse stringifies them. Verified reversibly on koloki-demo.
-- [ ] `topic_title_placeholder`, logo/background asset fields, `icon`/`emoji` — surface as `category set` fields once the asset-upload path is decided.
+- [x] `topic_title_placeholder` round-trip. **Status: implemented (unreleased).** Reads the category-list response and writes the `topic_title_placeholder` form parameter, exactly mirroring `topic_template`. `category get`/`set`/`show`, `def pull`/`push`, and `category diff` all support the field. Unit-tested (entry round-trip and `set` params); no live test needed - same request shape as `topic_template`.
+- [ ] Logo/background asset fields, `icon`/`emoji` — surface as `category set` fields once the asset-upload path is decided.
 
 ### Phase 3 — nice to have
 

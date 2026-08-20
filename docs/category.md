@@ -144,7 +144,7 @@ dsc category set  <discourse> <category> <field> <value>
 ```
 
 - `<category>` resolves by `id`, `slug`, or `name`.
-- `<field>` is one of: `name`, `slug`, `color`, `text_color`, `position`, `parent`, `read_restricted`, `description`, `topic_template`, `permissions`, `allowed_tags`, `allowed_tag_groups`, `minimum_required_tags`, `required_tag_groups`, `category_types`, `custom_fields`, `sort_order`, `default_view`, `subcategory_list_style`, `num_featured_topics`, `show_subcategory_list`.
+- `<field>` is one of: `name`, `slug`, `color`, `text_color`, `position`, `parent`, `read_restricted`, `description`, `topic_template`, `topic_title_placeholder`, `permissions`, `allowed_tags`, `allowed_tag_groups`, `minimum_required_tags`, `required_tag_groups`, `category_types`, `custom_fields`, `sort_order`, `default_view`, `subcategory_list_style`, `num_featured_topics`, `show_subcategory_list`.
 - List fields (`allowed_tags`, `allowed_tag_groups`) take a comma-separated value; an empty value clears the list. Pass `--append` or `--remove` (mutually exclusive) to add or remove the given comma-separated items instead of replacing the whole list - e.g. `dsc category set forum1 support allowed_tags urgent,bug --append`.
 - `permissions` takes `group:level,...` where level is `full`, `create_post`, or `readonly` (e.g. `staff:full`). Granting any group other than `everyone` also sets `read_restricted=true`, matching the admin UI.
 - `required_tag_groups` takes `group:min_count,...` (e.g. `Role:1,Genre:2`); an empty value clears the rules. `category_types` takes a comma-separated list of additional type IDs (e.g. `support`); the built-in `discussion` type is implicit.
