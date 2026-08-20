@@ -5,6 +5,72 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.15.0] - 2026-08-20
+
+### Bug fixes
+
+- **backup**: Reset IAM profile for static keys ([03198dd](https://github.com/koloki-co/dsc/commit/03198dd5aefd3c398d3e4e77d39290219747f834))
+
+- Correct performance audit optimizations ([8f052a2](https://github.com/koloki-co/dsc/commit/8f052a25a22936ce2c38fc36c7d8c87956f3cc43))
+
+- **update**: Make Discourse branch configurable, default to latest ([3d014d3](https://github.com/koloki-co/dsc/commit/3d014d341b9345c52d9d04da1e9c75c16db504be))
+
+- **category**: Skip unchanged list edits ([917db41](https://github.com/koloki-co/dsc/commit/917db41d5da49d8684d38fe148c9ae278f6b9e02))
+
+- **group**: Preserve empty notification defaults ([29268d8](https://github.com/koloki-co/dsc/commit/29268d897e586a88d78910b5832956a41ae3b9b4))
+
+### Build
+
+- **deps**: Bump the routine-minor-and-patch group with 3 updates ([8ea6476](https://github.com/koloki-co/dsc/commit/8ea6476bfe117e3a494936047384e409ee35d076))
+
+- **deps**: Bump taiki-e/install-action ([8137463](https://github.com/koloki-co/dsc/commit/8137463b946552880492c2e70917e7d721ea20b5))
+
+- **deps**: Bump taiki-e/install-action ([f09bee1](https://github.com/koloki-co/dsc/commit/f09bee1c961c2510f251ecf0f56a6a89fc01879d))
+
+- **deps**: Bump zensical in the routine-minor-and-patch group ([60c3402](https://github.com/koloki-co/dsc/commit/60c3402b592f22b7e80d8032dff3fff2b617fe82))
+
+- **deps**: Bump the routine-minor-and-patch group with 2 updates ([d172517](https://github.com/koloki-co/dsc/commit/d1725174d34282132a86749cf6860dc9256adbe8))
+
+### Documentation
+
+- Reconcile roadmap and recent CLI changes ([4c4f8b5](https://github.com/koloki-co/dsc/commit/4c4f8b5e29a92640fae16e37be78982afb19212b))
+
+- **category**: Clarify category type sync ([6677e0f](https://github.com/koloki-co/dsc/commit/6677e0fe11d9426a6a2e7e0b15030746d11a3e6e))
+
+- Defer P6 - per-forum GitHub fetch is intentional ([6beeae6](https://github.com/koloki-co/dsc/commit/6beeae67f039fc53ca346ab9ebcd385e67bcf122))
+
+### Features
+
+- **category**: Add topic_title_placeholder to category definition sync (R11) ([#104](https://github.com/koloki-co/dsc/issues/104)) ([3f57cbc](https://github.com/koloki-co/dsc/commit/3f57cbc9a83126b2f43bc4dcf4239c58cf8f6c1f))
+
+- **update**: Add theme-derived label colour (R47 Phase 2) ([1a0a241](https://github.com/koloki-co/dsc/commit/1a0a2410163b1590897344d5e1f04b8d6231fe0c))
+
+- **backup**: Stream endpoint-aware health checks ([b6bccfc](https://github.com/koloki-co/dsc/commit/b6bccfc4f06426229a0cca2dc9d210474abcfe92))
+
+- **category**: Resolve parent by name and validate before push (R11) ([#100](https://github.com/koloki-co/dsc/issues/100)) ([506567b](https://github.com/koloki-co/dsc/commit/506567b9ad24d43e94ffedbb26c454b7fa084d4a))
+
+- **backup**: Add --all/--tags fleet fan-out to setup-s3 (R13) ([#99](https://github.com/koloki-co/dsc/issues/99)) ([5e8cebe](https://github.com/koloki-co/dsc/commit/5e8cebe92bfdff7260e569510a5eda42aac11619))
+
+- **user**: Add `dsc user find <email>` GDPR fleet lookup (R21) ([#98](https://github.com/koloki-co/dsc/issues/98)) ([d213be3](https://github.com/koloki-co/dsc/commit/d213be31c4769519ba212181719b9b377570798a))
+
+- **category**: Sync custom fields ([#97](https://github.com/koloki-co/dsc/issues/97)) ([1f020a7](https://github.com/koloki-co/dsc/commit/1f020a715e114fa0d0b797695dffff920e763e3d))
+
+- **backup**: Add `dsc backup create all` fleet fan-out ([#96](https://github.com/koloki-co/dsc/issues/96)) ([52e2724](https://github.com/koloki-co/dsc/commit/52e2724872247b9312fb25efb360a2cc05d012eb))
+
+- **category**: Sync required tag groups and types ([34a4b34](https://github.com/koloki-co/dsc/commit/34a4b344eb056be130779977bea3ad12281f14f4))
+
+- **backup**: Add --use-iam-profile to `backup setup-s3` ([f58f1dd](https://github.com/koloki-co/dsc/commit/f58f1dd2d3f04c45870389ffa728ad6dd393bac4))
+
+- **category**: Add --append/--remove to `category set` for list fields ([8605ef9](https://github.com/koloki-co/dsc/commit/8605ef994ca98297a961a977ec51d725816eb0b9))
+
+- **group**: Add --with-defaults to surface notification-level defaults ([836fcf9](https://github.com/koloki-co/dsc/commit/836fcf94d194403f9d5543b6b120253340baab0a))
+
+### Performance
+
+- Fix P7, P17, P18, P19, P21, P31 from performance audit ([fd1c3e3](https://github.com/koloki-co/dsc/commit/fd1c3e3bbddcf7e1f114def55fb0755427d38c75))
+
+- Fix P1-P5 from performance audit ([78983dd](https://github.com/koloki-co/dsc/commit/78983dda838c3d8f60a721c38c3169dbdff600c8))
+
 ## [0.14.0] - 2026-08-07
 
 ### Bug fixes
