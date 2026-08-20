@@ -158,6 +158,10 @@ pub struct CategoryDefinition {
     pub description_text: Option<String>,
     #[serde(default)]
     pub topic_template: Option<String>,
+    /// Placeholder text shown in the topic-title field when composing a new
+    /// topic in this category (e.g. "Enter your band's genre and location").
+    #[serde(default)]
+    pub topic_title_placeholder: Option<String>,
     #[serde(default)]
     pub group_permissions: Option<Vec<GroupPermission>>,
     #[serde(default)]

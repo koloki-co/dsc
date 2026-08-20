@@ -31,6 +31,7 @@ const VALID_FIELDS: &[&str] = &[
     "read_restricted",
     "description",
     "topic_template",
+    "topic_title_placeholder",
     "permissions",
     "allowed_tags",
     "allowed_tag_groups",
@@ -81,6 +82,10 @@ pub struct CategoryDefEntry {
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub topic_template: Option<String>,
+    /// Placeholder text shown in the topic-title field when composing a new
+    /// topic in this category.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub topic_title_placeholder: Option<String>,
     /// group_name -> level (`full` | `create_post` | `readonly`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub permissions: Option<BTreeMap<String, String>>,
@@ -185,6 +190,7 @@ fn def_to_entry(def: &CategoryDefinition, id_to_slug: &BTreeMap<u64, String>) ->
         // so pull -> push -> pull is idempotent (see CategoryDefinition).
         description: normalize_description(&description),
         topic_template: nonempty(&def.topic_template),
+        topic_title_placeholder: nonempty(&def.topic_title_placeholder),
         permissions,
         allowed_tags: nonempty_list(&def.allowed_tags),
         allowed_tag_groups: nonempty_list(&def.allowed_tag_groups),
@@ -377,6 +383,11 @@ fn entry_to_params(
         p.push(("description".to_string(), description));
     }
     push_opt(&mut p, "topic_template", &entry.topic_template);
+    push_opt(
+        &mut p,
+        "topic_title_placeholder",
+        &entry.topic_title_placeholder,
+    );
     if let Some(perms) = &entry.permissions {
         for (group, level) in perms {
             p.push((
@@ -543,6 +554,9 @@ fn changed_fields(e: &CategoryDefEntry, s: &CategoryDefEntry) -> Vec<&'static st
     }
     if opt_diff(&e.topic_template, &s.topic_template) {
         fields.push("topic_template");
+    }
+    if opt_diff(&e.topic_title_placeholder, &s.topic_title_placeholder) {
+        fields.push("topic_title_placeholder");
     }
     if opt_diff(&e.permissions, &s.permissions) {
         fields.push("permissions");
@@ -1046,6 +1060,7 @@ fn entry_field(e: &CategoryDefEntry, field: &str) -> Result<(String, Value)> {
         "read_restricted" => optbool(e.read_restricted),
         "description" => optstr(&e.description),
         "topic_template" => optstr(&e.topic_template),
+        "topic_title_placeholder" => optstr(&e.topic_title_placeholder),
         "permissions" => match &e.permissions {
             Some(m) => (
                 m.iter()
@@ -1432,6 +1447,7 @@ fn field_to_set_params(
         "read_restricted" => one("read_restricted", parse_bool(value)?.to_string()),
         "description" => one("description", value.to_string()),
         "topic_template" => one("topic_template", value.to_string()),
+        "topic_title_placeholder" => one("topic_title_placeholder", value.to_string()),
         "minimum_required_tags" => {
             value.parse::<u64>().with_context(|| {
                 format!("minimum_required_tags must be an integer, got '{}'", value)
@@ -1540,6 +1556,42 @@ mod tests {
         // File omits description and color -> not a change.
         let file = entry("General");
         assert!(changed_fields(&file, &server).is_empty());
+    }
+
+    #[test]
+    fn topic_title_placeholder_round_trips_through_entry_and_params() {
+        let mut category = def(3, "Marketplace");
+        category.topic_title_placeholder = Some("Genre, instrument, and location".to_string());
+
+        let entry = def_to_entry(&category, &BTreeMap::new());
+        assert_eq!(
+            entry.topic_title_placeholder,
+            Some("Genre, instrument, and location".to_string())
+        );
+
+        let params = entry_to_params(&entry, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        assert!(params.contains(&(
+            "topic_title_placeholder".to_string(),
+            "Genre, instrument, and location".to_string()
+        )));
+    }
+
+    #[test]
+    fn set_params_topic_title_placeholder() {
+        let params = field_to_set_params(
+            "topic_title_placeholder",
+            "Genre, instrument, and location",
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            params,
+            vec![(
+                "topic_title_placeholder".to_string(),
+                "Genre, instrument, and location".to_string()
+            )]
+        );
     }
 
     #[test]
