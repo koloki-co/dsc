@@ -86,6 +86,34 @@ organisation = "Koloki Ltd"
 }
 
 #[test]
+fn warns_when_template_config_overrides_a_built_in_variable() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "local"
+baseurl = "https://example.com"
+
+[template.vars]
+forum_baseurl = "https://configured.example.com"
+"#,
+    );
+    let template_path = dir.path().join("t.md");
+    fs::write(&template_path, "Base: {{ forum_baseurl }}").expect("write template");
+
+    let output = run_dsc(
+        &["render", "local", template_path.to_str().unwrap()],
+        &config_path,
+    );
+    assert!(output.status.success(), "render failed");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("https://configured.example.com"));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("overrides reserved built-in template variable 'forum_baseurl'")
+    );
+}
+
+#[test]
 fn json_format_wraps_rendered_output() {
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(

@@ -67,6 +67,6 @@ Both `[template.vars]` and `[discourse.template]` are optional. A config without
 
 ## Template syntax
 
-Phase 1 supports plain `{{ variable }}` interpolation only (backed by the [Tera](https://crates.io/crates/tera) engine). Filters, conditionals (`{% if %}`), and loops (`{% for %}`) are not part of this phase — a template using only bare `{{ name }}` placeholders is the supported surface.
+Phase 1 supports plain `{{ variable }}` interpolation only (backed by the [Tera](https://crates.io/crates/tera) engine). Filters, conditionals (`{% if %}`), loops (`{% for %}`), and Tera comments are rejected rather than becoming an accidental supported surface before a later phase.
 
 YAML front matter at the top of a file is rendered like the rest of the content; `dsc topic push`/`category push` strip it separately after any rendering step.

@@ -21,6 +21,8 @@ pub const ENV_CONFIG: &str = "DSC_CONFIG";
 /// `dsc` looks for `dsc.toml` inside this directory.
 pub const ENV_CONFIG_HOME: &str = "DSC_CONFIG_HOME";
 
+const RESERVED_TEMPLATE_VARIABLES: &[&str] = &["forum_baseurl", "forum_name", "forum_fullname"];
+
 fn deserialize_opt_string_empty_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
@@ -184,7 +186,31 @@ pub fn load_config(path: &Path) -> Result<Config> {
     let config: Config = toml::from_str(&raw).with_context(|| "parsing config")?;
     warn_on_discourse_names(&config);
     warn_on_invalid_update_colour(&config);
+    warn_on_reserved_template_vars(&config);
     Ok(config)
+}
+
+/// User-defined template values can intentionally override built-ins, but
+/// surface that choice because it changes the forum-derived render context.
+fn warn_on_reserved_template_vars(config: &Config) {
+    for key in config.template.vars.keys() {
+        if RESERVED_TEMPLATE_VARIABLES.contains(&key.as_str()) {
+            eprintln!(
+                "warning: [template.vars].{} overrides reserved built-in template variable '{}'",
+                key, key
+            );
+        }
+    }
+    for discourse in &config.discourse {
+        for key in discourse.template.keys() {
+            if RESERVED_TEMPLATE_VARIABLES.contains(&key.as_str()) {
+                eprintln!(
+                    "warning: [discourse.template].{} for '{}' overrides reserved built-in template variable '{}'",
+                    key, discourse.name, key
+                );
+            }
+        }
+    }
 }
 
 /// Save configuration to a TOML file.

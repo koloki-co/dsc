@@ -5,7 +5,8 @@
 use crate::cli::ListFormat;
 use crate::commands::common::{emit_result, select_discourse};
 use crate::config::{Config, DiscourseConfig};
-use anyhow::{Context, Result};
+use crate::utils::atomic_write;
+use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -49,7 +50,7 @@ pub fn render(
 
     match output {
         Some(path) => {
-            fs::write(path, &rendered).with_context(|| format!("writing {}", path.display()))?;
+            atomic_write(path, &rendered, true)?;
             println!("Wrote rendered output to {}", path.display());
             Ok(())
         }
@@ -99,6 +100,8 @@ fn resolve_template_vars(config: &Config, discourse: &DiscourseConfig) -> BTreeM
 /// (which errors on an undefined variable), an unknown variable here warns
 /// to stderr and substitutes an empty string, per the render spec.
 fn render_template(content: &str, vars: &BTreeMap<String, String>) -> Result<String> {
+    validate_phase_one_syntax(content)?;
+
     let mut context = tera::Context::new();
     for (key, value) in vars {
         context.insert(key.clone(), value);
@@ -115,10 +118,35 @@ fn render_template(content: &str, vars: &BTreeMap<String, String>) -> Result<Str
     tera::Tera::one_off(content, &context, false).context("rendering template")
 }
 
+/// Reject Tera features outside Phase 1 before they become an accidental
+/// supported surface. The engine remains in place for the planned expansion.
+fn validate_phase_one_syntax(content: &str) -> Result<()> {
+    if content.contains("{%") || content.contains("{#") {
+        return Err(anyhow!(
+            "Phase 1 templates support only bare {{ variable }} interpolation; Tera statements and comments are not supported"
+        ));
+    }
+
+    let mut rest = content;
+    while let Some(start) = rest.find("{{") {
+        let after_open = &rest[start + 2..];
+        let Some(end) = after_open.find("}}") else {
+            return Err(anyhow!("unterminated template interpolation"));
+        };
+        let inner = after_open[..end].trim();
+        if !is_plain_identifier(inner) {
+            return Err(anyhow!(
+                "Phase 1 templates support only bare {{ variable }} interpolation, got {{{{{}}}}}",
+                inner
+            ));
+        }
+        rest = &after_open[end + 2..];
+    }
+    Ok(())
+}
+
 /// Extract the plain identifiers referenced by `{{ identifier }}` in
-/// `content`. Only bare single-identifier interpolations are recognised
-/// (Phase 1 scope); anything with filters, dots, or expressions is left for
-/// Tera itself to resolve or reject at render time.
+/// `content`. `validate_phase_one_syntax` has already rejected expressions.
 fn referenced_variable_names(content: &str) -> Vec<String> {
     let mut names = Vec::new();
     let mut rest = content;
@@ -159,9 +187,17 @@ mod tests {
     }
 
     #[test]
-    fn ignores_non_plain_expressions_and_percent_placeholders() {
-        let content = "%{reply_to_username,fallback:there} {{ community | default(\"x\") }}";
+    fn ignores_percent_placeholders() {
+        let content = "%{reply_to_username,fallback:there}";
         assert!(referenced_variable_names(content).is_empty());
+    }
+
+    #[test]
+    fn rejects_filters_and_control_blocks() {
+        let mut vars = BTreeMap::new();
+        vars.insert("community".to_string(), "OpenEHR".to_string());
+        assert!(render_template("{{ community | upper }}", &vars).is_err());
+        assert!(render_template("{% if community %}Welcome{% endif %}", &vars).is_err());
     }
 
     #[test]
