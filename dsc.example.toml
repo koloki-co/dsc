@@ -28,6 +28,14 @@ tags = ["production", "uk"]                        # free-form tags; used by `--
 changelog_topic_id = 123                           # topic id to post rebuild changelogs into (optional)
 # update_colour = "#3f8f77"                        # theme-derived key colour for `dsc update` labels (optional)
 
+# Per-forum variables for `dsc render`. Flat string map only. Overrides
+# [template.vars] globals of the same name for this forum, and can add
+# forum-specific variables of its own.
+# [discourse.template]
+# organisation = "My Organisation"
+# community = "My Forum Community"
+# support_email = "admin@example.com"
+
 [[discourse]]
 name = "otherforum"
 fullname = "Other Forum"
@@ -37,6 +45,16 @@ api_username = "system"
 ssh_host = "community.example.org"
 tags = ["staging"]
 changelog_topic_id = 456
+
+# ---------------------------------------------------------------------------
+# Global variables for `dsc render`, shared across every forum unless a
+# forum's own [discourse.template] table overrides them. See also the
+# built-in forum_baseurl / forum_name / forum_fullname variables, which are
+# always available and derived from each [[discourse]] block automatically.
+# ---------------------------------------------------------------------------
+# [template.vars]
+# organisation = "My Organisation"
+# community = "My Forum Community"
 
 # ---------------------------------------------------------------------------
 # Defaults for `dsc harden`. Every key below is optional — what's shown is

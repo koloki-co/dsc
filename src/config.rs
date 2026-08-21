@@ -6,6 +6,7 @@ use crate::utils::{atomic_write_private, expand_tilde_path, parse_hex_color};
 use anyhow::{Context, Result, anyhow};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
@@ -43,6 +44,17 @@ pub struct Config {
     pub discourse: Vec<DiscourseConfig>,
     #[serde(default)]
     pub harden: HardenConfig,
+    #[serde(default)]
+    pub template: TemplateConfig,
+}
+
+/// `[template]` section of `dsc.toml`: global variables available to
+/// `dsc render` across every forum, overridden by a matching
+/// `[discourse.template]` key on the target forum. Flat string map only.
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct TemplateConfig {
+    #[serde(default)]
+    pub vars: BTreeMap<String, String>,
 }
 
 /// User overrides for `dsc harden` defaults. Every field is optional;
@@ -133,6 +145,10 @@ pub struct DiscourseConfig {
     /// unset or invalid value falls back to the deterministic hash colour.
     #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
     pub update_colour: Option<String>,
+    /// Per-forum template variables for `dsc render`, overriding
+    /// `[template.vars]` globals of the same name and introducing new ones.
+    #[serde(default)]
+    pub template: BTreeMap<String, String>,
 }
 
 impl fmt::Debug for DiscourseConfig {
@@ -154,6 +170,7 @@ impl fmt::Debug for DiscourseConfig {
             .field("docker_rootless", &self.docker_rootless)
             .field("discourse_branch", &self.discourse_branch)
             .field("update_colour", &self.update_colour)
+            .field("template", &self.template)
             .finish()
     }
 }

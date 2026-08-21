@@ -28,6 +28,7 @@ pub mod palette;
 pub mod plugin;
 pub mod pm;
 pub mod post;
+pub mod render;
 pub mod sar;
 pub mod search;
 pub mod setting;

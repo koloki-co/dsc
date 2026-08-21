@@ -308,6 +308,36 @@ pub enum Commands {
         #[arg(long)]
         messages: bool,
     },
+    /// Render `{{ variable }}` placeholders in a local template file using
+    /// a forum's built-in and configured template variables.
+    ///
+    /// Variables resolve in three layers, later overriding earlier: (1)
+    /// built-ins `forum_baseurl`/`forum_name`/`forum_fullname` from the
+    /// matched `[[discourse]]` block, (2) `[template.vars]` globals, (3)
+    /// the forum's own `[discourse.template]` table. Discourse's own
+    /// `%{...}` server-side placeholders pass through untouched.
+    #[command(after_help = "Examples:
+  dsc render myforum welcome.md
+  dsc render myforum welcome.md -o welcome.rendered.md
+  dsc render myforum welcome.md --dry-run   # preview resolved variables")]
+    Render {
+        /// Discourse name.
+        discourse: String,
+        /// Template file to render. Use `-` to read from stdin.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
+        file: PathBuf,
+        /// Write rendered output to this file instead of stdout.
+        #[arg(
+            long,
+            short = 'o',
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::FilePath
+        )]
+        output: Option<PathBuf>,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
     /// Manage the tag taxonomy: list/pull/push tags and tag groups.
     #[command(visible_alias = "tg")]
     #[command(after_help = "Examples:

@@ -210,15 +210,15 @@ A one-time find-and-replace pass over the 24 template files converts them. The `
 
 ### Phase 1 - blocking
 
-- [ ] Add `tera` 2.0.0 to `Cargo.toml` dependencies (no optional features).
-- [ ] Implement `[template.vars]` and `[discourse.template]` parsing in the config loader.
-- [ ] Implement built-in variable derivation (`forum_baseurl`, `forum_name`, `forum_fullname`) from the `[[discourse]]` block.
-- [ ] Implement `dsc render <discourse> <file> [-o <output>] [--format text|json|yaml]` with `{{ variable }}` substitution only.
-- [ ] Unknown variable: warn to stderr, substitute empty string, continue.
-- [ ] `--dry-run`: print resolved variable map to stderr, rendered output to stdout, skip `-o` write.
-- [ ] End-to-end test: render a template file against a test config, verify output.
-- [ ] Update `dsc.example.toml` with commented-out `[template.vars]` and `[discourse.template]` examples.
-- [ ] Add `docs/render.md` with usage and examples.
+- [x] Add `tera` 2.0.0 to `Cargo.toml` dependencies (no optional features).
+- [x] Implement `[template.vars]` and `[discourse.template]` parsing in the config loader.
+- [x] Implement built-in variable derivation (`forum_baseurl`, `forum_name`, `forum_fullname`) from the `[[discourse]]` block.
+- [x] Implement `dsc render <discourse> <file> [-o <output>] [--format text|json|yaml]` with `{{ variable }}` substitution only.
+- [x] Unknown variable: warn to stderr, substitute empty string, continue.
+- [x] `--dry-run`: print resolved variable map to stderr, rendered output to stdout, skip `-o` write.
+- [x] End-to-end test: render a template file against a test config, verify output.
+- [x] Update `dsc.example.toml` with commented-out `[template.vars]` and `[discourse.template]` examples.
+- [x] Add `docs/render.md` with usage and examples.
 
 ### Phase 2 - iteration ergonomics
 
