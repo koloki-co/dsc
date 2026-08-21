@@ -1342,6 +1342,20 @@ fn main() -> Result<()> {
             dry_run,
         ),
 
+        Commands::Render {
+            discourse,
+            file,
+            output,
+            format,
+        } => commands::render::render(
+            &config,
+            &discourse,
+            &file,
+            output.as_deref(),
+            format,
+            dry_run,
+        ),
+
         Commands::Open { discourse } => commands::open::open_discourse(&config, &discourse),
 
         Commands::Harden {

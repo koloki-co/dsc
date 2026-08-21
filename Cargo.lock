@@ -355,6 +355,7 @@ dependencies = [
  "serde_yaml",
  "slug",
  "tempfile",
+ "tera",
  "toml",
  "uuid",
 ]
@@ -1587,6 +1588,15 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tera"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3e9db9fa0629187ae0a53f3278a99d35f74647f0259c633c9504af85bd0d506"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

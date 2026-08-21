@@ -66,6 +66,7 @@ nav:
       - upload: upload.md
       - tag: tag.md
       - emoji: emoji.md
+      - render: render.md
   - Users & access:
       - user: user.md
       - sar: sar.md

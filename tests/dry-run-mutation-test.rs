@@ -813,6 +813,7 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "pm list",
     "post info",
     "post pull",
+    "render",
     "sar",
     "search",
     "setting audit",

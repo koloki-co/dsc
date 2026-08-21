@@ -6,6 +6,7 @@ use crate::utils::{atomic_write_private, expand_tilde_path, parse_hex_color};
 use anyhow::{Context, Result, anyhow};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
@@ -19,6 +20,8 @@ pub const ENV_CONFIG: &str = "DSC_CONFIG";
 /// `$XDG_CONFIG_HOME/dsc`, which itself defaults to `~/.config/dsc`.
 /// `dsc` looks for `dsc.toml` inside this directory.
 pub const ENV_CONFIG_HOME: &str = "DSC_CONFIG_HOME";
+
+const RESERVED_TEMPLATE_VARIABLES: &[&str] = &["forum_baseurl", "forum_name", "forum_fullname"];
 
 fn deserialize_opt_string_empty_as_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
@@ -43,6 +46,17 @@ pub struct Config {
     pub discourse: Vec<DiscourseConfig>,
     #[serde(default)]
     pub harden: HardenConfig,
+    #[serde(default)]
+    pub template: TemplateConfig,
+}
+
+/// `[template]` section of `dsc.toml`: global variables available to
+/// `dsc render` across every forum, overridden by a matching
+/// `[discourse.template]` key on the target forum. Flat string map only.
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct TemplateConfig {
+    #[serde(default)]
+    pub vars: BTreeMap<String, String>,
 }
 
 /// User overrides for `dsc harden` defaults. Every field is optional;
@@ -133,6 +147,10 @@ pub struct DiscourseConfig {
     /// unset or invalid value falls back to the deterministic hash colour.
     #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
     pub update_colour: Option<String>,
+    /// Per-forum template variables for `dsc render`, overriding
+    /// `[template.vars]` globals of the same name and introducing new ones.
+    #[serde(default)]
+    pub template: BTreeMap<String, String>,
 }
 
 impl fmt::Debug for DiscourseConfig {
@@ -154,6 +172,7 @@ impl fmt::Debug for DiscourseConfig {
             .field("docker_rootless", &self.docker_rootless)
             .field("discourse_branch", &self.discourse_branch)
             .field("update_colour", &self.update_colour)
+            .field("template", &self.template)
             .finish()
     }
 }
@@ -167,7 +186,31 @@ pub fn load_config(path: &Path) -> Result<Config> {
     let config: Config = toml::from_str(&raw).with_context(|| "parsing config")?;
     warn_on_discourse_names(&config);
     warn_on_invalid_update_colour(&config);
+    warn_on_reserved_template_vars(&config);
     Ok(config)
+}
+
+/// User-defined template values can intentionally override built-ins, but
+/// surface that choice because it changes the forum-derived render context.
+fn warn_on_reserved_template_vars(config: &Config) {
+    for key in config.template.vars.keys() {
+        if RESERVED_TEMPLATE_VARIABLES.contains(&key.as_str()) {
+            eprintln!(
+                "warning: [template.vars].{} overrides reserved built-in template variable '{}'",
+                key, key
+            );
+        }
+    }
+    for discourse in &config.discourse {
+        for key in discourse.template.keys() {
+            if RESERVED_TEMPLATE_VARIABLES.contains(&key.as_str()) {
+                eprintln!(
+                    "warning: [discourse.template].{} for '{}' overrides reserved built-in template variable '{}'",
+                    key, discourse.name, key
+                );
+            }
+        }
+    }
 }
 
 /// Save configuration to a TOML file.
