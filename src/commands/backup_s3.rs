@@ -133,14 +133,7 @@ fn rotate_access_key(client: &DiscourseClient, names: &Names) -> Result<()> {
                 .collect()
         })
         .unwrap_or_default();
-    if old_key_ids.len() >= 2 {
-        bail!(
-            "{} already has {} access keys (AWS's per-user limit) - \
-             delete or deactivate one manually before retrying --reuse-user",
-            names.user,
-            old_key_ids.len()
-        );
-    }
+    ensure_access_key_capacity(&names.user, old_key_ids.len())?;
 
     let key = aws_json(&[
         "iam".into(),
@@ -184,6 +177,18 @@ fn rotate_access_key(client: &DiscourseClient, names: &Names) -> Result<()> {
             "Inactive".into(),
         ])?;
         println!("  deactivated old access key {old_id}");
+    }
+    Ok(())
+}
+
+/// AWS counts inactive access keys against the same two-key cap. Rotation can
+/// proceed only after an existing key has been deleted, not merely disabled.
+fn ensure_access_key_capacity(user: &str, key_count: usize) -> Result<()> {
+    if key_count >= 2 {
+        bail!(
+            "{user} already has {key_count} access keys (AWS's two-key limit, including inactive keys) - \
+             delete an existing key before retrying --reuse-user"
+        );
     }
     Ok(())
 }
@@ -591,5 +596,12 @@ mod tests {
     fn create_bucket_sets_location_constraint_elsewhere() {
         let args = create_bucket_args("b", "eu-west-2");
         assert!(args.contains(&"LocationConstraint=eu-west-2".to_string()));
+    }
+
+    #[test]
+    fn key_rotation_requires_deletion_when_at_aws_key_cap() {
+        let error = ensure_access_key_capacity("forum-discourse-backup-user", 2).unwrap_err();
+        assert!(error.to_string().contains("including inactive keys"));
+        assert!(error.to_string().contains("delete an existing key"));
     }
 }
