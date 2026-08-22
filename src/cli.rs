@@ -1382,6 +1382,7 @@ pub enum BackupCommand {
   dsc backup setup-s3 myforum --region eu-west-1
   dsc backup setup-s3 myforum --no-test
   dsc backup setup-s3 myforum --use-iam-profile   # EC2 instance role, no static keys
+  dsc backup setup-s3 myforum --reuse-user        # rotate the access key on an existing setup
   dsc backup setup-s3 -n --all                    # preview across every configured forum
   dsc backup setup-s3 --tags production --use-iam-profile")]
     SetupS3 {
@@ -1407,8 +1408,14 @@ pub enum BackupCommand {
         /// Use the EC2 instance's IAM role instead of a dedicated IAM user and
         /// access key: only the bucket is created, and Discourse is pointed at
         /// it with `s3_use_iam_profile=true` rather than static credentials.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "reuse_user")]
         use_iam_profile: bool,
+        /// Skip bucket/policy/user creation and reuse the existing derived
+        /// bucket and IAM user: mints a fresh access key for that user,
+        /// re-points Discourse at it, and deactivates the previous key. For
+        /// idempotent re-runs and access-key rotation.
+        #[arg(long)]
+        reuse_user: bool,
     },
     /// Check recent S3 backup age and bucket growth across configured forums.
     #[command(visible_alias = "check")]

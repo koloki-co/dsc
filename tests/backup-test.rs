@@ -159,6 +159,64 @@ api_username = "system"
 }
 
 #[test]
+fn setup_s3_dry_run_reuse_user_skips_bucket_and_policy_creation() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "forum"
+baseurl = "https://forum.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(
+        &["backup", "setup-s3", "forum", "--dry-run", "--reuse-user"],
+        &config_path,
+    );
+    assert!(output.status.success(), "dry-run must not fail offline");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("--reuse-user"));
+    assert!(stdout.contains("aws iam list-access-keys --user-name forum-discourse-backup-user"));
+    assert!(stdout.contains("aws iam create-access-key --user-name forum-discourse-backup-user"));
+    assert!(!stdout.contains("create-bucket"));
+    assert!(!stdout.contains("create-policy"));
+    assert!(!stdout.contains("create-user"));
+    assert!(!stdout.contains("attach-user-policy"));
+}
+
+#[test]
+fn setup_s3_rejects_reuse_user_with_use_iam_profile() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "forum"
+baseurl = "https://forum.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(
+        &[
+            "backup",
+            "setup-s3",
+            "forum",
+            "--dry-run",
+            "--reuse-user",
+            "--use-iam-profile",
+        ],
+        &config_path,
+    );
+    assert!(
+        !output.status.success(),
+        "--reuse-user and --use-iam-profile are mutually exclusive"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("cannot be used with"));
+}
+
+#[test]
 fn backup_health_rejects_discourse_and_tags_together() {
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(

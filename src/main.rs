@@ -893,6 +893,7 @@ fn main() -> Result<()> {
                 bucket,
                 no_test,
                 use_iam_profile,
+                reuse_user,
             } => match (all || tags.is_some(), discourse.as_deref()) {
                 (true, None) => commands::backup_s3::setup_s3_all(
                     &config,
@@ -900,6 +901,7 @@ fn main() -> Result<()> {
                     &region,
                     no_test,
                     use_iam_profile,
+                    reuse_user,
                     dry_run,
                 ),
                 (false, Some(name)) => commands::backup_s3::setup_s3(
@@ -909,6 +911,7 @@ fn main() -> Result<()> {
                     bucket.as_deref(),
                     no_test,
                     use_iam_profile,
+                    reuse_user,
                     dry_run,
                 ),
                 _ => Err(anyhow!("specify a discourse name, or --all/--tags")),

@@ -1,7 +1,7 @@
 # `dsc backup setup-s3` - provision an S3 backup bucket + scoped IAM user and point Discourse at it
 
-> **Status: Phase 1 implemented (unreleased); Phase 2's `--use-iam-profile`
-> and `--all`/`--tags` shipped.** `dsc backup setup-s3 <discourse>` creates a
+> **Status: Phase 1 and Phase 2 implemented (unreleased).** `dsc backup
+> setup-s3 <discourse>` creates a
 > bucket + single-bucket policy + user + key (via `aws` CLI), sets the
 > Discourse S3 settings (using the fixed `update_site_setting` path), runs an
 > optional verification backup, and has a complete offline `--dry-run`. With
@@ -10,9 +10,12 @@
 > credentials. `--all`/`--tags` fan the whole flow out across the configured
 > fleet, mirroring `dsc backup create --all`/`dsc backup health --tags`, and
 > continue past a per-forum failure. Empty tag filters are rejected so they
-> cannot accidentally target the whole fleet. `--reuse-user` remains planned,
-> as does Phase 3 (native SDK and `--retention`). Fleet `backup health` has
-> shipped separately.
+> cannot accidentally target the whole fleet. `--reuse-user` skips bucket/
+> policy/user creation, mints a fresh access key for the existing derived
+> user, re-points Discourse at it, and deactivates the key(s) that existed
+> before rotation (refusing to proceed if the user is already at AWS's
+> two-key cap). Phase 3 (native SDK and `--retention`) remains planned.
+> Fleet `backup health` has shipped separately.
 
 Spec for one-command setup of off-site Discourse backups on Amazon S3. Goal: replace a ~15-step AWS-console + Discourse-settings runbook with a single `dsc` command. Driver: the Koloki fleet - every self-hosted forum needs off-site backups, and the secure pattern (one bucket + one dedicated single-bucket IAM user per forum) is set up by hand in the AWS console for each one. Production runbook in use since 2023-01.
 
@@ -53,7 +56,7 @@ dsc backup setup-s3 (--all | --tags <tag1,tag2,...>) [--region <r>]
 - Configures Discourse over the admin API: `backup_location=s3`, `s3_backup_bucket`, `s3_region`, and the minted `s3_access_key_id` / `s3_secret_access_key` (or skip the keys and set `s3_use_iam_profile=true` with `--use-iam-profile` when running on an EC2 instance role).
 - Unless `--no-test`, runs a `dsc backup create` and confirms the object appears in the bucket (`aws s3 ls`), then reports pass/fail.
 - `--dry-run` prints the full plan - resolved names, the exact policy JSON, the `aws` commands, and the settings diff - and touches nothing. This is the review gate before acting on a cloud account, so it must be complete.
-- `--reuse-user` skips user/policy creation and only (re)points Discourse at an existing bucket/user (idempotent re-runs, key rotation).
+- `--reuse-user` skips bucket/policy/user creation and only (re)points Discourse at an existing bucket/user: mints a new access key for the derived user, writes it to the Discourse settings, then deactivates the key(s) that existed before rotation. Refuses up front if the user already carries two access keys (AWS's per-user cap), rather than leaving a mix of live and orphaned keys.
 
 ### Dependency / credentials note
 
@@ -134,7 +137,7 @@ Caveat (2026-06-24): `dsc setting set` does not persist site settings reliably (
 
 ### Phase 2 - iteration ergonomics
 
-- [ ] `--reuse-user` / idempotent re-run + key rotation (`create-access-key`, update the setting, optionally deactivate the old key).
+- [x] `--reuse-user` / idempotent re-run + key rotation (`create-access-key`, update the setting, deactivate the key(s) that existed before rotation; refuses if the user is already at AWS's two-key cap).
 - [x] `--use-iam-profile` path (EC2 instance role, no static keys): skips policy/user/access-key creation, still creates the bucket, and sets `s3_use_iam_profile=true` in place of `s3_access_key_id`/`s3_secret_access_key`.
 - [x] `--all` / `--tags` to set up backups across multiple forums (mirrors `dsc backup create --all`). Continues past a per-forum failure and exits non-zero if any forum could not be provisioned; empty tag filters are rejected; `--bucket` is rejected alongside `--all`/`--tags` since every forum must derive its own bucket name.
 
