@@ -111,9 +111,87 @@ fn aws_run(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+/// Rotate the access key for an existing `--reuse-user` IAM user: mint a new
+/// key, point Discourse at it, then deactivate the key(s) that existed
+/// before rotation. AWS caps a user at two access keys (active or
+/// inactive) regardless of status, so a user already at that cap is
+/// refused up front rather than left with a mix of live and orphaned keys.
+fn rotate_access_key(client: &DiscourseClient, names: &Names) -> Result<()> {
+    let existing = aws_json(&[
+        "iam".into(),
+        "list-access-keys".into(),
+        "--user-name".into(),
+        names.user.clone(),
+    ])?;
+    let old_key_ids: Vec<String> = existing
+        .get("AccessKeyMetadata")
+        .and_then(|v| v.as_array())
+        .map(|keys| {
+            keys.iter()
+                .filter_map(|k| k.get("AccessKeyId").and_then(|v| v.as_str()))
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    if old_key_ids.len() >= 2 {
+        bail!(
+            "{} already has {} access keys (AWS's per-user limit) - \
+             delete or deactivate one manually before retrying --reuse-user",
+            names.user,
+            old_key_ids.len()
+        );
+    }
+
+    let key = aws_json(&[
+        "iam".into(),
+        "create-access-key".into(),
+        "--user-name".into(),
+        names.user.clone(),
+    ])?;
+    let access_key_id = key
+        .get("AccessKey")
+        .and_then(|k| k.get("AccessKeyId"))
+        .and_then(|v| v.as_str())
+        .context("create-access-key did not return an AccessKeyId")?
+        .to_string();
+    let secret_access_key = key
+        .get("AccessKey")
+        .and_then(|k| k.get("SecretAccessKey"))
+        .and_then(|v| v.as_str())
+        .context("create-access-key did not return a SecretAccessKey")?
+        .to_string();
+    println!(
+        "  minted new access key {} for {}",
+        access_key_id, names.user
+    );
+
+    // Point Discourse at the new key before deactivating the old one, so
+    // there is no window where neither key works.
+    client.update_site_setting("s3_access_key_id", &access_key_id)?;
+    client.update_site_setting("s3_secret_access_key", &secret_access_key)?;
+    // A prior --use-iam-profile run leaves this enabled.
+    client.update_site_setting("s3_use_iam_profile", "false")?;
+
+    for old_id in old_key_ids {
+        aws_run(&[
+            "iam".into(),
+            "update-access-key".into(),
+            "--user-name".into(),
+            names.user.clone(),
+            "--access-key-id".into(),
+            old_id.clone(),
+            "--status".into(),
+            "Inactive".into(),
+        ])?;
+        println!("  deactivated old access key {old_id}");
+    }
+    Ok(())
+}
+
 /// One-command S3 backup provisioning (spec/backup-s3-setup.md, Phase 1):
 /// create a private bucket + single-bucket IAM user/policy, point Discourse at
 /// it, and (unless `--no-test`) trigger a backup and confirm it lands.
+#[allow(clippy::too_many_arguments)]
 pub fn setup_s3(
     config: &Config,
     discourse_name: &str,
@@ -121,6 +199,7 @@ pub fn setup_s3(
     bucket: Option<&str>,
     no_test: bool,
     use_iam_profile: bool,
+    reuse_user: bool,
     dry_run: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -138,6 +217,7 @@ pub fn setup_s3(
             &policy_pretty,
             no_test,
             use_iam_profile,
+            reuse_user,
         );
         return Ok(());
     }
@@ -158,17 +238,25 @@ pub fn setup_s3(
         discourse.name, account, region
     );
 
-    // 1. Private bucket + block-public-access.
-    aws_run(&create_bucket_args(&names.bucket, region))?;
-    aws_run(&[
-        "s3api".into(),
-        "put-public-access-block".into(),
-        "--bucket".into(),
-        names.bucket.clone(),
-        "--public-access-block-configuration".into(),
-        PUBLIC_ACCESS_BLOCK.into(),
-    ])?;
-    println!("  created bucket {} (public access blocked)", names.bucket);
+    // 1. Private bucket + block-public-access. Skipped with --reuse-user,
+    // which targets a bucket/user already provisioned by an earlier run.
+    if reuse_user {
+        println!(
+            "  reusing existing bucket {} and user {} (--reuse-user)",
+            names.bucket, names.user
+        );
+    } else {
+        aws_run(&create_bucket_args(&names.bucket, region))?;
+        aws_run(&[
+            "s3api".into(),
+            "put-public-access-block".into(),
+            "--bucket".into(),
+            names.bucket.clone(),
+            "--public-access-block-configuration".into(),
+            PUBLIC_ACCESS_BLOCK.into(),
+        ])?;
+        println!("  created bucket {} (public access blocked)", names.bucket);
+    }
 
     // 2./3. With --use-iam-profile the EC2 instance role already carries the
     // bucket permissions (provisioned outside dsc), so no dedicated IAM user
@@ -179,6 +267,8 @@ pub fn setup_s3(
              ensure the instance role can access s3://{}",
             names.bucket
         );
+    } else if reuse_user {
+        rotate_access_key(&client, &names)?;
     } else {
         // Single-bucket managed policy -> ARN.
         let policy = aws_json(&[
@@ -300,6 +390,7 @@ pub fn setup_s3_all(
     region: &str,
     no_test: bool,
     use_iam_profile: bool,
+    reuse_user: bool,
     dry_run: bool,
 ) -> Result<()> {
     if tags.is_some_and(|raw| parse_tags(raw).is_empty()) {
@@ -326,6 +417,7 @@ pub fn setup_s3_all(
             None,
             no_test,
             use_iam_profile,
+            reuse_user,
             dry_run,
         ) {
             Ok(()) => {}
@@ -368,52 +460,71 @@ fn print_plan(
     policy_pretty: &str,
     no_test: bool,
     use_iam_profile: bool,
+    reuse_user: bool,
 ) {
     println!("[dry-run] S3 backup setup for {forum} (region {region})\n");
-    println!("AWS resources to create:");
-    println!(
-        "  bucket  {}   (private; Block Public Access on; AWS-default SSE-S3)",
-        names.bucket
-    );
-    if use_iam_profile {
+    if reuse_user {
+        println!("AWS resources to reuse (--reuse-user - no bucket/policy/user created):");
+        println!("  bucket  {}", names.bucket);
         println!(
-            "  (--use-iam-profile: no IAM policy/user/access-key created; \
-             the instance role must already have access to this bucket)\n"
+            "  user    {}   (+ one freshly minted access key)\n",
+            names.user
         );
     } else {
+        println!("AWS resources to create:");
         println!(
-            "  policy  {}   (single-bucket, least privilege)",
-            names.policy
+            "  bucket  {}   (private; Block Public Access on; AWS-default SSE-S3)",
+            names.bucket
         );
-        println!("  user    {}   (+ one access key)\n", names.user);
+        if use_iam_profile {
+            println!(
+                "  (--use-iam-profile: no IAM policy/user/access-key created; \
+                 the instance role must already have access to this bucket)\n"
+            );
+        } else {
+            println!(
+                "  policy  {}   (single-bucket, least privilege)",
+                names.policy
+            );
+            println!("  user    {}   (+ one access key)\n", names.user);
 
-        println!("IAM policy document:");
-        for line in policy_pretty.lines() {
-            println!("  {line}");
+            println!("IAM policy document:");
+            for line in policy_pretty.lines() {
+                println!("  {line}");
+            }
+            println!();
         }
-        println!();
     }
 
     println!("aws commands:");
-    println!(
-        "  aws {}",
-        create_bucket_args(&names.bucket, region).join(" ")
-    );
-    println!(
-        "  aws s3api put-public-access-block --bucket {} --public-access-block-configuration {}",
-        names.bucket, PUBLIC_ACCESS_BLOCK
-    );
-    if !use_iam_profile {
+    if reuse_user {
+        println!("  aws iam list-access-keys --user-name {}", names.user);
+        println!("  aws iam create-access-key --user-name {}", names.user);
         println!(
-            "  aws iam create-policy --policy-name {} --policy-document <json above>",
-            names.policy
-        );
-        println!("  aws iam create-user --user-name {}", names.user);
-        println!(
-            "  aws iam attach-user-policy --user-name {} --policy-arn <policy ARN>",
+            "  aws iam update-access-key --user-name {} --access-key-id <old> --status Inactive",
             names.user
         );
-        println!("  aws iam create-access-key --user-name {}", names.user);
+    } else {
+        println!(
+            "  aws {}",
+            create_bucket_args(&names.bucket, region).join(" ")
+        );
+        println!(
+            "  aws s3api put-public-access-block --bucket {} --public-access-block-configuration {}",
+            names.bucket, PUBLIC_ACCESS_BLOCK
+        );
+        if !use_iam_profile {
+            println!(
+                "  aws iam create-policy --policy-name {} --policy-document <json above>",
+                names.policy
+            );
+            println!("  aws iam create-user --user-name {}", names.user);
+            println!(
+                "  aws iam attach-user-policy --user-name {} --policy-arn <policy ARN>",
+                names.user
+            );
+            println!("  aws iam create-access-key --user-name {}", names.user);
+        }
     }
     println!();
 
