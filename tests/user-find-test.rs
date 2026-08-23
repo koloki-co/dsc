@@ -194,3 +194,59 @@ fn find_rejects_a_value_without_an_at_sign() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("invalid email"), "stderr: {stderr}");
 }
+
+#[test]
+fn find_respects_tags_filter() {
+    let alpha_url = start_mock(200, user(42, "jane_d", "jane@example.com"));
+    let beta_url = start_mock(200, user(43, "jane_also", "jane@example.com"));
+
+    let dir = TempDir::new().expect("tempdir");
+    let config = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"alpha\"\nbaseurl = \"{alpha_url}\"\napikey = \"k\"\napi_username = \"tester\"\ntags = [\"production\"]\n\n[[discourse]]\nname = \"beta\"\nbaseurl = \"{beta_url}\"\napikey = \"k\"\napi_username = \"tester\"\ntags = [\"staging\"]\n"
+        ),
+    );
+
+    let output = run_dsc(
+        &[
+            "user",
+            "find",
+            "jane@example.com",
+            "--tags",
+            "production",
+            "--format",
+            "json",
+        ],
+        &config,
+    );
+    assert!(
+        output.status.success(),
+        "user find --tags failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("user find JSON");
+    assert_eq!(rows.len(), 1, "only the production-tagged forum: {rows:?}");
+    assert_eq!(rows[0]["forum"], "alpha");
+}
+
+#[test]
+fn find_rejects_an_empty_tags_filter() {
+    let dir = TempDir::new().expect("tempdir");
+    let config = write_temp_config(
+        &dir,
+        "[[discourse]]\nname = \"alpha\"\nbaseurl = \"https://alpha.example\"\napikey = \"k\"\napi_username = \"tester\"\n",
+    );
+    let output = run_dsc(
+        &["user", "find", "jane@example.com", "--tags", ",;"],
+        &config,
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--tags must include at least one non-empty tag"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

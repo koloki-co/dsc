@@ -458,13 +458,19 @@ pub enum Commands {
     #[command(after_help = "Examples:
   dsc search myforum \"status:open category:bugs\"
   dsc search myforum @alice -f json
-  dsc search all \"category:security\" -f json")]
+  dsc search all \"category:security\" -f json
+  dsc search all \"category:security\" --tags production")]
     Search {
         /// Discourse name, or `all` to search every configured forum.
         discourse: String,
         /// Search query (passed through verbatim, including any
         /// Discourse filter syntax like `category:foo` or `@user`).
         query: String,
+        /// Search forums matching these tags (comma/semicolon separated,
+        /// match-any). Only usable together with `all` as the discourse
+        /// argument.
+        #[arg(long, value_name = "tag1,tag2")]
+        tags: Option<String>,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
@@ -1329,15 +1335,19 @@ pub enum BackupCommand {
     /// Create a new backup.
     #[command(after_help = "Examples:
   dsc backup create myforum
-  dsc backup create --all")]
+  dsc backup create --all
+  dsc backup create --tags production")]
     #[command(visible_alias = "cr")]
     Create {
-        /// Discourse name.
-        #[arg(required_unless_present = "all", conflicts_with = "all")]
+        /// Discourse name. Omit with --all or --tags to fan out across the fleet.
+        #[arg(required_unless_present_any = ["all", "tags"], conflicts_with_all = ["all", "tags"])]
         discourse: Option<String>,
         /// Create a backup on every configured forum.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "tags")]
         all: bool,
+        /// Create a backup on forums matching these tags (comma/semicolon separated, match-any).
+        #[arg(long, value_name = "tag1,tag2", conflicts_with = "all")]
+        tags: Option<String>,
     },
     /// List backups.
     #[command(visible_alias = "ls")]
@@ -2223,10 +2233,15 @@ pub enum UserCommand {
     /// forum for an account matching an email address.
     #[command(after_help = "Examples:
   dsc user find jane@example.com
-  dsc user find jane@example.com --format json")]
+  dsc user find jane@example.com --format json
+  dsc user find jane@example.com --tags production")]
     Find {
         /// Email address to search for.
         email: String,
+        /// Search only forums matching these tags (comma/semicolon
+        /// separated, match-any) instead of the whole configured fleet.
+        #[arg(long, value_name = "tag1,tag2")]
+        tags: Option<String>,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,

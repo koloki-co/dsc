@@ -4,7 +4,7 @@
 
 use crate::api::{DiscourseClient, UserAction, UserSummary};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{ensure_api_credentials, select_discourse, selected_discourses};
 use crate::config::{Config, DiscourseConfig};
 use crate::utils::{normalize_baseurl, parse_since_cutoff};
 use anyhow::{Context, Result, anyhow};
@@ -131,21 +131,32 @@ pub fn user_info(
 }
 
 /// GDPR "which forum has this person" lookup: search every configured forum
-/// for an account whose email matches, and print forum-tagged matches.
-/// Continues past per-forum failures (missing credentials, unreachable
-/// forum) so one bad entry doesn't block the rest of the fleet; fails at the
-/// end if any forum could not be searched.
-pub fn user_find(config: &Config, email: &str, format: ListFormat) -> Result<()> {
+/// (or, with `tags`, every forum matching those tags) for an account whose
+/// email matches, and print forum-tagged matches. Continues past per-forum
+/// failures (missing credentials, unreachable forum) so one bad entry
+/// doesn't block the rest of the fleet; fails at the end if any forum could
+/// not be searched.
+pub fn user_find(
+    config: &Config,
+    email: &str,
+    tags: Option<&str>,
+    format: ListFormat,
+) -> Result<()> {
     if !email.contains('@') {
         return Err(anyhow!("invalid email: {:?}", email));
     }
-    if config.discourse.is_empty() {
-        return Err(anyhow!("no discourses configured"));
+    let discourses = selected_discourses(config, None, tags)?;
+    if discourses.is_empty() {
+        return Err(if tags.is_some() {
+            anyhow!("no discourses configured matching the given tags")
+        } else {
+            anyhow!("no discourses configured")
+        });
     }
 
     let mut matches: Vec<ForumMatch> = Vec::new();
     let mut failed = 0usize;
-    for discourse in &config.discourse {
+    for discourse in &discourses {
         match find_one(discourse, email) {
             Ok(users) => matches.extend(users.into_iter().map(|user| ForumMatch {
                 forum: discourse.name.clone(),
@@ -183,7 +194,7 @@ pub fn user_find(config: &Config, email: &str, format: ListFormat) -> Result<()>
     if failed > 0 {
         return Err(anyhow!(
             "user search failed on {failed} of {} forum(s)",
-            config.discourse.len()
+            discourses.len()
         ));
     }
     Ok(())

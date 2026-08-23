@@ -157,3 +157,75 @@ fn search_single_forum_still_works() {
         "single-forum search should not carry a forum tag"
     );
 }
+
+#[test]
+fn search_all_respects_tags_filter() {
+    let alpha_url = start_mock(200, hit(1, "Alpha topic"));
+    let beta_url = start_mock(200, hit(2, "Beta topic"));
+
+    let dir = TempDir::new().expect("tempdir");
+    let config = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"alpha\"\nbaseurl = \"{alpha_url}\"\napikey = \"k\"\napi_username = \"tester\"\ntags = [\"production\"]\n\n[[discourse]]\nname = \"beta\"\nbaseurl = \"{beta_url}\"\napikey = \"k\"\napi_username = \"tester\"\ntags = [\"staging\"]\n"
+        ),
+    );
+
+    let output = run_dsc(
+        &[
+            "search",
+            "all",
+            "topic",
+            "--tags",
+            "production",
+            "--format",
+            "json",
+        ],
+        &config,
+    );
+    assert!(
+        output.status.success(),
+        "search all --tags failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("search all JSON");
+    assert_eq!(rows.len(), 1, "only the production-tagged forum: {rows:?}");
+    assert_eq!(rows[0]["forum"], "alpha");
+}
+
+#[test]
+fn search_all_rejects_an_empty_tags_filter() {
+    let dir = TempDir::new().expect("tempdir");
+    let config = write_temp_config(
+        &dir,
+        "[[discourse]]\nname = \"alpha\"\nbaseurl = \"https://alpha.example\"\napikey = \"k\"\napi_username = \"tester\"\n",
+    );
+    let output = run_dsc(&["search", "all", "topic", "--tags", ",;"], &config);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--tags must include at least one non-empty tag"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn search_single_forum_rejects_tags() {
+    let dir = TempDir::new().expect("tempdir");
+    let config = write_temp_config(
+        &dir,
+        "[[discourse]]\nname = \"alpha\"\nbaseurl = \"https://alpha.example\"\napikey = \"k\"\napi_username = \"tester\"\n",
+    );
+    let output = run_dsc(
+        &["search", "alpha", "topic", "--tags", "production"],
+        &config,
+    );
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("only usable together with `all`"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

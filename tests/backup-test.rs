@@ -302,6 +302,61 @@ fn backup_create_all_requires_configured_discourses() {
 }
 
 #[test]
+fn backup_create_all_respects_tags_filter() {
+    let alpha_url = start_mock(200);
+    let beta_url = start_mock(200);
+
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"alpha\"\nbaseurl = \"{alpha_url}\"\napikey = \"k\"\napi_username = \"tester\"\ntags = [\"production\"]\n\n[[discourse]]\nname = \"beta\"\nbaseurl = \"{beta_url}\"\napikey = \"k\"\napi_username = \"tester\"\ntags = [\"staging\"]\n"
+        ),
+    );
+
+    let output = run_dsc(&["backup", "create", "--tags", "production"], &config_path);
+    assert!(
+        output.status.success(),
+        "backup create --tags failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("alpha: backup requested"));
+    assert!(!stdout.contains("beta: backup requested"));
+}
+
+#[test]
+fn backup_create_all_rejects_an_empty_tags_filter() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "alpha"
+baseurl = "https://alpha.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(&["backup", "create", "--tags", ",;"], &config_path);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--tags must include at least one non-empty tag"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn backup_create_requires_a_discourse_all_or_tags() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(&dir, "");
+    let output = run_dsc(&["backup", "create"], &config_path);
+    assert!(!output.status.success());
+}
+
+#[test]
 fn setup_s3_all_dry_run_fans_out_to_every_configured_forum() {
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(

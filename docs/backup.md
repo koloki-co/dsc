@@ -32,14 +32,16 @@ Requires the [`aws` CLI](https://docs.aws.amazon.com/cli/). Bucket, region, opti
 ```
 dsc backup create <discourse>
 dsc backup create --all
+dsc backup create --tags <tag1,tag2,...>
 ```
 
 Triggers a backup on the specified Discourse. The backup is created server-side; it is not downloaded locally.
 
-Use `--all` to trigger a backup on every configured forum:
+Use `--all` to trigger a backup on every configured forum, or `--tags` to select a matching subset. Tags are comma- or semicolon-separated and match any configured tag, case-insensitively. An empty tag filter is rejected rather than running across the entire fleet.
 
 ```bash
 dsc backup create --all
+dsc backup create --tags production
 ```
 
 Continues past a forum that fails (missing credentials, unreachable) so one bad entry doesn't stop the rest of the fleet; exits non-zero if any forum failed.

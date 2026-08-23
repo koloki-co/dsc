@@ -4,8 +4,8 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::OutputFormat;
-use crate::commands::common::{ensure_api_credentials, parse_tags, select_discourse};
-use crate::config::{Config, DiscourseConfig, find_discourse};
+use crate::commands::common::{ensure_api_credentials, select_discourse, selected_discourses};
+use crate::config::{Config, DiscourseConfig};
 use crate::utils::create_atomic_output;
 use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -24,17 +24,22 @@ pub fn backup_create(config: &Config, discourse_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Fan out `backup create` to every configured forum. Continues past
-/// per-forum failures (missing credentials, unreachable forum) so one bad
-/// entry doesn't block the rest of the fleet; fails at the end if any forum
-/// could not be backed up.
-pub fn backup_create_all(config: &Config) -> Result<()> {
-    if config.discourse.is_empty() {
-        return Err(anyhow!("no discourses configured"));
+/// Fan out `backup create` to every configured forum, optionally filtered
+/// by `--tags`. Continues past per-forum failures (missing credentials,
+/// unreachable forum) so one bad entry doesn't block the rest of the fleet;
+/// fails at the end if any forum could not be backed up.
+pub fn backup_create_all(config: &Config, tags: Option<&str>) -> Result<()> {
+    let discourses = selected_discourses(config, None, tags)?;
+    if discourses.is_empty() {
+        return Err(if tags.is_some() {
+            anyhow!("no discourses configured matching the given tags")
+        } else {
+            anyhow!("no discourses configured")
+        });
     }
 
     let mut failed = 0usize;
-    for discourse in &config.discourse {
+    for discourse in &discourses {
         match backup_create_one(discourse) {
             Ok(()) => println!("{}: backup requested", discourse.name),
             Err(e) => {
@@ -47,7 +52,7 @@ pub fn backup_create_all(config: &Config) -> Result<()> {
     if failed > 0 {
         return Err(anyhow!(
             "backup creation failed on {failed} of {} forum(s)",
-            config.discourse.len()
+            discourses.len()
         ));
     }
     Ok(())
@@ -340,40 +345,6 @@ pub fn backup_health(
         return Err(anyhow!("one or more backup health checks failed"));
     }
     Ok(())
-}
-
-pub(crate) fn selected_discourses<'a>(
-    config: &'a Config,
-    discourse_name: Option<&str>,
-    tags: Option<&str>,
-) -> Result<Vec<&'a DiscourseConfig>> {
-    if let Some(name) = discourse_name {
-        return find_discourse(config, name)
-            .map(|discourse| vec![discourse])
-            .ok_or_else(|| anyhow!("discourse not found: {name}"));
-    }
-    let filter = tags.map(parse_tags).unwrap_or_default();
-    Ok(config
-        .discourse
-        .iter()
-        .filter(|discourse| matches_tag_filter(discourse, &filter))
-        .collect())
-}
-
-fn matches_tag_filter(discourse: &DiscourseConfig, filter: &[String]) -> bool {
-    if filter.is_empty() {
-        return true;
-    }
-    let tags: HashSet<String> = discourse
-        .tags
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .map(|tag| tag.to_ascii_lowercase())
-        .collect();
-    filter
-        .iter()
-        .any(|tag| tags.contains(&tag.to_ascii_lowercase()))
 }
 
 fn backup_health_configuration(
@@ -1349,16 +1320,5 @@ mod tests {
             secret_access_key: None,
             use_iam_profile: true,
         }
-    }
-
-    #[test]
-    fn tag_filter_matches_case_insensitively() {
-        let forum = DiscourseConfig {
-            name: "forum".to_string(),
-            tags: Some(vec!["Production".to_string()]),
-            ..DiscourseConfig::default()
-        };
-        assert!(matches_tag_filter(&forum, &["production".to_string()]));
-        assert!(!matches_tag_filter(&forum, &["staging".to_string()]));
     }
 }

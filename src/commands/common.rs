@@ -5,8 +5,9 @@
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
 use crate::config::{Config, DiscourseConfig, find_discourse};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
+use std::collections::HashSet;
 use std::fmt::Display;
 use std::process::Command;
 
@@ -32,6 +33,58 @@ pub fn select_discourse<'a>(
         return find_discourse(config, name).ok_or_else(|| not_found("discourse", name));
     }
     Err(anyhow!("missing discourse for command"))
+}
+
+/// Shared fleet selector for `--all`/`--tags`-style fan-out commands
+/// (`backup create --all`, `backup setup-s3 --tags`, `backup health`,
+/// `search all`, `user find`). A single `discourse_name` selects exactly
+/// that forum; otherwise `tags` (comma/semicolon separated, match-any) is
+/// applied against every configured forum, or every forum is returned when
+/// `tags` is `None`. Rejects `--tags` values that parse to no tags at all
+/// (e.g. `--tags ""` or `--tags ",;"`), since silently falling back to "no
+/// filter" there is a footgun that would fan a mutating command out to the
+/// entire fleet when the caller meant to scope it down.
+pub fn selected_discourses<'a>(
+    config: &'a Config,
+    discourse_name: Option<&str>,
+    tags: Option<&str>,
+) -> Result<Vec<&'a DiscourseConfig>> {
+    if let Some(name) = discourse_name {
+        return find_discourse(config, name)
+            .map(|discourse| vec![discourse])
+            .ok_or_else(|| not_found("discourse", name));
+    }
+    let filter = match tags {
+        Some(raw) => {
+            let parsed = parse_tags(raw);
+            if parsed.is_empty() {
+                bail!("--tags must include at least one non-empty tag");
+            }
+            parsed
+        }
+        None => Vec::new(),
+    };
+    Ok(config
+        .discourse
+        .iter()
+        .filter(|discourse| matches_tag_filter(discourse, &filter))
+        .collect())
+}
+
+fn matches_tag_filter(discourse: &DiscourseConfig, filter: &[String]) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    let tags: HashSet<String> = discourse
+        .tags
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|tag| tag.to_ascii_lowercase())
+        .collect();
+    filter
+        .iter()
+        .any(|tag| tags.contains(&tag.to_ascii_lowercase()))
 }
 
 pub fn ensure_api_credentials(discourse: &DiscourseConfig) -> Result<()> {
@@ -181,7 +234,75 @@ pub fn parse_emails(input: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_emails, render_shell_template, shell_quote, validate_ssh_target};
+    use super::{
+        Config, DiscourseConfig, matches_tag_filter, parse_emails, render_shell_template,
+        selected_discourses, shell_quote, validate_ssh_target,
+    };
+
+    #[test]
+    fn tag_filter_matches_case_insensitively() {
+        let forum = DiscourseConfig {
+            name: "forum".to_string(),
+            tags: Some(vec!["Production".to_string()]),
+            ..DiscourseConfig::default()
+        };
+        assert!(matches_tag_filter(&forum, &["production".to_string()]));
+        assert!(!matches_tag_filter(&forum, &["staging".to_string()]));
+    }
+
+    #[test]
+    fn selected_discourses_rejects_empty_tags() {
+        let config = Config {
+            discourse: vec![DiscourseConfig {
+                name: "forum".to_string(),
+                ..DiscourseConfig::default()
+            }],
+            ..Config::default()
+        };
+        let err = selected_discourses(&config, None, Some("")).unwrap_err();
+        assert!(err.to_string().contains("at least one non-empty tag"));
+        let err = selected_discourses(&config, None, Some(",;")).unwrap_err();
+        assert!(err.to_string().contains("at least one non-empty tag"));
+    }
+
+    #[test]
+    fn selected_discourses_filters_by_tag_when_no_name_given() {
+        let config = Config {
+            discourse: vec![
+                DiscourseConfig {
+                    name: "prod".to_string(),
+                    tags: Some(vec!["production".to_string()]),
+                    ..DiscourseConfig::default()
+                },
+                DiscourseConfig {
+                    name: "stage".to_string(),
+                    tags: Some(vec!["staging".to_string()]),
+                    ..DiscourseConfig::default()
+                },
+            ],
+            ..Config::default()
+        };
+        let matched = selected_discourses(&config, None, Some("production")).unwrap();
+        assert_eq!(matched.len(), 1);
+        assert_eq!(matched[0].name, "prod");
+
+        let all = selected_discourses(&config, None, None).unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn selected_discourses_by_name_ignores_tags() {
+        let config = Config {
+            discourse: vec![DiscourseConfig {
+                name: "forum".to_string(),
+                ..DiscourseConfig::default()
+            }],
+            ..Config::default()
+        };
+        let matched = selected_discourses(&config, Some("forum"), None).unwrap();
+        assert_eq!(matched.len(), 1);
+        assert!(selected_discourses(&config, Some("missing"), None).is_err());
+    }
 
     #[test]
     fn shell_quotes_embedded_single_quotes() {

@@ -4,7 +4,7 @@
 
 use crate::api::{DiscourseClient, SearchHit};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{ensure_api_credentials, select_discourse, selected_discourses};
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
 use serde::Serialize;
@@ -53,14 +53,24 @@ pub fn search(
 /// forum-tagged result list. Continues past per-forum failures (missing
 /// credentials, unreachable forum) so one bad entry doesn't blank the rest of
 /// the fleet; fails at the end if any forum could not be searched.
-pub fn search_all(config: &Config, query: &str, format: ListFormat) -> Result<()> {
-    if config.discourse.is_empty() {
-        return Err(anyhow!("no discourses configured"));
+pub fn search_all(
+    config: &Config,
+    query: &str,
+    tags: Option<&str>,
+    format: ListFormat,
+) -> Result<()> {
+    let discourses = selected_discourses(config, None, tags)?;
+    if discourses.is_empty() {
+        return Err(if tags.is_some() {
+            anyhow!("no discourses configured matching the given tags")
+        } else {
+            anyhow!("no discourses configured")
+        });
     }
 
     let mut hits: Vec<ForumHit> = Vec::new();
     let mut failed = 0usize;
-    for discourse in &config.discourse {
+    for discourse in &discourses {
         match search_one(discourse, query) {
             Ok(forum_hits) => hits.extend(forum_hits.into_iter().map(|hit| ForumHit {
                 forum: discourse.name.clone(),
@@ -103,7 +113,7 @@ pub fn search_all(config: &Config, query: &str, format: ListFormat) -> Result<()
     if failed > 0 {
         return Err(anyhow!(
             "search failed on {failed} of {} forum(s)",
-            config.discourse.len()
+            discourses.len()
         ));
     }
     Ok(())
