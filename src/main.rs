@@ -740,9 +740,11 @@ fn main() -> Result<()> {
                 username,
                 format,
             } => commands::user::user_info(&config, &discourse, &username, format),
-            UserCommand::Find { email, format } => {
-                commands::user::user_find(&config, &email, format)
-            }
+            UserCommand::Find {
+                email,
+                tags,
+                format,
+            } => commands::user::user_find(&config, &email, tags.as_deref(), format),
             UserCommand::Suspend {
                 discourse,
                 username,
@@ -855,10 +857,14 @@ fn main() -> Result<()> {
         },
 
         Commands::Backup { command } => match command {
-            BackupCommand::Create { discourse, all } => match (all, discourse.as_deref()) {
-                (true, None) => commands::backup::backup_create_all(&config),
+            BackupCommand::Create {
+                discourse,
+                all,
+                tags,
+            } => match (all || tags.is_some(), discourse.as_deref()) {
+                (true, None) => commands::backup::backup_create_all(&config, tags.as_deref()),
                 (false, Some(name)) => commands::backup::backup_create(&config, name),
-                _ => Err(anyhow!("specify a discourse name or --all")),
+                _ => Err(anyhow!("specify a discourse name, --all, or --tags")),
             },
 
             BackupCommand::List {
@@ -1380,10 +1386,19 @@ fn main() -> Result<()> {
         Commands::Search {
             discourse,
             query,
+            tags,
             format,
         } => match discourse.as_str() {
-            "all" => commands::search::search_all(&config, &query, format),
-            name => commands::search::search(&config, name, &query, format),
+            "all" => commands::search::search_all(&config, &query, tags.as_deref(), format),
+            name => {
+                if tags.is_some() {
+                    Err(anyhow!(
+                        "--tags is only usable together with `all` as the discourse argument"
+                    ))
+                } else {
+                    commands::search::search(&config, name, &query, format)
+                }
+            }
         },
 
         Commands::Analytics {
