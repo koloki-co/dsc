@@ -26,10 +26,10 @@ Shows id, username, name, email (if returned by the server), trust level, role, 
 ## dsc user find
 
 ```text
-dsc user find <email> [--format text|json|yaml]
+dsc user find <email> [--tags <tag1,tag2,...>] [--format text|json|yaml]
 ```
 
-GDPR "which forum has this person" lookup: searches every configured forum for an account whose email matches, and prints only the matching forum, user ID, and username (or a generic no-account message if the address isn't registered anywhere in the fleet). The searched email is never repeated in output. Continues past per-forum failures (missing credentials, unreachable forum) so one bad entry doesn't block the rest of the fleet; exits non-zero if any forum could not be searched.
+GDPR "which forum has this person" lookup: searches every configured forum for an account whose email matches, and prints only the matching forum, user ID, and username (or a generic no-account message if the address isn't registered anywhere in the fleet). Use `--tags` to search only forums matching any comma- or semicolon-separated tag, case-insensitively. The searched email is never repeated in output. Continues past per-forum failures (missing credentials, unreachable forum) so one bad entry doesn't block the rest of the fleet; exits non-zero if any forum could not be searched. An empty tag filter is rejected rather than searching the entire fleet.
 
 ```bash
 dsc user find jane@example.com
@@ -37,6 +37,7 @@ dsc user find jane@example.com
 # beta   jane    id:7
 
 dsc user find jane@example.com --format json
+dsc user find jane@example.com --tags production
 ```
 
 ## dsc user suspend

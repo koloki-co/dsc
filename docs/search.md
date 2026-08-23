@@ -4,7 +4,7 @@ Search topics on a Discourse install.
 
 ```text
 dsc search <discourse> <query> [--format text|json|yaml]
-dsc search all <query> [--format text|json|yaml]
+dsc search all <query> [--tags <tag1,tag2,...>] [--format text|json|yaml]
 ```
 
 Hits `/search.json?q=…` and prints the matching topics. The query is passed through verbatim, so any Discourse search filter syntax works (`status:open`, `category:foo`, `tags:bug`, `@user`, etc.).
@@ -24,10 +24,11 @@ Each result includes `id`, `title`, `slug`, `posts_count`, `category_id`, and `t
 
 ## Search every forum
 
-`dsc search all <query>` runs the same query against every configured forum and combines the results. Text output prefixes each row with the forum name; JSON and YAML add a `forum` field to each normal search result. The command continues after an individual forum fails so successful results still reach stdout, reports failures on stderr, and exits non-zero if any forum could not be searched.
+`dsc search all <query>` runs the same query against every configured forum and combines the results. Use `--tags` to search only forums matching any comma- or semicolon-separated tag, case-insensitively. Text output prefixes each row with the forum name; JSON and YAML add a `forum` field to each normal search result. The command continues after an individual forum fails so successful results still reach stdout, reports failures on stderr, and exits non-zero if any forum could not be searched. An empty tag filter is rejected rather than searching the entire fleet.
 
 ```bash
 dsc search all "tags:bug status:open"
+dsc search all "tags:bug status:open" --tags production
 dsc search all "release notes" --format json | jq -r '.[] | [.forum, .id] | @tsv'
 ```
 
