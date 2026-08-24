@@ -5,14 +5,15 @@ Fill `{{ variable }}` placeholders in a local Markdown (or text) template file u
 ## dsc render
 
 ```text
-dsc render <discourse> <file> [-o <output>] [--format text|json|yaml]
+dsc render <discourse> <file> [-o <output>] [--strict] [--format text|json|yaml]
+dsc render <discourse> --list-vars [--format text|json|yaml]
 ```
 
 Reads `<file>` (or stdin, when `<file>` is `-`), substitutes every `{{ variable }}` placeholder it finds using the named forum's resolved template variables, and writes the result to stdout or to the path given by `-o`/`--output`.
 
 `--format json` emits `{"rendered": "..."}`, and `--format yaml` emits `rendered: |-\n  ...`, for scripting. Default is `text`, which prints the raw rendered content. `--format` is ignored when `-o` is given: the file always receives the raw rendered text.
 
-An unknown variable (a `{{ foo }}` with no `foo` in the resolved map) is not a hard error: `dsc render` prints a warning to stderr naming the variable, substitutes an empty string, and keeps rendering the rest of the file.
+An unknown variable (a `{{ foo }}` with no `foo` in the resolved map) is not a hard error by default: `dsc render` prints a warning to stderr naming the variable, substitutes an empty string, and keeps rendering the rest of the file.
 
 `dsc render` does not touch Discourse's own `%{...}` placeholders (e.g. `%{reply_to_username,fallback:there}`). Those are server-side substitution tokens and pass through untouched — `dsc`'s `{{ }}` syntax is chosen specifically to avoid colliding with them.
 
@@ -23,6 +24,28 @@ dsc render myforum welcome.md
 dsc render myforum welcome.md -o welcome.rendered.md
 dsc render myforum welcome.md --dry-run   # preview the resolved variables
 ```
+
+### `--strict`
+
+Turns an unknown variable into a hard error instead of an empty substitution. Nothing is written and the exit status is non-zero. Every unknown variable in the file is named in one message, so a template can be fixed in a single pass rather than one run per missing variable.
+
+```bash
+dsc render myforum welcome.md --strict
+# Error: unknown template variable(s): community, support_email
+```
+
+Use `--strict` when a rendered file is about to be pushed to a live forum - a silently blank substitution is easy to miss in review, and a failed render is not.
+
+### `--list-vars`
+
+Prints the forum's fully resolved variable map - built-ins plus everything configured - and exits, without reading or rendering a template file. Do not pass `<file>` with this mode; `-o` and `--strict` also do not apply.
+
+```bash
+dsc render myforum --list-vars
+dsc render myforum --list-vars --format json
+```
+
+Text output is one `name = value` line per variable, sorted by name. `--format json`/`yaml` emit the map itself as an object, for scripting. Use it to see what is available before writing a template, or to check which layer won for a variable that renders unexpectedly.
 
 ## Variable resolution
 

@@ -21,18 +21,33 @@ struct RenderOutput {
 /// Render `{{ variable }}` placeholders in `file` using `discourse_name`'s
 /// resolved template variables (built-ins, `[template.vars]` globals, and
 /// the forum's own `[discourse.template]` overrides).
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     config: &Config,
     discourse_name: &str,
-    file: &Path,
+    file: Option<&Path>,
     output: Option<&Path>,
+    strict: bool,
+    list_vars: bool,
     format: ListFormat,
     dry_run: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
-    let content = read_template_input(file)?;
     let vars = resolve_template_vars(config, discourse);
-    let rendered = render_template(&content, &vars)?;
+
+    if list_vars {
+        let text = vars
+            .iter()
+            .map(|(key, value)| format!("{} = {}", key, value))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return emit_result(format, &vars, &text);
+    }
+
+    // Clap enforces a file argument whenever `--list-vars` is absent.
+    let file = file.ok_or_else(|| anyhow!("missing template file"))?;
+    let content = read_template_input(file)?;
+    let rendered = render_template(&content, &vars, strict)?;
 
     if dry_run {
         eprintln!("Resolved template variables:");
@@ -98,23 +113,39 @@ fn resolve_template_vars(config: &Config, discourse: &DiscourseConfig) -> BTreeM
 
 /// Render `{{ variable }}` interpolations via Tera. Unlike Tera's default
 /// (which errors on an undefined variable), an unknown variable here warns
-/// to stderr and substitutes an empty string, per the render spec.
-fn render_template(content: &str, vars: &BTreeMap<String, String>) -> Result<String> {
+/// to stderr and substitutes an empty string, per the render spec. Under
+/// `strict`, every unknown variable is collected and reported as one error
+/// instead, so a caller fixes the whole template in a single pass.
+fn render_template(content: &str, vars: &BTreeMap<String, String>, strict: bool) -> Result<String> {
     validate_phase_one_syntax(content)?;
 
     let mut context = tera::Context::new();
     for (key, value) in vars {
         context.insert(key.clone(), value);
     }
+
+    let mut unknown: Vec<String> = Vec::new();
     for name in referenced_variable_names(content) {
-        if !vars.contains_key(&name) {
-            eprintln!(
-                "warning: unknown template variable '{}', substituting empty string",
-                name
-            );
-            context.insert(name, "");
+        if vars.contains_key(&name) || unknown.contains(&name) {
+            continue;
         }
+        unknown.push(name);
     }
+
+    if strict && !unknown.is_empty() {
+        return Err(anyhow!(
+            "unknown template variable(s): {}",
+            unknown.join(", ")
+        ));
+    }
+    for name in unknown {
+        eprintln!(
+            "warning: unknown template variable '{}', substituting empty string",
+            name
+        );
+        context.insert(name, "");
+    }
+
     tera::Tera::one_off(content, &context, false).context("rendering template")
 }
 
@@ -196,23 +227,38 @@ mod tests {
     fn rejects_filters_and_control_blocks() {
         let mut vars = BTreeMap::new();
         vars.insert("community".to_string(), "OpenEHR".to_string());
-        assert!(render_template("{{ community | upper }}", &vars).is_err());
-        assert!(render_template("{% if community %}Welcome{% endif %}", &vars).is_err());
+        assert!(render_template("{{ community | upper }}", &vars, false).is_err());
+        assert!(render_template("{% if community %}Welcome{% endif %}", &vars, false).is_err());
     }
 
     #[test]
     fn renders_known_variables() {
         let mut vars = BTreeMap::new();
         vars.insert("community".to_string(), "OpenEHR".to_string());
-        let out = render_template("Welcome to {{ community }}!", &vars).unwrap();
+        let out = render_template("Welcome to {{ community }}!", &vars, false).unwrap();
         assert_eq!(out, "Welcome to OpenEHR!");
     }
 
     #[test]
     fn substitutes_empty_string_for_unknown_variables() {
         let vars = BTreeMap::new();
-        let out = render_template("Hello {{ missing }}!", &vars).unwrap();
+        let out = render_template("Hello {{ missing }}!", &vars, false).unwrap();
         assert_eq!(out, "Hello !");
+    }
+
+    #[test]
+    fn strict_reports_every_unknown_variable_once() {
+        let vars = BTreeMap::new();
+        let err = render_template("{{ a }} {{ b }} {{ a }}", &vars, true).unwrap_err();
+        assert_eq!(err.to_string(), "unknown template variable(s): a, b");
+    }
+
+    #[test]
+    fn strict_renders_a_fully_resolved_template() {
+        let mut vars = BTreeMap::new();
+        vars.insert("community".to_string(), "OpenEHR".to_string());
+        let out = render_template("Welcome to {{ community }}!", &vars, true).unwrap();
+        assert_eq!(out, "Welcome to OpenEHR!");
     }
 
     #[test]
