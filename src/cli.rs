@@ -329,7 +329,8 @@ pub enum Commands {
         #[arg(
             required_unless_present = "list_vars",
             value_parser = tilde_pathbuf,
-            value_hint = ValueHint::FilePath
+            value_hint = ValueHint::FilePath,
+            conflicts_with = "list_vars"
         )]
         file: Option<PathBuf>,
         /// Write rendered output to this file instead of stdout.

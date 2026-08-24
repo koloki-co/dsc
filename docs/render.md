@@ -34,11 +34,11 @@ dsc render myforum welcome.md --strict
 # Error: unknown template variable(s): community, support_email
 ```
 
-Use `--strict` when a rendered file is about to be pushed to a live forum — a silently blank substitution is easy to miss in review, and a failed render is not.
+Use `--strict` when a rendered file is about to be pushed to a live forum - a silently blank substitution is easy to miss in review, and a failed render is not.
 
 ### `--list-vars`
 
-Prints the forum's fully resolved variable map — built-ins plus everything configured — and exits, without reading or rendering a template file. `<file>` is not required (and `-o`/`--strict` do not apply).
+Prints the forum's fully resolved variable map - built-ins plus everything configured - and exits, without reading or rendering a template file. Do not pass `<file>` with this mode; `-o` and `--strict` also do not apply.
 
 ```bash
 dsc render myforum --list-vars

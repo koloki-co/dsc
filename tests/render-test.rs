@@ -250,6 +250,33 @@ fn list_vars_json_emits_the_variable_map() {
 }
 
 #[test]
+fn list_vars_rejects_a_template_file() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        "[[discourse]]\nname = \"local\"\nbaseurl = \"https://example.com\"\n",
+    );
+    let template_path = dir.path().join("t.md");
+    fs::write(&template_path, "Base: {{ forum_baseurl }}").expect("write template");
+
+    let output = run_dsc(
+        &[
+            "render",
+            "local",
+            template_path.to_str().expect("template path"),
+            "--list-vars",
+        ],
+        &config_path,
+    );
+    assert!(!output.status.success(), "expected a usage error");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--list-vars"),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn render_without_a_file_or_list_vars_is_a_usage_error() {
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
