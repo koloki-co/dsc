@@ -92,7 +92,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<UpdateCommand>,
         /// Discourse name, or 'all' to update every configured Discourse.
-        name: Option<String>,
+        discourse: Option<String>,
         /// Parallel mode for `dsc update all`: `-p` runs 3 at once, `-p N`
         /// runs N. Put the forum name before `-p` (e.g. `update all -p 4`).
         #[arg(long, short = 'p', num_args = 0..=1, default_missing_value = "3", value_name = "N")]
