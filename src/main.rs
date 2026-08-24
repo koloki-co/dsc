@@ -170,7 +170,7 @@ fn main() -> Result<()> {
 
         Commands::Update {
             command,
-            name,
+            discourse,
             parallel,
             post_changelog,
             yes,
@@ -192,7 +192,7 @@ fn main() -> Result<()> {
                 let skip_recent = skip_recent
                     .map(|s| commands::update_log::parse_duration(&s))
                     .transpose()?;
-                match name.as_deref() {
+                match discourse.as_deref() {
                     None => Err(anyhow!(
                         "specify a discourse name or 'all' (or `dsc update log`)"
                     )),
