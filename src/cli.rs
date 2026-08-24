@@ -92,7 +92,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: Option<UpdateCommand>,
         /// Discourse name, or 'all' to update every configured Discourse.
-        name: Option<String>,
+        discourse: Option<String>,
         /// Parallel mode for `dsc update all`: `-p` runs 3 at once, `-p N`
         /// runs N. Put the forum name before `-p` (e.g. `update all -p 4`).
         #[arg(long, short = 'p', num_args = 0..=1, default_missing_value = "3", value_name = "N")]
@@ -319,21 +319,37 @@ pub enum Commands {
     #[command(after_help = "Examples:
   dsc render myforum welcome.md
   dsc render myforum welcome.md -o welcome.rendered.md
+  dsc render myforum welcome.md --strict     # fail on an unknown variable
+  dsc render myforum --list-vars             # show the resolved variable map
   dsc render myforum welcome.md --dry-run   # preview resolved variables")]
     Render {
         /// Discourse name.
         discourse: String,
         /// Template file to render. Use `-` to read from stdin.
-        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
-        file: PathBuf,
+        #[arg(
+            required_unless_present = "list_vars",
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::FilePath,
+            conflicts_with = "list_vars"
+        )]
+        file: Option<PathBuf>,
         /// Write rendered output to this file instead of stdout.
         #[arg(
             long,
             short = 'o',
             value_parser = tilde_pathbuf,
-            value_hint = ValueHint::FilePath
+            value_hint = ValueHint::FilePath,
+            conflicts_with = "list_vars"
         )]
         output: Option<PathBuf>,
+        /// Fail instead of substituting an empty string when the template
+        /// references a variable that is not in the resolved map.
+        #[arg(long, conflicts_with = "list_vars")]
+        strict: bool,
+        /// Print the forum's fully resolved template variable map and exit,
+        /// without rendering a file.
+        #[arg(long)]
+        list_vars: bool,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,

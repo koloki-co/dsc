@@ -64,37 +64,50 @@ fn completions_generate() {
         assert!(zsh.contains(cmd), "zsh completions missing `{cmd}`");
     }
 
-    // The zsh post-processing rewrites every `<discourse>` positional to the
-    // dynamic `_dsc_discourse_names` completer. That injection is a fragile
-    // string match against clap_complete's output format, so assert it took:
-    // the helper is present, and no `:discourse` arg was left on `:_default`.
+    // The zsh post-processing rewrites every required or optional `<discourse>`
+    // positional to the dynamic `_dsc_discourse_names` completer. That injection
+    // is a fragile string match against clap_complete's output format, so assert
+    // that no discourse argument falls through to `:_default`.
     assert!(
         zsh.contains("_dsc_discourse_names"),
         "dynamic discourse-name completion was not injected"
     );
     let mut discourse_args = 0;
-    let mut idx = 0;
-    while let Some(p) = zsh[idx..].find("':discourse") {
-        let start = idx + p;
-        let rest = &zsh[start..];
-        // Whichever completer closes this arg must be the dynamic one.
-        let dynamic = rest.find(":_dsc_discourse_names'");
-        let default = rest.find(":_default'");
-        match (dynamic, default) {
-            (Some(dy), Some(de)) => assert!(
-                dy < de,
-                "a `:discourse` arg still falls through to :_default (injection broke)"
-            ),
-            (None, Some(_)) => {
-                panic!("a `:discourse` arg still uses :_default (injection broke)")
+    for argument_prefix in ["':discourse", "'::discourse"] {
+        let mut idx = 0;
+        while let Some(p) = zsh[idx..].find(argument_prefix) {
+            let start = idx + p;
+            let rest = &zsh[start..];
+            let dynamic = rest.find(":_dsc_discourse_names'");
+            let default = rest.find(":_default'");
+            match (dynamic, default) {
+                (Some(dy), Some(de)) => assert!(
+                    dy < de,
+                    "a `{argument_prefix}` arg still falls through to :_default"
+                ),
+                (None, Some(_)) => {
+                    panic!("a `{argument_prefix}` arg still uses :_default")
+                }
+                _ => {}
             }
-            _ => {}
+            discourse_args += 1;
+            idx = start + argument_prefix.len();
         }
-        discourse_args += 1;
-        idx = start + "':discourse".len();
     }
     assert!(
         discourse_args > 5,
         "expected many `:discourse` positionals, found {discourse_args}"
+    );
+
+    let (_, update_args) = zsh
+        .split_once("(update)\n_arguments")
+        .expect("top-level update completion branch");
+    let update_args = update_args
+        .split_once("\n;;")
+        .expect("top-level update completion branch terminator")
+        .0;
+    assert!(
+        update_args.contains(":_dsc_discourse_names'"),
+        "update discourse argument does not use the dynamic discourse completer"
     );
 }

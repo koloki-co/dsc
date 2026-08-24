@@ -180,63 +180,42 @@ fn inject_zsh_dynamic_discourse_completion(mut content: String) -> String {
         }
     }
 
-    let content = replace_discourse_arg_completion(content);
-    replace_update_name_completion(content)
+    replace_discourse_arg_completion(content)
 }
 
-/// Replace `:_default` with `:_dsc_discourse_names` for all `':discourse ...`
-/// positional args across every subcommand.
+/// Replace `:_default` with `:_dsc_discourse_names` for all required and
+/// optional `discourse` positional args across every subcommand.
 fn replace_discourse_arg_completion(content: String) -> String {
-    // Each generated argument looks like:
-    //   ':discourse -- Discourse name:_default'
-    // We find every `':discourse` and replace the `:_default'` that closes it.
+    // Clap emits `:discourse` for required positionals and `::discourse` for
+    // optional ones. Replacing the generated completion here keeps candidates
+    // dynamic without hand-maintaining the command tree.
     let mut result = String::with_capacity(content.len());
     let mut remaining = content.as_str();
 
-    while let Some(pos) = remaining.find("':discourse") {
-        // Copy everything up to and including the match start.
+    while let Some(pos) = remaining.find("'") {
         result.push_str(&remaining[..pos]);
         let after = &remaining[pos..];
+        let argument_prefix = if after.starts_with("':discourse") {
+            "':discourse"
+        } else if after.starts_with("'::discourse") {
+            "'::discourse"
+        } else {
+            result.push('\'');
+            remaining = &after[1..];
+            continue;
+        };
 
         if let Some(default_pos) = after.find(":_default'") {
-            // Copy the argument text up to the `:_default'`, replacing it.
             result.push_str(&after[..default_pos]);
             result.push_str(":_dsc_discourse_names'");
             remaining = &after[default_pos + ":_default'".len()..];
         } else {
-            // No `:_default'` found — copy the token as-is and move on.
-            result.push_str(&after[.."':discourse".len()]);
-            remaining = &after["':discourse".len()..];
+            result.push_str(&after[..argument_prefix.len()]);
+            remaining = &after[argument_prefix.len()..];
         }
     }
     result.push_str(remaining);
     result
-}
-
-fn replace_update_name_completion(content: String) -> String {
-    let update_marker = "(update)\n_arguments";
-
-    if let Some(update_pos) = content.find(update_marker) {
-        let after_start = update_pos + update_marker.len();
-        let after_update = &content[after_start..];
-
-        // The generated argument spec includes the description, e.g.:
-        //   ':name -- Discourse name, or '\''all'\'' to update ...:_default'
-        // so we can't match ':name:_default' directly — find ':name' then
-        // the next ':_default'' within that argument.
-        if let Some(name_pos) = after_update.find("':name") {
-            let after_name = &after_update[name_pos..];
-            if let Some(default_pos) = after_name.find(":_default'") {
-                let abs_pos = after_start + name_pos + default_pos;
-                let mut result = content[..abs_pos].to_string();
-                result.push_str(":_dsc_discourse_names'");
-                result.push_str(&content[abs_pos + ":_default'".len()..]);
-                return result;
-            }
-        }
-    }
-
-    content
 }
 
 #[cfg(test)]
