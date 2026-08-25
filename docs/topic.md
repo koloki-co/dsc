@@ -212,3 +212,20 @@ dsc topic tags myforum 723 git developer-guide
 # Clear all tags
 dsc topic tags myforum 723
 ```
+
+## dsc topic change-owner
+
+```text
+dsc topic change-owner <discourse> <topic-id> <username> [--post <post-id>]...
+```
+
+Reassigns the visible author of one or more posts in a topic (`POST /t/{id}/change-owner.json`). With no `--post` flags, reassigns just the topic's first post (the OP) - what most people mean by "change the topic's owner". Pass one or more `--post <post-id>` flags to reassign specific replies instead. `<username>` is validated against the target Discourse before the mutating request is sent, so a typo fails fast rather than as a confusing Discourse error. Supports `--dry-run`, which prints the resolved post ID(s), current author(s), and target username without writing anything.
+
+```bash
+# Reassign a topic compiled on someone's behalf back to its actual author
+dsc topic change-owner myforum 723 janedoe
+# post 1001 in topic 723 reassigned: opsadmin → janedoe
+
+# Reassign specific replies rather than the OP
+dsc topic change-owner myforum 723 janedoe --post 1002 --post 1005
+```

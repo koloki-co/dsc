@@ -472,6 +472,11 @@ const CASES: &[Case] = &[
     ),
     ("topic tags", &["topic", "tags", "mock", "7", "beta"], true),
     (
+        "topic change-owner",
+        &["topic", "change-owner", "mock", "7", "tester"],
+        true,
+    ),
+    (
         "category copy",
         &["category", "copy", "mock", "4", "--target", "mock"],
         true,

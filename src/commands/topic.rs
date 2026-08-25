@@ -564,6 +564,101 @@ pub fn topic_tags(
     Ok(())
 }
 
+/// Reassign the visible author of a topic's post(s). With no `post_ids`,
+/// targets the topic's first post (the OP), matching what most people mean
+/// by "change the topic's owner".
+pub fn topic_change_owner(
+    config: &Config,
+    discourse_name: &str,
+    topic_id: u64,
+    username: &str,
+    post_ids: &[u64],
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+
+    client.fetch_user_detail(username).with_context(|| {
+        format!(
+            "target user \"{}\" not found on {}",
+            username, discourse.name
+        )
+    })?;
+
+    let topic = if post_ids.is_empty() {
+        client.fetch_topic(topic_id, false)?
+    } else {
+        // Explicit post IDs may fall beyond the first page of a long topic.
+        client.fetch_topic_all_posts(topic_id)?
+    };
+    let targets = change_owner_targets(&topic, post_ids, topic_id)?;
+    let target_ids: Vec<u64> = targets.iter().map(|(id, _)| *id).collect();
+
+    if dry_run {
+        for (post_id, old_author) in &targets {
+            let old_author = if old_author.is_empty() {
+                "(unknown)"
+            } else {
+                old_author.as_str()
+            };
+            println!(
+                "[dry-run] {}: would reassign post {} in topic {}: {} → {}",
+                discourse.name, post_id, topic_id, old_author, username
+            );
+        }
+        return Ok(());
+    }
+
+    client.change_topic_owner(topic_id, username, &target_ids)?;
+    for (post_id, old_author) in &targets {
+        let old_author = if old_author.is_empty() {
+            "(unknown)"
+        } else {
+            old_author.as_str()
+        };
+        println!(
+            "post {} in topic {} reassigned: {} → {}",
+            post_id, topic_id, old_author, username
+        );
+    }
+    Ok(())
+}
+
+fn change_owner_targets(
+    topic: &TopicResponse,
+    post_ids: &[u64],
+    topic_id: u64,
+) -> Result<Vec<(u64, String)>> {
+    if post_ids.is_empty() {
+        let op = topic
+            .post_stream
+            .posts
+            .iter()
+            .find(|post| post.post_number == Some(1))
+            .or_else(|| topic.post_stream.posts.first())
+            .ok_or_else(|| anyhow!("topic {} has no posts", topic_id))?;
+        return Ok(vec![(op.id, op.username.clone().unwrap_or_default())]);
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    post_ids
+        .iter()
+        .map(|&post_id| {
+            if !seen.insert(post_id) {
+                return Err(anyhow!("post {} was specified more than once", post_id));
+            }
+            let post = topic
+                .post_stream
+                .posts
+                .iter()
+                .find(|post| post.id == post_id)
+                .ok_or_else(|| anyhow!("post {} does not belong to topic {}", post_id, topic_id))?;
+            Ok((post.id, post.username.clone().unwrap_or_default()))
+        })
+        .collect()
+}
+
 fn read_reply_input(local_path: Option<&Path>) -> Result<String> {
     let from_stdin = match local_path {
         None => true,
@@ -583,7 +678,10 @@ fn read_reply_input(local_path: Option<&Path>) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_date_only, read_reply_input, render_full_thread, topic_display_title};
+    use super::{
+        change_owner_targets, format_date_only, read_reply_input, render_full_thread,
+        topic_display_title,
+    };
     use crate::api::{Post, PostStream, TopicResponse};
     use crate::utils::yaml_scalar;
     use std::io::Write;
@@ -625,6 +723,47 @@ mod tests {
         writeln!(f, "hello from file").unwrap();
         let got = read_reply_input(Some(f.path())).unwrap();
         assert_eq!(got.trim(), "hello from file");
+    }
+
+    #[test]
+    fn change_owner_defaults_to_the_op() {
+        let topic = make_topic(
+            None,
+            vec![
+                make_post(2, Some(2), Some("reply"), None, None),
+                make_post(1, Some(1), Some("op"), None, None),
+            ],
+            vec![1, 2],
+        );
+
+        assert_eq!(
+            change_owner_targets(&topic, &[], 42).unwrap(),
+            vec![(1, "op".to_string())]
+        );
+    }
+
+    #[test]
+    fn change_owner_rejects_posts_outside_the_topic() {
+        let topic = make_topic(
+            None,
+            vec![make_post(1, Some(1), Some("op"), None, None)],
+            vec![1],
+        );
+
+        let err = change_owner_targets(&topic, &[2], 42).unwrap_err();
+        assert_eq!(err.to_string(), "post 2 does not belong to topic 42");
+    }
+
+    #[test]
+    fn change_owner_rejects_duplicate_posts() {
+        let topic = make_topic(
+            None,
+            vec![make_post(1, Some(1), Some("op"), None, None)],
+            vec![1],
+        );
+
+        let err = change_owner_targets(&topic, &[1, 1], 42).unwrap_err();
+        assert_eq!(err.to_string(), "post 1 was specified more than once");
     }
 
     #[test]

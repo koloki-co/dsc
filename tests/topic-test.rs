@@ -305,6 +305,45 @@ fn topic_tags_dry_run() {
 }
 
 #[test]
+#[ignore = "live compatibility test; run through s/test-live"]
+fn topic_change_owner_dry_run() {
+    let Some(test) = test_discourse() else {
+        return;
+    };
+    let disposable = create_disposable_topic(&test, "topic-change-owner-dry-run");
+    vprintln("e2e_topic_change_owner_dry_run: dry-run change-owner must not write");
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"{}\"\nbaseurl = \"{}\"\napikey = \"{}\"\napi_username = \"{}\"\n",
+            test.name, test.baseurl, test.apikey, test.api_username
+        ),
+    );
+    let output = run_dsc(
+        &[
+            "-n",
+            "topic",
+            "change-owner",
+            &test.name,
+            &disposable.id.to_string(),
+            &test.api_username,
+        ],
+        &config_path,
+    );
+    assert!(
+        output.status.success(),
+        "topic change-owner --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[dry-run]") && stdout.contains("would reassign"),
+        "expected dry-run change-owner notice, got: {stdout}"
+    );
+}
+
+#[test]
 fn topic_reply_dry_run_previews_without_posting() {
     let topic_id = 12345;
     vprintln("topic_reply_dry_run: -n must return before network access (issue #20)");

@@ -1070,6 +1070,18 @@ pub enum TopicCommand {
         /// Tags to set (space-separated; omit to clear all tags).
         tags: Vec<String>,
     },
+    /// Reassign the visible author of a topic's post(s). Honours `--dry-run`.
+    ChangeOwner {
+        /// Discourse name.
+        discourse: String,
+        /// Topic ID.
+        topic_id: u64,
+        /// Username to reassign the post(s) to.
+        username: String,
+        /// Post ID to reassign instead of the topic's first post. Repeatable.
+        #[arg(long = "post")]
+        post_ids: Vec<u64>,
+    },
 }
 
 /// The Discourse Markdown representation used for MkDocs/Zensical admonitions.
