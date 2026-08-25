@@ -564,6 +564,85 @@ pub fn topic_tags(
     Ok(())
 }
 
+/// Reassign the visible author of a topic's post(s). With no `post_ids`,
+/// targets the topic's first post (the OP), matching what most people mean
+/// by "change the topic's owner".
+pub fn topic_change_owner(
+    config: &Config,
+    discourse_name: &str,
+    topic_id: u64,
+    username: &str,
+    post_ids: &[u64],
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+
+    client.fetch_user_detail(username).with_context(|| {
+        format!(
+            "target user \"{}\" not found on {}",
+            username, discourse.name
+        )
+    })?;
+
+    let topic = client.fetch_topic(topic_id, false)?;
+    let targets: Vec<(u64, String)> = if post_ids.is_empty() {
+        let op = topic
+            .post_stream
+            .posts
+            .iter()
+            .find(|p| p.post_number == Some(1))
+            .or_else(|| topic.post_stream.posts.first())
+            .ok_or_else(|| anyhow!("topic {} has no posts", topic_id))?;
+        vec![(op.id, op.username.clone().unwrap_or_default())]
+    } else {
+        post_ids
+            .iter()
+            .map(|&id| {
+                let author = topic
+                    .post_stream
+                    .posts
+                    .iter()
+                    .find(|p| p.id == id)
+                    .and_then(|p| p.username.clone())
+                    .unwrap_or_default();
+                (id, author)
+            })
+            .collect()
+    };
+    let target_ids: Vec<u64> = targets.iter().map(|(id, _)| *id).collect();
+
+    if dry_run {
+        for (post_id, old_author) in &targets {
+            let old_author = if old_author.is_empty() {
+                "(unknown)"
+            } else {
+                old_author.as_str()
+            };
+            println!(
+                "[dry-run] {}: would reassign post {} in topic {}: {} → {}",
+                discourse.name, post_id, topic_id, old_author, username
+            );
+        }
+        return Ok(());
+    }
+
+    client.change_topic_owner(topic_id, username, &target_ids)?;
+    for (post_id, old_author) in &targets {
+        let old_author = if old_author.is_empty() {
+            "(unknown)"
+        } else {
+            old_author.as_str()
+        };
+        println!(
+            "post {} in topic {} reassigned: {} → {}",
+            post_id, topic_id, old_author, username
+        );
+    }
+    Ok(())
+}
+
 fn read_reply_input(local_path: Option<&Path>) -> Result<String> {
     let from_stdin = match local_path {
         None => true,

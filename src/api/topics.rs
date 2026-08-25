@@ -462,6 +462,38 @@ impl DiscourseClient {
         Ok(())
     }
 
+    /// Reassign the author of one or more posts in a topic via
+    /// `POST /t/{id}/change-owner.json`. `post_ids` must be non-empty; each
+    /// must belong to `topic_id`. `new_owner` is validated by the caller
+    /// beforehand (this endpoint's own error on an unknown username is not a
+    /// clear one).
+    pub fn change_topic_owner(
+        &self,
+        topic_id: u64,
+        new_owner: &str,
+        post_ids: &[u64],
+    ) -> Result<()> {
+        if post_ids.is_empty() {
+            return Err(anyhow!("change-owner requires at least one post ID"));
+        }
+        let path = format!("/t/{}/change-owner.json", topic_id);
+        let topic_id_str = topic_id.to_string();
+        let mut payload = vec![("topic_id", topic_id_str.as_str()), ("username", new_owner)];
+        let post_id_strs: Vec<String> = post_ids.iter().map(u64::to_string).collect();
+        for post_id in &post_id_strs {
+            payload.push(("post_ids[]", post_id.as_str()));
+        }
+        let response = self.send_retrying(|| Ok(self.post(&path)?.form(&payload)))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .context("reading change-owner response body")?;
+        if !status.is_success() {
+            return Err(http_error("change topic owner request", status, &text));
+        }
+        Ok(())
+    }
+
     /// Update a post by ID. `opts` controls Discourse's edit side effects
     /// (topic bump, revision history); [`PostEditOptions::default`] applies a
     /// normal edit.

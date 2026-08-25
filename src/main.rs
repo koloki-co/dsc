@@ -369,6 +369,15 @@ fn main() -> Result<()> {
                 topic_id,
                 tags,
             } => commands::topic::topic_tags(&config, &discourse, topic_id, &tags, dry_run),
+
+            TopicCommand::ChangeOwner {
+                discourse,
+                topic_id,
+                username,
+                post_ids,
+            } => commands::topic::topic_change_owner(
+                &config, &discourse, topic_id, &username, &post_ids, dry_run,
+            ),
         },
 
         Commands::Category { command } => match command {

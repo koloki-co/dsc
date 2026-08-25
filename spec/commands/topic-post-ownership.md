@@ -24,19 +24,19 @@ dsc topic change-owner <DISCOURSE> <TOPIC_ID> <USERNAME> [--post <POST_ID>]...
 
 ## Reference: API calls observed in the field
 
-Not yet captured - no `curl` workaround was attempted for the ACCM case; the Admin UI was used instead. Whoever picks this up should capture a real `PUT /t/{topic_id}/change-owner.json` request/response (redacted) before implementing, including the exact required body shape (`post_ids[]` vs a single `post_id`, and whether `username` or `new_owner` is the param name - this varies across Discourse API docs mirrors).
+Not captured against a live ACCM request/response - the Admin UI was used at the time, not `curl`. Phase 1 was implemented from Discourse's known route/controller shape instead: `POST /t/{topic_id}/change-owner.json` (not `PUT` - corrected from this spec's original placeholder) with form fields `topic_id`, `username`, and one or more repeated `post_ids[]`. Whoever next touches this command should confirm that shape against a real request/response (redacted) the first time it runs against a live forum, since it has not yet been exercised outside `--dry-run` against a disposable test topic.
 
 ## Phases
 
 ### Phase 1 - blocking
 
-- [ ] `dsc topic change-owner <discourse> <topic_id> <username>` - OP-only reassignment, the common case.
-- [ ] `--dry-run` support.
-- [ ] Username validation against the target Discourse before the mutating request.
+- [x] `dsc topic change-owner <discourse> <topic_id> <username>` - OP-only reassignment, the common case.
+- [x] `--dry-run` support.
+- [x] Username validation against the target Discourse before the mutating request.
 
 ### Phase 2 - iteration ergonomics
 
-- [ ] `--post <POST_ID>` repeatable flag for reassigning specific non-OP posts.
+- [x] `--post <POST_ID>` repeatable flag for reassigning specific non-OP posts.
 - [ ] Consider a corresponding `dsc post change-owner <discourse> <post_id> <username>` alias for the single-post case, mirroring the `topic`/`post` split used elsewhere (e.g. `topic pull --full` vs `post pull`).
 
 ### Phase 3 - nice to have
