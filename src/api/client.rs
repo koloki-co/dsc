@@ -7,12 +7,15 @@ use super::rate_limit::{RETRY_BUFFER, parse_rate_limit_wait, summarize_rate_limi
 use crate::config::DiscourseConfig;
 use crate::utils::normalize_baseurl;
 use anyhow::{Context, Result, anyhow};
-use reqwest::StatusCode;
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::{StatusCode, Url, redirect};
 use std::time::Duration;
 
 const MAX_RATE_LIMIT_RETRIES: u32 = 5;
+
+/// Cap on redirect hops within the forum's own host.
+const MAX_REDIRECTS: usize = 5;
 
 /// Cap on connection establishment; a dead/unreachable host should fail fast
 /// rather than hang the CLI indefinitely.
@@ -62,6 +65,7 @@ impl DiscourseClient {
 
         let client = Client::builder()
             .default_headers(headers)
+            .redirect(same_origin_redirect_policy(&baseurl))
             .connect_timeout(CONNECT_TIMEOUT)
             .build()
             .context("building http client")?;
@@ -335,6 +339,43 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+/// Follow redirects only within the forum's own origin.
+///
+/// The API key travels in a custom `Api-Key` header. reqwest strips only a
+/// fixed set of well-known credential headers (`Authorization`, `Cookie`,
+/// `Proxy-Authorization`, `WWW-Authenticate`) when a redirect crosses to a
+/// different host; a custom header is not on that list and would be replayed
+/// to wherever the forum points. A compromised or misconfigured Discourse
+/// could then harvest an admin key with a single 302, so anything leaving the
+/// configured origin is stopped and the 3xx handed back to the caller.
+fn same_origin_redirect_policy(baseurl: &str) -> redirect::Policy {
+    let origin = Url::parse(baseurl).ok();
+    redirect::Policy::custom(move |attempt| {
+        // An unparseable baseurl means we cannot prove same-origin, so never
+        // follow. Requests still work; only redirects are refused.
+        let Some(origin) = origin.as_ref() else {
+            return attempt.stop();
+        };
+        if attempt.previous().len() >= MAX_REDIRECTS {
+            return attempt.error("too many redirects");
+        }
+        if same_origin(origin, attempt.url()) {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
+}
+
+/// Compare scheme, host, and effective port. An `https` -> `http` downgrade on
+/// the same host counts as cross-origin, since it would put the key in
+/// cleartext.
+fn same_origin(a: &Url, b: &Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
 /// Convert Discourse's extensionless continuation URLs to JSON endpoints and
 /// reject absolute or otherwise untrusted paths.
 pub(super) fn json_page_path(path: &str) -> Result<String> {
@@ -351,6 +392,58 @@ pub(super) fn json_page_path(path: &str) -> Result<String> {
         Ok(route)
     } else {
         Ok(format!("{}?{}", route, query))
+    }
+}
+
+#[cfg(test)]
+mod redirect_tests {
+    use super::same_origin;
+    use reqwest::Url;
+
+    fn origins_match(a: &str, b: &str) -> bool {
+        same_origin(&Url::parse(a).unwrap(), &Url::parse(b).unwrap())
+    }
+
+    #[test]
+    fn follows_redirects_within_the_same_origin() {
+        assert!(origins_match(
+            "https://forum.example.com",
+            "https://forum.example.com/t/42.json"
+        ));
+        // Explicit default port is still the same origin.
+        assert!(origins_match(
+            "https://forum.example.com",
+            "https://forum.example.com:443/latest.json"
+        ));
+    }
+
+    #[test]
+    fn refuses_to_carry_the_api_key_off_origin() {
+        // A hostile forum 302ing to its own collection endpoint.
+        assert!(!origins_match(
+            "https://forum.example.com",
+            "https://attacker.example/steal"
+        ));
+        // Sibling subdomain is a different host.
+        assert!(!origins_match(
+            "https://forum.example.com",
+            "https://evil.forum.example.com/"
+        ));
+        // Suffix confusion: attacker registers a domain ending in the origin.
+        assert!(!origins_match(
+            "https://forum.example.com",
+            "https://forum.example.com.attacker.example/"
+        ));
+        // Downgrade to cleartext on the same host.
+        assert!(!origins_match(
+            "https://forum.example.com",
+            "http://forum.example.com/"
+        ));
+        // Different port on the same host.
+        assert!(!origins_match(
+            "https://forum.example.com",
+            "https://forum.example.com:8443/"
+        ));
     }
 }
 

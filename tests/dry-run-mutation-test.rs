@@ -127,7 +127,7 @@ fn get_body(path: &str) -> String {
         return r#"[{"id":2,"username":"tester","email":"t@example.com"}]"#.to_string();
     }
     if p.starts_with("/admin/users/") || p.starts_with("/u/") {
-        return r#"{"user":{"id":2,"username":"tester","email":"t@example.com"}}"#.to_string();
+        return r#"{"user":{"id":2,"username":"Tester","email":"t@example.com"}}"#.to_string();
     }
     if p == "/admin/customize/colors.json" {
         return r#"[{"id":19,"name":"Palette","colors":[],"base_scheme_id":null}]"#.to_string();
@@ -937,6 +937,41 @@ fn post_info_never_emits_raw_or_author() {
     assert_eq!(deleted["topic"]["title"], "Deleted topic");
     assert_eq!(deleted["deleted_at"], "2026-06-30T14:31:08Z");
     assert_eq!(deleted["topic"]["deleted_at"], "2026-06-25T00:00:00.000Z");
+}
+
+#[test]
+fn topic_change_owner_uses_the_canonical_username() {
+    let (baseurl, log) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = dir.path().join("dsc.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{baseurl}\"\napikey = \"mock-key\"\napi_username = \"tester\"\n"
+        ),
+    )
+    .expect("write config");
+
+    let (output, ok) = run_dsc(&["topic", "change-owner", "mock", "7", "tester"], &config);
+    assert!(ok, "topic change-owner failed: {output}");
+    assert!(
+        output.contains("tester → Tester"),
+        "unexpected output: {output}"
+    );
+
+    let requests = log.lock().expect("mock log poisoned");
+    let request = requests
+        .iter()
+        .find(|request| request.starts_with("POST /t/7/change-owner.json\n"))
+        .expect("change-owner request");
+    assert!(
+        request.contains("username=Tester"),
+        "unexpected request: {request}"
+    );
+    assert!(
+        request.contains("post_ids%5B%5D=1"),
+        "unexpected request: {request}"
+    );
 }
 
 #[test]

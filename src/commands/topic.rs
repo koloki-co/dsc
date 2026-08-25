@@ -579,12 +579,13 @@ pub fn topic_change_owner(
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
 
-    client.fetch_user_detail(username).with_context(|| {
+    let target_user = client.fetch_user_detail(username).with_context(|| {
         format!(
             "target user \"{}\" not found on {}",
             username, discourse.name
         )
     })?;
+    let canonical_username = target_user.username;
 
     let topic = if post_ids.is_empty() {
         client.fetch_topic(topic_id, false)?
@@ -604,13 +605,13 @@ pub fn topic_change_owner(
             };
             println!(
                 "[dry-run] {}: would reassign post {} in topic {}: {} → {}",
-                discourse.name, post_id, topic_id, old_author, username
+                discourse.name, post_id, topic_id, old_author, canonical_username
             );
         }
         return Ok(());
     }
 
-    client.change_topic_owner(topic_id, username, &target_ids)?;
+    client.change_topic_owner(topic_id, &canonical_username, &target_ids)?;
     for (post_id, old_author) in &targets {
         let old_author = if old_author.is_empty() {
             "(unknown)"
@@ -619,7 +620,7 @@ pub fn topic_change_owner(
         };
         println!(
             "post {} in topic {} reassigned: {} → {}",
-            post_id, topic_id, old_author, username
+            post_id, topic_id, old_author, canonical_username
         );
     }
     Ok(())

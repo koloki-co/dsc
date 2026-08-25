@@ -345,7 +345,12 @@ fn detect_inline_protocol() -> Option<InlineProtocol> {
 }
 
 fn print_inline_emojis(emojis: &[crate::api::CustomEmoji], protocol: InlineProtocol) -> Result<()> {
-    let client = reqwest::blocking::Client::new();
+    // Emoji URLs come from the forum, so a single slow or tarpitting host
+    // would otherwise hang the whole listing. Matches the download client.
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .context("building HTTP client for inline emoji preview")?;
     for emoji in emojis {
         let image = client.get(&emoji.url).send();
         let image = match image {

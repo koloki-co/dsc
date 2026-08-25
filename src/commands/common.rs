@@ -119,12 +119,34 @@ pub(crate) fn shell_quote(value: &str) -> String {
 }
 
 /// Replace command-template placeholders with shell-quoted values.
+///
+/// Substitution is single-pass: text emitted for one placeholder is never
+/// rescanned for another. Successive `str::replace` passes would rewrite the
+/// text a previous pass had just inserted, splitting its quoting open - and
+/// callers here deliberately pass the same value under two keys.
 pub(crate) fn render_shell_template(template: &str, replacements: &[(&str, &str)]) -> String {
-    let mut rendered = template.to_string();
-    for (key, value) in replacements {
-        rendered = rendered.replace(&format!("{{{}}}", key), &shell_quote(value));
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    'scan: while !rest.is_empty() {
+        let Some(open) = rest.find('{') else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..open]);
+        let at_brace = &rest[open..];
+        for (key, value) in replacements {
+            let token = format!("{{{}}}", key);
+            if let Some(tail) = at_brace.strip_prefix(token.as_str()) {
+                out.push_str(&shell_quote(value));
+                rest = tail;
+                continue 'scan;
+            }
+        }
+        // Not a recognised placeholder: emit the brace literally.
+        out.push('{');
+        rest = &at_brace[1..];
     }
-    rendered
+    out
 }
 
 /// Reject targets that SSH could interpret as options or multiple arguments.
@@ -314,6 +336,26 @@ mod tests {
         assert_eq!(
             render_shell_template("git clone {url}", &[("url", "repo; rm -rf /")]),
             "git clone 'repo; rm -rf /'"
+        );
+    }
+
+    #[test]
+    fn shell_template_does_not_rescan_substituted_text() {
+        // The plugin/theme call sites pass one value under two keys. A value
+        // that itself looks like the second placeholder must not be reopened
+        // by a later pass, or its quoting splits and the tail escapes.
+        let rendered = render_shell_template(
+            "git clone {url}",
+            &[("url", "{name}; id #"), ("name", "{name}; id #")],
+        );
+        assert_eq!(rendered, r"git clone '{name}; id #'");
+    }
+
+    #[test]
+    fn shell_template_leaves_unknown_placeholders_alone() {
+        assert_eq!(
+            render_shell_template("echo {url} {other}", &[("url", "x")]),
+            "echo 'x' {other}"
         );
     }
 

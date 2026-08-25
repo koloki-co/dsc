@@ -24,7 +24,7 @@ dsc topic change-owner <DISCOURSE> <TOPIC_ID> <USERNAME> [--post <POST_ID>]...
 
 ## Reference: API calls observed in the field
 
-Not captured against a live ACCM request/response - the Admin UI was used at the time, not `curl`. Phase 1 was implemented from Discourse's known route/controller shape instead: `POST /t/{topic_id}/change-owner.json` (not `PUT` - corrected from this spec's original placeholder) with form fields `topic_id`, `username`, and one or more repeated `post_ids[]`. Whoever next touches this command should confirm that shape against a real request/response (redacted) the first time it runs against a live forum, since it has not yet been exercised outside `--dry-run` against a disposable test topic.
+Verified against ACCM on 25 August 2026 using `dsc 0.15.0` and Discourse `2026.8.0-latest` (`2306592f8992255162cf7c7fc5055d5277b3d1a4`). `POST /t/{topic_id}/change-owner.json` with form fields `topic_id`, canonical-cased `username`, and one or more repeated `post_ids[]` returned success and reassigned ten topic opening posts. Discourse's endpoint performs a case-sensitive `User.find_by(username:)`: a lowercase username copied from a profile URL passed `dsc`'s user lookup but returned `422 {"failed":"FAILED"}` from the ownership endpoint. `dsc` must therefore send the canonical username returned by its validation lookup rather than the caller's original spelling.
 
 ## Phases
 

@@ -22,6 +22,13 @@ demo-dsc.toml
 ### Private notes
 .private/
 
+### Command output that can carry personal data or forum contents
+# SAR bundles (`dsc sar`) hold subject-access data including private messages;
+# backup archives (`dsc backup pull`) hold the whole forum database.
+/sar-*/
+*.tar
+*.tar.gz
+
 ### Reference PDFs / third-party copyrighted material (keep out of the repo)
 *.pdf
 

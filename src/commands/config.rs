@@ -192,6 +192,20 @@ fn check_worker_count(max: Option<usize>, count: usize) -> usize {
         .min(count.max(1))
 }
 
+/// True when the configured baseurl would put the API key on the wire in
+/// cleartext. Loopback is exempt: a local dev forum on plain HTTP is normal
+/// and warning about it would just train people to ignore the warning.
+fn sends_key_in_cleartext(baseurl: &str) -> bool {
+    // URL schemes are case-insensitive, so normalise before matching.
+    let trimmed = baseurl.trim();
+    let lowered = trimmed.to_ascii_lowercase();
+    let Some(rest) = lowered.strip_prefix("http://") else {
+        return false;
+    };
+    let host = rest.split(['/', ':', '?', '#']).next().unwrap_or("");
+    !matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")
+}
+
 fn check_api(discourse: &DiscourseConfig) -> CheckStatus {
     if discourse.baseurl.trim().is_empty() {
         return CheckStatus {
@@ -214,7 +228,14 @@ fn check_api(discourse: &DiscourseConfig) -> CheckStatus {
             if status.is_success() {
                 CheckStatus {
                     ok: true,
-                    detail: format!("{} OK", status.as_u16()),
+                    detail: if sends_key_in_cleartext(&discourse.baseurl) {
+                        format!(
+                            "{} OK - warning: baseurl is http://, so the API key is sent in cleartext",
+                            status.as_u16()
+                        )
+                    } else {
+                        format!("{} OK", status.as_u16())
+                    },
                 }
             } else if status == reqwest::StatusCode::UNAUTHORIZED
                 || status == reqwest::StatusCode::FORBIDDEN
@@ -286,8 +307,22 @@ fn check_ssh(host: &str) -> CheckStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_api, check_worker_count};
+    use super::{check_api, check_worker_count, sends_key_in_cleartext};
     use crate::config::DiscourseConfig;
+
+    #[test]
+    fn flags_plaintext_http_baseurls() {
+        assert!(sends_key_in_cleartext("http://forum.example.com"));
+        assert!(sends_key_in_cleartext("HTTP://Forum.Example.Com/"));
+        assert!(sends_key_in_cleartext("http://forum.example.com:8080/x"));
+    }
+
+    #[test]
+    fn accepts_https_and_loopback_without_warning() {
+        assert!(!sends_key_in_cleartext("https://forum.example.com"));
+        assert!(!sends_key_in_cleartext("http://localhost:3000"));
+        assert!(!sends_key_in_cleartext("http://127.0.0.1:4200/"));
+    }
 
     #[test]
     fn default_check_workers_is_eight() {
