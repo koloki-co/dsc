@@ -5,6 +5,50 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.16.0] - 2026-08-26
+
+### Bug fixes
+
+- **api**: Cap buffered response bodies (R50) ([85f7e64](https://github.com/koloki-co/dsc/commit/85f7e64a2099e2ea298351005ca6c304b73e202c))
+
+- **security**: Scope API redirects to the forum's own origin (R50) ([b32ffe3](https://github.com/koloki-co/dsc/commit/b32ffe33cfacc4bd5020fe12b0a5c1f266b803d8))
+
+- **completions**: Complete optional discourse arguments ([#110](https://github.com/koloki-co/dsc/issues/110)) ([6ce3ed0](https://github.com/koloki-co/dsc/commit/6ce3ed077edc47d630af01d664b730f11924bb4b))
+
+### Build
+
+- **deps**: Bump taiki-e/install-action ([#115](https://github.com/koloki-co/dsc/issues/115)) ([f59eac8](https://github.com/koloki-co/dsc/commit/f59eac885fb9a9018df4632c307ce64be2f130ef))
+
+- **deps**: Bump zensical in the routine-minor-and-patch group ([#114](https://github.com/koloki-co/dsc/issues/114)) ([730a5de](https://github.com/koloki-co/dsc/commit/730a5dedf4614aa21d84e9f5fc5180676bae202c))
+
+- **deps**: Bump the routine-minor-and-patch group with 2 updates ([#113](https://github.com/koloki-co/dsc/issues/113)) ([7672986](https://github.com/koloki-co/dsc/commit/7672986ac6b931de416743ad59dbd0a95caef6a0))
+
+### Documentation
+
+- **roadmap**: Correct release status, add R51 and R52 ([995e247](https://github.com/koloki-co/dsc/commit/995e2471d202765687ee4e6be19c983856a6d9cb))
+
+- State alpha status on the README and docs landing page ([e4be3d2](https://github.com/koloki-co/dsc/commit/e4be3d218913d19bfe7dbf22a6b5229a9037cd60))
+
+- Link the Meta announcement and align the security contact ([218da60](https://github.com/koloki-co/dsc/commit/218da60498a1c58955ddd25541f075ec4db12350))
+
+- **roadmap**: Decouple the Meta announcement from v1.0.0 ([e11ecf1](https://github.com/koloki-co/dsc/commit/e11ecf14ee13987b078087934ba71a4c7822068a))
+
+- **topic**: Specify post ownership reassignment ([3c74a82](https://github.com/koloki-co/dsc/commit/3c74a82123638975b65a23dad7a8c1326bff932e))
+
+### Features
+
+- **post**: Add dsc post change-owner single-post alias (R49 Phase 2) ([#112](https://github.com/koloki-co/dsc/issues/112)) ([9f38d3c](https://github.com/koloki-co/dsc/commit/9f38d3c655de6c772603898a87a6ab33fe118b4b))
+
+- **topic**: Add dsc topic change-owner (R49 Phase 1+) ([#111](https://github.com/koloki-co/dsc/issues/111)) ([e989895](https://github.com/koloki-co/dsc/commit/e9898951703c17bea957d49f864f0070f702de1d))
+
+- **render**: Add --strict and --list-vars to dsc render (R29 Phase 2) ([#109](https://github.com/koloki-co/dsc/issues/109)) ([a5958c8](https://github.com/koloki-co/dsc/commit/a5958c8602a2dfb83c7d8bfa7c2050ca0d0dbd67))
+
+- **fleet**: Unify fleet selector across backup/search/user (R48) ([#108](https://github.com/koloki-co/dsc/issues/108)) ([7710472](https://github.com/koloki-co/dsc/commit/771047231576f852a1515a1079e89ebd368865df))
+
+- **backup**: Add --reuse-user key rotation to setup-s3 (R13 Phase 2) ([#107](https://github.com/koloki-co/dsc/issues/107)) ([56b025a](https://github.com/koloki-co/dsc/commit/56b025a8ca9c88acdf4eaf79beb9d0f1427c2872))
+
+- **render**: Add `dsc render` for template placeholder substitution (R29 Phase 1) ([#106](https://github.com/koloki-co/dsc/issues/106)) ([1ed3208](https://github.com/koloki-co/dsc/commit/1ed3208399d92c5775d79b75d4f93fc97d6ace9e))
+
 ## [0.15.0] - 2026-08-20
 
 ### Bug fixes
