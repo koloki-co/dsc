@@ -405,9 +405,7 @@ mod tests {
             "-c",
             "printf 'launcher complete\\n'; printf 'From git.example/repo\\n' >&2; exit 0",
         ]);
-        let stdout =
-            run_command_with_tail(success, "forum", "Discourse rebuild", "testing", 0).unwrap();
-        assert_eq!(stdout, "launcher complete\n");
+        run_command_with_tail(success, "forum", "Discourse rebuild", "testing", 0).unwrap();
 
         let mut failure = Command::new("sh");
         failure.args([
@@ -1137,7 +1135,7 @@ fn run_ssh_command_with_tail(
     step: &str,
     message: &str,
     tail_lines: usize,
-) -> Result<String> {
+) -> Result<()> {
     let mut command_process = build_ssh_command(target, &[])?;
     command_process.arg(command);
     run_command_with_tail(command_process, target, step, message, tail_lines)
@@ -1149,7 +1147,7 @@ fn run_command_with_tail(
     step: &str,
     message: &str,
     tail_lines: usize,
-) -> Result<String> {
+) -> Result<()> {
     let use_progress = io::stderr().is_terminal();
     let pb = if use_progress {
         ProgressBar::new_spinner()
@@ -1172,17 +1170,24 @@ fn run_command_with_tail(
     let stdout = child.stdout.take().context("missing stdout")?;
     let stderr = child.stderr.take().context("missing stderr")?;
 
-    let (tx, rx) = mpsc::channel::<LineEvent>();
+    // Bounded channel so a slow consumer applies backpressure to the reader
+    // threads instead of buffering every line in memory.
+    let (tx, rx) = mpsc::sync_channel::<LineEvent>(64);
     let tx_out = tx.clone();
     thread::spawn(move || {
         let reader = BufReader::new(stdout);
         for line in reader.lines() {
             match line {
                 Ok(line) => {
-                    let _ = tx_out.send(LineEvent {
-                        is_stderr: false,
-                        line,
-                    });
+                    if tx_out
+                        .send(LineEvent {
+                            is_stderr: false,
+                            line,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
                 Err(_) => break,
             }
@@ -1195,10 +1200,15 @@ fn run_command_with_tail(
         for line in reader.lines() {
             match line {
                 Ok(line) => {
-                    let _ = tx_err.send(LineEvent {
-                        is_stderr: true,
-                        line,
-                    });
+                    if tx_err
+                        .send(LineEvent {
+                            is_stderr: true,
+                            line,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
                 Err(_) => break,
             }
@@ -1207,31 +1217,38 @@ fn run_command_with_tail(
 
     drop(tx);
 
-    let mut stdout_buf = String::new();
-    let mut stderr_buf = String::new();
-    let mut tail: VecDeque<String> = VecDeque::new();
+    // Bounded diagnostic rings: retain only the last N lines per stream so a
+    // multi-thousand-line rebuild cannot grow memory without limit. The
+    // failure path reads from these rings; the success path discards them.
+    let mut stdout_ring: VecDeque<String> = VecDeque::with_capacity(MAX_REMOTE_DIAGNOSTIC_LINES);
+    let mut stderr_ring: VecDeque<String> = VecDeque::with_capacity(MAX_REMOTE_DIAGNOSTIC_LINES);
+    let mut progress_tail: VecDeque<String> = VecDeque::with_capacity(tail_lines.max(1));
     let base = format!("[{}] {}", target, message);
     pb.set_message(base.clone());
 
     loop {
         match rx.recv_timeout(Duration::from_millis(200)) {
             Ok(event) => {
-                if event.is_stderr {
-                    stderr_buf.push_str(&event.line);
-                    stderr_buf.push('\n');
+                let ring = if event.is_stderr {
+                    &mut stderr_ring
                 } else {
-                    stdout_buf.push_str(&event.line);
-                    stdout_buf.push('\n');
+                    &mut stdout_ring
+                };
+                if ring.len() >= MAX_REMOTE_DIAGNOSTIC_LINES {
+                    ring.pop_front();
                 }
+                ring.push_back(event.line.clone());
 
-                if tail_lines > 0 {
-                    if tail.len() == tail_lines {
-                        tail.pop_front();
+                // Only rebuild the progress message when the bar is visible;
+                // in non-interactive output (CI, pipes) the work is pure waste.
+                if use_progress && tail_lines > 0 {
+                    if progress_tail.len() == tail_lines {
+                        progress_tail.pop_front();
                     }
-                    tail.push_back(event.line);
+                    progress_tail.push_back(event.line);
 
                     let mut msg = base.clone();
-                    for line in &tail {
+                    for line in &progress_tail {
                         msg.push('\n');
                         msg.push_str("  ");
                         msg.push_str(line);
@@ -1247,16 +1264,16 @@ fn run_command_with_tail(
     let status = child.wait().context("waiting for ssh command")?;
     pb.finish_and_clear();
 
-    ensure_ssh_success(
+    ensure_ssh_success_from_rings(
         step,
         target,
         status.success(),
         status.code(),
-        &stdout_buf,
-        &stderr_buf,
+        &stdout_ring,
+        &stderr_ring,
     )?;
 
-    Ok(stdout_buf)
+    Ok(())
 }
 
 fn ensure_ssh_success(
@@ -1278,6 +1295,51 @@ fn ensure_ssh_success(
     append_remote_diagnostic(&mut message, "stdout", stdout);
     append_remote_diagnostic(&mut message, "stderr", stderr);
     Err(anyhow!(message))
+}
+
+/// Like [`ensure_ssh_success`] but reads from bounded diagnostic rings
+/// instead of unbounded strings. The rings already contain only the last
+/// [`MAX_REMOTE_DIAGNOSTIC_LINES`] lines, so the tail is a simple join.
+fn ensure_ssh_success_from_rings(
+    step: &str,
+    target: &str,
+    success: bool,
+    exit_code: Option<i32>,
+    stdout_ring: &VecDeque<String>,
+    stderr_ring: &VecDeque<String>,
+) -> Result<()> {
+    if success {
+        return Ok(());
+    }
+
+    let status = exit_code
+        .map(|code| format!("ssh exit {code}"))
+        .unwrap_or_else(|| "ssh terminated by signal".to_string());
+    let mut message = format!("{step} failed on {target} ({status})");
+    append_ring_diagnostic(&mut message, "stdout", stdout_ring);
+    append_ring_diagnostic(&mut message, "stderr", stderr_ring);
+    Err(anyhow!(message))
+}
+
+fn append_ring_diagnostic(message: &mut String, stream: &str, ring: &VecDeque<String>) {
+    if ring.is_empty() {
+        return;
+    }
+    let tail = ring.iter().cloned().collect::<Vec<_>>().join("\n");
+    let tail = if tail.chars().count() <= MAX_REMOTE_DIAGNOSTIC_CHARS {
+        tail
+    } else {
+        let truncated: String = tail
+            .chars()
+            .rev()
+            .take(MAX_REMOTE_DIAGNOSTIC_CHARS)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        format!("[truncated]\n{truncated}")
+    };
+    message.push_str(&format!("\n{stream} (tail):\n{tail}"));
 }
 
 fn append_remote_diagnostic(message: &mut String, stream: &str, output: &str) {

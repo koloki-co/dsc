@@ -108,6 +108,8 @@ The streaming runner correctly drains stdout and stderr concurrently, but sends 
 
 **Recommendation:** Retain fixed-size diagnostic rings per stream and use a bounded channel or direct synchronized tail updates. Skip progress-message reconstruction when progress is hidden. Use the streaming runner for all long SSH operations and capture full output only for commands whose output is intentionally parsed and known to be small.
 
+**Addressed 2026-08-26 (R52):** the streaming runner now retains only the last `MAX_REMOTE_DIAGNOSTIC_LINES` (20) lines per stream in `VecDeque` rings instead of unbounded `String` buffers, uses a bounded `sync_channel(64)` so a slow consumer applies backpressure to the reader threads, and skips progress-message reconstruction when the progress bar is hidden (non-interactive output). The failure path reads from the rings directly. Both production callers (OS update and Discourse rebuild) already discarded the returned `Ok(String)`, so the return type is now `Ok(())`. The generic `run_ssh_command`/`run_ssh_command_named`/`run_ssh_command_combined_named` helpers (which use `Command::output()`) are unchanged for now; the notable remaining concern is `app.rs:240-246` which runs `./launcher rebuild app` through the fully-buffering `run_ssh_command` - routing that through the streaming runner is a follow-up.
+
 ### P9 - High - SAR export combines serial N+1 requests with unbounded whole-export retention
 
 **Evidence:** `src/commands/sar.rs:97-135,214-270`.
