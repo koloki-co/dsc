@@ -642,6 +642,19 @@ fn change_owner_targets(
         return Ok(vec![(op.id, op.username.clone().unwrap_or_default())]);
     }
 
+    // `stream` is the topic's complete list of post IDs, so it is the
+    // authoritative membership check - and unlike the loaded posts it still
+    // lists posts the detail fetch declines to return (soft-deleted posts,
+    // which `dsc post info` deliberately surfaces). Validating against what
+    // we happened to fetch would reject those as "not in this topic", which
+    // is both false and confusing. Fall back to the loaded posts only when a
+    // response carries no stream.
+    let members: std::collections::HashSet<u64> = if topic.post_stream.stream.is_empty() {
+        topic.post_stream.posts.iter().map(|post| post.id).collect()
+    } else {
+        topic.post_stream.stream.iter().copied().collect()
+    };
+
     let mut seen = std::collections::HashSet::new();
     post_ids
         .iter()
@@ -649,13 +662,24 @@ fn change_owner_targets(
             if !seen.insert(post_id) {
                 return Err(anyhow!("post {} was specified more than once", post_id));
             }
-            let post = topic
+            if !members.contains(&post_id) {
+                return Err(anyhow!(
+                    "post {} does not belong to topic {}",
+                    post_id,
+                    topic_id
+                ));
+            }
+            // Author display is best-effort: a post that is in the topic but
+            // absent from the fetched detail prints as "(unknown)" rather
+            // than failing the whole reassignment.
+            let author = topic
                 .post_stream
                 .posts
                 .iter()
                 .find(|post| post.id == post_id)
-                .ok_or_else(|| anyhow!("post {} does not belong to topic {}", post_id, topic_id))?;
-            Ok((post.id, post.username.clone().unwrap_or_default()))
+                .and_then(|post| post.username.clone())
+                .unwrap_or_default();
+            Ok((post_id, author))
         })
         .collect()
 }
@@ -751,6 +775,39 @@ mod tests {
             vec![1],
         );
 
+        let err = change_owner_targets(&topic, &[2], 42).unwrap_err();
+        assert_eq!(err.to_string(), "post 2 does not belong to topic 42");
+    }
+
+    #[test]
+    fn change_owner_accepts_stream_members_the_detail_fetch_omitted() {
+        // A soft-deleted post is listed in the stream but not returned among
+        // the fetched posts. It is still in the topic, so reassigning it must
+        // work; the author simply prints as unknown.
+        let topic = make_topic(
+            None,
+            vec![make_post(1, Some(1), Some("op"), None, None)],
+            vec![1, 2],
+        );
+
+        assert_eq!(
+            change_owner_targets(&topic, &[2], 42).unwrap(),
+            vec![(2, String::new())]
+        );
+    }
+
+    #[test]
+    fn change_owner_falls_back_to_loaded_posts_without_a_stream() {
+        let topic = make_topic(
+            None,
+            vec![make_post(1, Some(1), Some("op"), None, None)],
+            vec![],
+        );
+
+        assert_eq!(
+            change_owner_targets(&topic, &[1], 42).unwrap(),
+            vec![(1, "op".to_string())]
+        );
         let err = change_owner_targets(&topic, &[2], 42).unwrap_err();
         assert_eq!(err.to_string(), "post 2 does not belong to topic 42");
     }
