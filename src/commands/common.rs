@@ -176,6 +176,44 @@ where
     })
 }
 
+/// Discover site titles for a list of URLs in parallel, preserving input
+/// order. Each URL is best-effort: a failed lookup returns `None`. Uses a
+/// bounded worker pool so one unreachable URL does not block the rest.
+pub fn fetch_fullnames(urls: &[String]) -> Vec<Option<String>> {
+    let workers = fleet_worker_count(None, urls.len(), 8, false);
+    if workers <= 1 || urls.len() <= 1 {
+        return urls.iter().map(|u| fetch_fullname_from_url(u)).collect();
+    }
+
+    let queue: Arc<Mutex<VecDeque<usize>>> = Arc::new(Mutex::new((0..urls.len()).collect()));
+    let (tx, rx) = std::sync::mpsc::channel::<(usize, Option<String>)>();
+
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            let queue = Arc::clone(&queue);
+            let tx = tx.clone();
+            s.spawn(move || {
+                loop {
+                    let next = queue.lock().unwrap().pop_front();
+                    let Some(idx) = next else { break };
+                    let title = fetch_fullname_from_url(&urls[idx]);
+                    if tx.send((idx, title)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(tx);
+
+        let mut results: Vec<(usize, Option<String>)> = Vec::with_capacity(urls.len());
+        for (idx, title) in rx {
+            results.push((idx, title));
+        }
+        results.sort_by_key(|(idx, _)| *idx);
+        results.into_iter().map(|(_, t)| t).collect()
+    })
+}
+
 pub fn ensure_api_credentials(discourse: &DiscourseConfig) -> Result<()> {
     let apikey = discourse.apikey.as_deref().unwrap_or("").trim();
     let api_username = discourse.api_username.as_deref().unwrap_or("").trim();

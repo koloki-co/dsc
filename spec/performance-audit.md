@@ -154,6 +154,8 @@ Emoji pull downloads every image serially with a 30-second timeout per image. On
 
 **Recommendation:** Extract a shared bounded fleet executor based on `config check`, with deterministic result ordering and fastest-first text progress. Use it by default for read-only audits. Consider explicit bounded parallelism for writes only after preserving complete dry-run plans and clear per-forum outcomes.
 
+**Addressed 2026-08-26 (R52):** a shared `run_fleet` executor in `src/commands/common.rs` now backs `setting audit`, `app env audit`, and `search all`, using `std::thread::scope` with a bounded shared-queue worker pool. `fleet_worker_count` centralises the width policy with an absolute ceiling of 32 (P28). The duplicated `matches_tag_filter` implementations are retired in favour of `selected_discourses`. The backup-health configuration phase remains serial for now; converting it is a follow-up since it has a two-phase structure (config discovery then S3 scan) that needs the shared executor applied to each phase separately.
+
 ### P13 - Medium - Backup health materializes whole S3 inventories and scans buckets serially
 
 **Evidence:** `src/commands/backup.rs:226-271,405-469`.
@@ -333,6 +335,8 @@ Each imported URL, and each tidy entry missing `fullname`, constructs a temporar
 **Impact:** Bulk onboarding runtime is the sum of every site's latency. Fifty unreachable URLs can consume many minutes even with the ten-second connection timeout.
 
 **Recommendation:** Resolve independent titles through a bounded worker pool, then restore input/config order before writing. Continue treating title lookup as best effort.
+
+**Addressed 2026-08-26 (R52):** `fetch_fullnames` in `src/commands/common.rs` runs title discovery through a bounded worker pool (same pattern as `run_fleet`). `import` (text and CSV modes) and `list tidy` now batch URL discovery through it, restoring input order before writing. One unreachable URL no longer blocks the rest.
 
 ### P31 - Medium - Some DELETE operations bypass the shared 429 retry path
 

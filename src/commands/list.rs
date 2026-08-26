@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::cli::OutputFormat;
-use crate::commands::common::{fetch_fullname_from_url, open_url, parse_tags};
+use crate::commands::common::{fetch_fullnames, open_url, parse_tags};
 use crate::config::{Config, DiscourseConfig, save_config};
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -69,7 +69,15 @@ pub fn list_tidy(config_path: &Path, config: &mut Config) -> Result<()> {
         }
     }
 
-    // Insert placeholder values for template keys when unset.
+    // Discover missing fullnames in parallel rather than one URL at a time.
+    let urls_to_discover: Vec<String> = config
+        .discourse
+        .iter()
+        .filter(|d| d.fullname.is_none() && !d.baseurl.trim().is_empty())
+        .map(|d| d.baseurl.clone())
+        .collect();
+    let fullnames = fetch_fullnames(&urls_to_discover);
+    let mut fn_idx = 0;
     for d in &mut config.discourse {
         if d.apikey.is_none() {
             d.apikey = Some("".to_string());
@@ -87,7 +95,8 @@ pub fn list_tidy(config_path: &Path, config: &mut Config) -> Result<()> {
             d.ssh_host = Some("".to_string());
         }
         if d.fullname.is_none() && !d.baseurl.trim().is_empty() {
-            d.fullname = fetch_fullname_from_url(&d.baseurl);
+            d.fullname = fullnames.get(fn_idx).cloned().flatten();
+            fn_idx += 1;
         }
     }
 
