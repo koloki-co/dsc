@@ -122,6 +122,8 @@ The command also retains all action rows, all raw post bodies in `posts_json`, a
 
 **Recommendation:** Combine action types in one pagination walk and partition locally. Fetch independent post and message details through a small bounded worker pool. Stream JSON elements directly to a private atomic output with `serde_json::Serializer` and drop each raw body after its JSON and Markdown representations have been written.
 
+**Addressed 2026-08-26 (R52):** post body fetches now run through a bounded worker pool (`fetch_post_raws_parallel`, 6 workers) so one rate-limited response does not block the rest. `posts.json` is streamed to disk element-by-element via `serde_json::to_writer` rather than building a `Vec<Value>` and calling `to_string_pretty`, so memory holds at most one post body at a time. `post_actions` and the raw-body map are explicitly dropped before the likes walk begins, and `likes`/`likes_json` are dropped after `activity.json` is written. The two action-type pagination walks (posts then likes) remain serial since they use different filter sets; combining them is a follow-up. PM topic fetches remain serial; parallelising them is a follow-up.
+
 ### P10 - Medium - Category content sync serializes topic reads and repeats local parsing and linear scans
 
 **Evidence:** `src/commands/category.rs:114-167,248-340,580-650`.

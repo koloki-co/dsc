@@ -9,10 +9,11 @@ use crate::utils::{
     atomic_write_private, current_utc_iso8601, ensure_private_dir, normalize_baseurl, slugify,
     write_markdown_private,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::{Value, json};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 /// The person a SAR bundle is about, resolved from a username or email.
 struct Subject {
@@ -102,11 +103,27 @@ pub fn sar(
     )?;
     let posts_dir = dir.join("posts");
     ensure_private_dir(&posts_dir)?;
-    let mut posts_json: Vec<Value> = Vec::with_capacity(post_actions.len());
-    for action in &post_actions {
+
+    // Fetch raw bodies in parallel through a bounded pool so one
+    // rate-limited response does not block the rest.
+    let post_ids: Vec<u64> = post_actions.iter().filter_map(|a| a.post_id).collect();
+    let raws = fetch_post_raws_parallel(&client, &post_ids, 6);
+
+    // Stream posts.json to disk element by element rather than building a
+    // Vec<Value> and serializing the whole thing at once, so memory holds
+    // at most one post body at a time.
+    let posts_json_path = dir.join("posts.json");
+    let mut file = std::fs::File::create(&posts_json_path)
+        .with_context(|| format!("creating {}", posts_json_path.display()))?;
+    use std::io::Write;
+    file.write_all(b"[\n")?;
+    for (i, action) in post_actions.iter().enumerate() {
+        if i > 0 {
+            file.write_all(b",\n")?;
+        }
         let raw = action
             .post_id
-            .and_then(|pid| client.fetch_post_raw(pid).ok().flatten());
+            .and_then(|pid| raws.get(&pid).cloned().flatten());
         if let (Some(pid), Some(body)) = (action.post_id, raw.as_deref()) {
             let stem = action
                 .slug
@@ -116,24 +133,35 @@ pub fn sar(
             let md = render_post_md(action, body, &base);
             write_markdown_private(&posts_dir.join(format!("{}-{}.md", stem, pid)), &md, true)?;
         }
-        posts_json.push(json!({
+        let entry = json!({
             "post_id": action.post_id,
             "topic_id": action.topic_id,
             "title": action.title,
             "url": post_url(&base, action),
             "created_at": action.created_at,
             "raw": raw,
-        }));
+        });
+        serde_json::to_writer(&mut file, &entry)?;
     }
-    write_json(&dir.join("posts.json"), &Value::Array(posts_json))?;
+    file.write_all(b"\n]")?;
+    drop(file);
+
+    // Free the post-action metadata and the raw-body map before starting
+    // the likes walk, which itself can be large.
+    let posts_count = post_actions.len();
+    drop(post_actions);
+    drop(raws);
 
     // Likes given.
     let likes = collect_all_actions(&client, &subject.username, &[ACTION_LIKE])?;
     let likes_json: Vec<Value> = likes.iter().map(action_to_json).collect();
+    let likes_count = likes.len();
     write_json(
         &dir.join("activity.json"),
         &json!({ "likes_given": likes_json }),
     )?;
+    drop(likes);
+    drop(likes_json);
 
     // Private messages (opt-in; third-party data).
     let message_count = if include_messages {
@@ -143,8 +171,8 @@ pub fn sar(
     };
 
     let counts = SectionCounts {
-        posts: post_actions.len(),
-        likes: likes.len(),
+        posts: posts_count,
+        likes: likes_count,
         groups: groups.as_array().map(|a| a.len()).unwrap_or(0),
         messages: message_count,
     };
@@ -235,6 +263,50 @@ fn collect_all_actions(
         }
     }
     Ok(all)
+}
+
+/// Fetch raw post bodies for a list of post IDs through a bounded worker
+/// pool, so one slow or rate-limited response does not block the rest.
+/// Returns a map of post_id -> raw body (or None if the fetch failed).
+fn fetch_post_raws_parallel(
+    client: &DiscourseClient,
+    post_ids: &[u64],
+    workers: usize,
+) -> HashMap<u64, Option<String>> {
+    if workers <= 1 || post_ids.len() <= 1 {
+        return post_ids
+            .iter()
+            .map(|&pid| (pid, client.fetch_post_raw(pid).ok().flatten()))
+            .collect();
+    }
+
+    let queue: Arc<Mutex<VecDeque<u64>>> = Arc::new(Mutex::new(post_ids.iter().copied().collect()));
+    let (tx, rx) = std::sync::mpsc::channel::<(u64, Option<String>)>();
+
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            let queue = Arc::clone(&queue);
+            let tx = tx.clone();
+            let client = client.clone();
+            s.spawn(move || {
+                loop {
+                    let next = queue.lock().unwrap().pop_front();
+                    let Some(pid) = next else { break };
+                    let raw = client.fetch_post_raw(pid).ok().flatten();
+                    if tx.send((pid, raw)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(tx);
+
+        let mut results: HashMap<u64, Option<String>> = HashMap::with_capacity(post_ids.len());
+        for (pid, raw) in rx {
+            results.insert(pid, raw);
+        }
+        results
+    })
 }
 
 fn collect_messages(client: &DiscourseClient, username: &str, dir: &Path) -> Result<usize> {
