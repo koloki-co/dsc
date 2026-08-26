@@ -18,13 +18,15 @@ The built surface, grouped - see CHANGELOG for the full per-release detail.
 
 ## 1.0 launch checklist
 
-Required before announcing on [meta.discourse.org](https://meta.discourse.org). The stable `RXX` identifiers below are intentionally non-contiguous: completed items may be retained as checked entries or summarised above, but are never renumbered or reused.
+Work toward `v1.0.0`. The stable `RXX` identifiers below are intentionally non-contiguous: completed items may be retained as checked entries or summarised above, but are never renumbered or reused.
+
+**Decision, 2026-08-26: the Meta announcement is decoupled from `v1.0.0`.** `dsc` is announced as a pre-1.0, explicitly alpha tool. This is honest about where it is, sets expectations about breaking changes, and does not require the contract items below to land first. [compatibility](../docs/compatibility.md) already scopes the CLI contract to "takes effect with `v1.0.0`; pre-1.0 releases remain subject to change", so no documentation change is needed to announce at `0.x`.
 
 ### Contract, documentation, and launch package
 
-- [ ] **R3 - Record an asciinema** (~30s) of the pull → edit → push → diff loop; embed in README.
-- [ ] **R5 - Pre-circulate the Meta post** to a couple of Discourse regulars before posting.
-- [ ] **R2 - Cut `v1.0.0`** from a fresh, clean, synchronised worktree after this checklist passes, with a release rehearsal (`s/test-fmt-clippy`, docs build, `cargo audit`, `cargo publish --dry-run`) and generated changelog review.
+- [ ] **R3 - Record an asciinema** (~30s) of the pull → edit → push → diff loop; embed in README. Not a blocker for the pre-1.0 announcement; the post carries the loop as a shell transcript instead.
+- [x] **R5 - Pre-circulate the Meta post** - declined 2026-08-26. The stated reason is that advance notice to CDCK-adjacent readers would hand over a complete, tested feature set ahead of publication. Recorded with the counter-argument for whoever revisits this: the repository, `spec/`, docs site, and crates.io release are already public, so pre-circulation adds almost no marginal disclosure, and GPL-2.0-or-later already makes lifting the *implementation* awkward for an MIT-licensed core. The genuine cost of declining is that a post naming a CDCK product, written by an official Discourse Partner, ships without a tone review. A non-Discourse technical reader would supply that without the perceived disclosure risk.
+- [ ] **R2 - Cut `v1.0.0`** from a fresh, clean, synchronised worktree once the contract items above are settled, with a release rehearsal (`s/test-fmt-clippy`, docs build, `cargo audit`, `cargo publish --dry-run`) and generated changelog review. No longer gates the announcement.
 
 ## Planned
 
