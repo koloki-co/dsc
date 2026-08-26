@@ -132,6 +132,8 @@ Category pull fetches every topic detail one at a time before writing its file. 
 
 **Recommendation:** Use bounded concurrency for the read-only topic-detail phase while keeping mutations serialized. Build ID, slug, and normalized-title indexes once. Parse each local file once and retain the metadata/body needed by link discovery and planning.
 
+**Partially addressed 2026-08-26 (R52):** topic-ID membership checks in the planning loop are now O(1) via a `HashSet<u64>` index built once after the category fetch, replacing the `topics.iter().any(|t| t.id == id)` linear scan per file. `local_topic_links` now builds a `HashMap<u64, &TopicSummary>` index for its ID lookup, replacing a second linear scan per file. Bounded concurrency for the serial topic-detail fetches in `category pull` and `category push` planning, and the double local-file parse under `--rewrite-links`, remain outstanding.
+
 ### P11 - Medium - Emoji downloads are serial, and inline rendering has no request timeout
 
 **Evidence:** `src/commands/emoji.rs:31-104,347-379`.
@@ -185,6 +187,8 @@ The test-backup verifier starts `aws s3 ls --recursive` every ten seconds for up
 **Impact:** Forums with a long deletion history incur `D` additional serial requests plus list pages. The safety verification is useful, but it is unnecessarily applied to rows that will not be returned.
 
 **Recommendation:** Apply title/slug filtering before detail verification. Preserve verification for candidates and run those independent reads through a small bounded pool.
+
+**Addressed 2026-08-26 (R52):** the query filter (`deleted_topic_matches`) now runs before the detail fetch, so a query matching one topic no longer pays a detail request for every other deleted topic on the page. The safety verification (deleted-state and category check) still runs, but only on candidates that passed the filter. Bounded concurrency for the remaining candidate fetches is a follow-up.
 
 ### P16 - Medium - Multipart uploads reread and buffer complete files on retries, and emoji endpoint negotiation repeats per file
 

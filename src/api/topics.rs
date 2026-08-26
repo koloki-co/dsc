@@ -276,6 +276,12 @@ impl DiscourseClient {
                 if !seen_topics.insert(row.id) {
                     continue;
                 }
+                // Filter on title/slug first - both are already in the row -
+                // so a query matching one topic doesn't pay a detail request
+                // for every other deleted topic on the page.
+                if !deleted_topic_matches(&row, query) {
+                    continue;
+                }
                 let topic = self.fetch_topic(row.id, false)?;
                 if topic.deleted_at.is_none() {
                     return Err(anyhow!(
@@ -291,9 +297,6 @@ impl DiscourseClient {
                         row.id,
                         topic.category_id
                     ));
-                }
-                if !deleted_topic_matches(&row, query) {
-                    continue;
                 }
                 deleted.push(DeletedTopicSummary {
                     id: row.id,

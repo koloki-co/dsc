@@ -263,6 +263,9 @@ pub fn category_push(
     let category_id = resolve_category_id(&client, category)?;
     let existing = client.fetch_category(category_id)?;
     let topics = existing.topic_list.topics;
+    // Build a topic-ID index once so membership checks are O(1) rather
+    // than O(topics) per file in the planning loop below.
+    let topic_ids: std::collections::HashSet<u64> = topics.iter().map(|t| t.id).collect();
 
     // Collect Markdown files in a stable order so the plan is deterministic.
     let mut paths: Vec<PathBuf> = fs::read_dir(local_path)
@@ -310,7 +313,7 @@ pub fn category_push(
         match topic_id {
             Some(id) => {
                 let detail = client.fetch_topic(id, true)?;
-                let listed_in_category = topics.iter().any(|topic| topic.id == id);
+                let listed_in_category = topic_ids.contains(&id);
                 validate_topic_category(id, detail.category_id, category_id, listed_in_category)?;
                 let post = detail
                     .post_stream
@@ -652,6 +655,8 @@ fn local_topic_links(
     paths: &[PathBuf],
     topics: &[TopicSummary],
 ) -> Result<HashMap<String, TopicLink>> {
+    let topic_by_id: std::collections::HashMap<u64, &TopicSummary> =
+        topics.iter().map(|t| (t.id, t)).collect();
     let mut links = HashMap::new();
     for path in paths {
         let raw = read_markdown(path)?;
@@ -664,7 +669,7 @@ fn local_topic_links(
         let Some(id) = route_topic_id(&front, &title, path, topics) else {
             continue;
         };
-        let Some(topic) = topics.iter().find(|topic| topic.id == id) else {
+        let Some(topic) = topic_by_id.get(&id) else {
             continue;
         };
         let Some(stem) = path.file_stem() else {
