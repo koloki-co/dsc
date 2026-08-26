@@ -6,6 +6,10 @@ Created by Marcus Baw and [Koloki Ltd](https://koloki.co/), an [official Discour
 
 Most functionality uses the Discourse REST API; `dsc update` runs remote rebuilds via SSH.
 
+!!! warning "Status: alpha"
+
+    `dsc` is pre-1.0. It is used daily against production forums, and every destructive command supports `--dry-run`, but commands may still be renamed or changed. The [compatibility contract](compatibility.md) takes effect at `v1.0.0`.
+
 ## Install
 
 === ":simple-linux: Linux / :simple-apple: macOS"

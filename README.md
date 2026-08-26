@@ -14,6 +14,8 @@ Created by Marcus Baw and [Koloki Ltd](https://koloki.co/), an [official Discour
 
 Most functionality uses the Discourse REST API. `dsc update` runs remote rebuilds via SSH.
 
+**Status: alpha.** `dsc` is pre-1.0. It is used daily against production forums, and every destructive command supports `--dry-run`, but commands may still be renamed or changed - the [compatibility contract](docs/compatibility.md) takes effect at `v1.0.0`.
+
 ## Features
 
 - Track any number of Discourse installs via a single config file.
