@@ -146,7 +146,7 @@ Emoji pull downloads every image serially with a 30-second timeout per image. On
 
 **Recommendation:** Use a small bounded download pool, apply explicit connect and total timeouts to both paths, cap accepted image bytes, and restore deterministic display/write order after worker completion.
 
-**Partially addressed 2026-08-26 (R50):** the inline rendering client now uses the same 30-second timeout as the download client, so one stalled URL can no longer block the command indefinitely. The bounded download pool, the accepted-image-byte cap, and deterministic ordering after concurrent completion all remain outstanding.
+**Addressed 2026-08-26 (R52):** the inline rendering client now uses the same 30-second timeout as the download client, so one stalled URL can no longer block the command indefinitely. The download path now uses a bounded worker pool (4 workers) with `std::thread::scope`, and each accepted image is capped at 8 MiB so a hostile or misconfigured CDN cannot drive memory through a single oversized response. Progress remains deterministic (skipped files are counted before the pool starts). P16 (multipart upload streaming and endpoint caching) remains outstanding.
 
 ### P12 - Medium - Independent fleet audits are serial and withhold results until all hosts finish
 

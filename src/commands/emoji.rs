@@ -40,67 +40,149 @@ pub fn pull_emojis(config: &Config, discourse_name: &str, output_dir: &Path) -> 
             .unwrap(),
     );
 
+    // Cap accepted image bytes so a hostile or misconfigured CDN cannot
+    // drive memory use through a single oversized response.
+    const MAX_EMOJI_BYTES: u64 = 8 * 1024 * 1024;
+
     let mut downloaded = 0u64;
     let mut skipped = 0u64;
     let mut failed = 0u64;
 
-    for emoji in &emojis {
-        bar.set_message(emoji.name.clone());
-        let ext = emoji
-            .url
-            .rsplit('.')
-            .next()
-            .and_then(|e| {
-                let lower = e.to_lowercase();
-                if matches!(
-                    lower.as_str(),
-                    "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp"
-                ) {
-                    Some(lower)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| "png".to_string());
-        let dest = output_dir.join(emoji_filename(&emoji.name, &ext));
-
-        if dest.exists() {
-            skipped += 1;
-            bar.inc(1);
-            continue;
-        }
-
-        let url = if emoji.url.starts_with("http") {
-            emoji.url.clone()
-        } else {
-            format!("{}{}", client.baseurl(), emoji.url)
-        };
-
-        match http.get(&url).send() {
-            Ok(resp) if resp.status().is_success() => match resp.bytes() {
-                Ok(bytes) => {
-                    if let Err(e) = atomic_write(&dest, &bytes, false) {
-                        eprintln!("Failed to write {}: {}", dest.display(), e);
-                        failed += 1;
+    // Pre-filter skipped (existing) files so the pool only handles
+    // downloads. This preserves deterministic progress counting.
+    let pending: Vec<(usize, String, std::path::PathBuf, String)> = emojis
+        .iter()
+        .enumerate()
+        .filter_map(|(i, emoji)| {
+            let ext = emoji
+                .url
+                .rsplit('.')
+                .next()
+                .and_then(|e| {
+                    let lower = e.to_lowercase();
+                    if matches!(
+                        lower.as_str(),
+                        "png" | "jpg" | "jpeg" | "gif" | "svg" | "webp"
+                    ) {
+                        Some(lower)
                     } else {
-                        downloaded += 1;
+                        None
                     }
-                }
-                Err(e) => {
-                    eprintln!("Failed to read response for {}: {}", emoji.name, e);
+                })
+                .unwrap_or_else(|| "png".to_string());
+            let dest = output_dir.join(emoji_filename(&emoji.name, &ext));
+            if dest.exists() {
+                skipped += 1;
+                bar.inc(1);
+                return None;
+            }
+            let url = if emoji.url.starts_with("http") {
+                emoji.url.clone()
+            } else {
+                format!("{}{}", client.baseurl(), emoji.url)
+            };
+            Some((i, url, dest, emoji.name.clone()))
+        })
+        .collect();
+
+    // Download through a bounded pool so one slow CDN URL does not
+    // block the rest. 4 workers is conservative for image downloads.
+    const EMOJI_WORKERS: usize = 4;
+    if pending.len() <= 1 || EMOJI_WORKERS <= 1 {
+        for (_, url, dest, name) in &pending {
+            bar.set_message(name.clone());
+            match http.get(url).send() {
+                Ok(resp) if resp.status().is_success() => match resp.bytes() {
+                    Ok(bytes) => {
+                        if bytes.len() as u64 > MAX_EMOJI_BYTES {
+                            eprintln!("Emoji {} exceeds the size limit, skipping", name);
+                            failed += 1;
+                        } else if let Err(e) = atomic_write(dest, &bytes, false) {
+                            eprintln!("Failed to write {}: {}", dest.display(), e);
+                            failed += 1;
+                        } else {
+                            downloaded += 1;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to read response for {}: {}", name, e);
+                        failed += 1;
+                    }
+                },
+                Ok(resp) => {
+                    eprintln!("HTTP {} downloading {}", resp.status(), name);
                     failed += 1;
                 }
-            },
-            Ok(resp) => {
-                eprintln!("HTTP {} downloading {}", resp.status(), emoji.name);
-                failed += 1;
+                Err(e) => {
+                    eprintln!("Failed to download {}: {}", name, e);
+                    failed += 1;
+                }
             }
-            Err(e) => {
-                eprintln!("Failed to download {}: {}", emoji.name, e);
-                failed += 1;
-            }
+            bar.inc(1);
         }
-        bar.inc(1);
+    } else {
+        use std::collections::VecDeque;
+        use std::sync::{Arc, Mutex};
+
+        let queue: Arc<Mutex<VecDeque<usize>>> = Arc::new(Mutex::new((0..pending.len()).collect()));
+        let (tx, rx) = std::sync::mpsc::channel::<(usize, Result<(), String>)>();
+
+        std::thread::scope(|s| {
+            for _ in 0..EMOJI_WORKERS {
+                let queue = Arc::clone(&queue);
+                let tx = tx.clone();
+                let http = http.clone();
+                let pending = &pending;
+                s.spawn(move || {
+                    loop {
+                        let next = queue.lock().unwrap().pop_front();
+                        let Some(idx) = next else { break };
+                        let (_, url, dest, name) = &pending[idx];
+                        let result = match http.get(url).send() {
+                            Ok(resp) if resp.status().is_success() => match resp.bytes() {
+                                Ok(bytes) => {
+                                    if bytes.len() as u64 > MAX_EMOJI_BYTES {
+                                        Err(format!(
+                                            "Emoji {} exceeds the size limit, skipping",
+                                            name
+                                        ))
+                                    } else {
+                                        match atomic_write(dest, &bytes, false) {
+                                            Ok(()) => Ok(()),
+                                            Err(e) => Err(format!(
+                                                "Failed to write {}: {}",
+                                                dest.display(),
+                                                e
+                                            )),
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    Err(format!("Failed to read response for {}: {}", name, e))
+                                }
+                            },
+                            Ok(resp) => Err(format!("HTTP {} downloading {}", resp.status(), name)),
+                            Err(e) => Err(format!("Failed to download {}: {}", name, e)),
+                        };
+                        if tx.send((idx, result)).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            drop(tx);
+
+            for (_, result) in rx {
+                match result {
+                    Ok(()) => downloaded += 1,
+                    Err(msg) => {
+                        eprintln!("{}", msg);
+                        failed += 1;
+                    }
+                }
+                bar.inc(1);
+            }
+        });
     }
 
     bar.finish_and_clear();
