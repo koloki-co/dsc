@@ -185,7 +185,9 @@ dsc update myforum
 
 ## Support
 
-For questions about administering Discourse, ask on [Discourse Meta](https://meta.discourse.org). For `dsc` bugs, feature requests, or proposed command surfaces, follow the routes in [Contributing](CONTRIBUTING.md). Security vulnerabilities belong in a private [GitHub Security Advisory](https://github.com/koloki-co/dsc/security/advisories/new) or email, never a public issue.
+`dsc` is announced and discussed on Discourse Meta: [`dsc` - a comprehensive Admin CLI for managing multiple Discourses](https://meta.discourse.org/t/dsc-a-comprehensive-admin-cli-for-managing-multiple-discourses/410968). General questions and "does it do X?" are welcome there.
+
+For questions about administering Discourse itself, ask on [Discourse Meta](https://meta.discourse.org). For `dsc` bugs, feature requests, or proposed command surfaces, follow the routes in [Contributing](CONTRIBUTING.md). Security vulnerabilities belong in a private [GitHub Security Advisory](https://github.com/koloki-co/dsc/security/advisories/new) or email, never a public issue.
 
 ## License
 
