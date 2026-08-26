@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::{DiscourseClient, json_page_path};
+use super::client::{DiscourseClient, ResponseBody, json_page_path};
 use super::error::http_error;
 use super::models::{
     CategoriesResponse, CategoryDefinition, CategoryDefinitionResponse,
@@ -47,7 +47,9 @@ impl DiscourseClient {
     fn fetch_category_page(&self, path: &str, category_id: u64) -> Result<CategoryResponse> {
         let response = self.get(path)?;
         let status = response.status();
-        let text = response.text().context("reading category response body")?;
+        let text = response
+            .text_capped()
+            .context("reading category response body")?;
         if !status.is_success() {
             if status == StatusCode::NOT_FOUND {
                 return Err(anyhow!("category not found: {}", category_id));
@@ -64,7 +66,7 @@ impl DiscourseClient {
         let response = self.get("/categories.json?include_subcategories=true")?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading categories response body")?;
         if !status.is_success() {
             return Err(http_error("categories request", status, &text));
@@ -104,7 +106,9 @@ impl DiscourseClient {
         }
         let response = self.send_retrying(|| Ok(self.post("/categories")?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading category response body")?;
+        let text = response
+            .text_capped()
+            .context("reading category response body")?;
         if !status.is_success() {
             return Err(http_error("create category request", status, &text));
         }
@@ -122,7 +126,7 @@ impl DiscourseClient {
             self.get("/categories.json?show_permissions=true&include_subcategories=true")?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading category definitions response body")?;
         if !status.is_success() {
             return Err(http_error("category definitions request", status, &text));
@@ -139,7 +143,7 @@ impl DiscourseClient {
         let response = self.get(&path)?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading category definition response body")?;
         if !status.is_success() {
             return Err(http_error("category definition request", status, &text));
@@ -157,7 +161,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| Ok(self.post("/categories")?.form(params)))?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading create category response body")?;
         if !status.is_success() {
             return Err(http_error("create category request", status, &text));
@@ -174,7 +178,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| Ok(self.put(&path)?.form(params)))?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading update category response body")?;
         if !status.is_success() {
             return Err(http_error("update category request", status, &text));
@@ -194,7 +198,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| Ok(self.put(&path)?.json(&payload)))?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading category custom-fields response body")?;
         if !status.is_success() {
             return Err(http_error(
@@ -209,7 +213,9 @@ impl DiscourseClient {
     fn fetch_site_categories(&self) -> Result<Vec<CategoryInfo>> {
         let response = self.get("/site.json")?;
         let status = response.status();
-        let text = response.text().context("reading site.json response body")?;
+        let text = response
+            .text_capped()
+            .context("reading site.json response body")?;
         if !status.is_success() {
             return Err(http_error("site.json request", status, &text));
         }

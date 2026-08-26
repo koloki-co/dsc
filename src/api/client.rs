@@ -10,9 +10,19 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{StatusCode, Url, redirect};
+use std::io::Read;
 use std::time::Duration;
 
 const MAX_RATE_LIMIT_RETRIES: u32 = 5;
+
+/// Cap on a response body buffered into memory.
+///
+/// Every JSON endpoint `dsc` calls is far below this; the largest routine
+/// payloads are the site-settings catalogue and a full topic page. Backup
+/// archives and Data Explorer CSV are streamed to disk instead and are not
+/// subject to this cap. Without it, a hostile or malfunctioning host can
+/// stream an unbounded body and drive memory use until the request timeout.
+const MAX_BODY_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Cap on redirect hops within the forum's own host.
 const MAX_REDIRECTS: usize = 5;
@@ -127,7 +137,7 @@ impl DiscourseClient {
             }
             let headers = response.headers().clone();
             let body = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read 429 body>".to_string());
             if attempt >= MAX_RATE_LIMIT_RETRIES {
                 return Err(anyhow!(
@@ -153,7 +163,9 @@ impl DiscourseClient {
         let site_json_error = match self.get("/site.json") {
             Ok(response) => {
                 let status = response.status();
-                let text = response.text().context("reading site.json response body")?;
+                let text = response
+                    .text_capped()
+                    .context("reading site.json response body")?;
                 if status.is_success() {
                     let body: SiteResponse =
                         serde_json::from_str(&text).context("parsing site.json")?;
@@ -166,7 +178,7 @@ impl DiscourseClient {
 
         let response = self.get("/")?;
         let status = response.status();
-        let html = response.text().context("reading site HTML")?;
+        let html = response.text_capped().context("reading site HTML")?;
         if !status.is_success() {
             return Err(anyhow!(
                 "site title lookup failed (site.json error: {}; HTML request failed with {})",
@@ -213,7 +225,7 @@ impl DiscourseClient {
         match self.get("/") {
             Ok(response) => {
                 let status = response.status();
-                let html = response.text().context("reading site HTML")?;
+                let html = response.text_capped().context("reading site HTML")?;
                 if !status.is_success() {
                     last_err = Some(anyhow!("site HTML request failed with {}", status));
                 } else if let Some(content) = extract_meta_content(&html, "generator") {
@@ -245,7 +257,7 @@ impl DiscourseClient {
         let response = self.get("/about.json")?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading about.json response body")?;
         if !status.is_success() {
             return Ok(None);
@@ -339,6 +351,44 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
+/// Buffer a response body with an explicit size ceiling.
+///
+/// `reqwest`'s own `text()` reads until the server stops sending. Reading
+/// through a capped `Read` bounds the allocation regardless of what the
+/// server claims in `Content-Length`, which a hostile host controls anyway.
+pub(crate) trait ResponseBody {
+    /// Read the body as UTF-8, erroring if it exceeds [`MAX_BODY_BYTES`].
+    fn text_capped(self) -> Result<String>;
+}
+
+impl ResponseBody for Response {
+    fn text_capped(self) -> Result<String> {
+        let url = self.url().to_string();
+        // Read one byte past the cap so hitting it is distinguishable from a
+        // body that is exactly the maximum size.
+        let mut buf = Vec::new();
+        self.take(MAX_BODY_BYTES + 1)
+            .read_to_end(&mut buf)
+            .context("reading response body")?;
+        decode_capped_body(buf, MAX_BODY_BYTES, &url)
+    }
+}
+
+/// Decide whether a buffered body is acceptable, and decode it.
+///
+/// Split out from [`ResponseBody::text_capped`] so the limit and encoding
+/// rules are testable without a live server or a 64 MiB fixture.
+fn decode_capped_body(buf: Vec<u8>, limit: u64, url: &str) -> Result<String> {
+    if buf.len() as u64 > limit {
+        return Err(anyhow!(
+            "response body from {} exceeded the {} byte limit; refusing to buffer it",
+            url,
+            limit
+        ));
+    }
+    String::from_utf8(buf).map_err(|_| anyhow!("response body from {} was not valid UTF-8", url))
+}
+
 /// Follow redirects only within the forum's own origin.
 ///
 /// The API key travels in a custom `Api-Key` header. reqwest strips only a
@@ -392,6 +442,34 @@ pub(super) fn json_page_path(path: &str) -> Result<String> {
         Ok(route)
     } else {
         Ok(format!("{}?{}", route, query))
+    }
+}
+
+#[cfg(test)]
+mod body_cap_tests {
+    use super::decode_capped_body;
+
+    #[test]
+    fn accepts_a_body_at_the_limit() {
+        let body = decode_capped_body(b"hello".to_vec(), 5, "https://forum.example.com").unwrap();
+        assert_eq!(body, "hello");
+    }
+
+    #[test]
+    fn rejects_a_body_over_the_limit() {
+        let err =
+            decode_capped_body(b"hello!".to_vec(), 5, "https://forum.example.com").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("exceeded the 5 byte limit"), "got: {msg}");
+        // The URL is useful for working out which forum misbehaved.
+        assert!(msg.contains("forum.example.com"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_a_body_that_is_not_utf8() {
+        let err =
+            decode_capped_body(vec![0xff, 0xfe], 64, "https://forum.example.com").unwrap_err();
+        assert!(err.to_string().contains("not valid UTF-8"));
     }
 }
 

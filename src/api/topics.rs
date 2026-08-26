@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::{DiscourseClient, json_page_path};
+use super::client::{DiscourseClient, ResponseBody, json_page_path};
 use super::error::http_error;
 use super::models::{CreatePostResponse, TopicResponse};
 use anyhow::{Context, Result, anyhow};
@@ -105,7 +105,9 @@ impl DiscourseClient {
         };
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading topic response body")?;
+        let text = response
+            .text_capped()
+            .context("reading topic response body")?;
         if !status.is_success() {
             return Err(http_error("topic request", status, &text));
         }
@@ -149,7 +151,7 @@ impl DiscourseClient {
             let response = self.get(&path)?;
             let status = response.status();
             let text = response
-                .text()
+                .text_capped()
                 .context("reading topic posts response body")?;
             if !status.is_success() {
                 return Err(http_error("topic posts request", status, &text));
@@ -183,7 +185,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .unwrap_or_else(|_| "<failed to read response body>".to_string());
         if !status.is_success() {
             return Err(http_error("delete topic request", status, &text));
@@ -197,7 +199,7 @@ impl DiscourseClient {
         let response = self.get(&path)?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading topic absence-check response")?;
         if matches!(status, StatusCode::NOT_FOUND | StatusCode::GONE) {
             return Ok(true);
@@ -214,7 +216,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| self.put(&path))?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .unwrap_or_else(|_| "<failed to read response body>".to_string());
         if !status.is_success() {
             return Err(http_error("recover topic request", status, &text));
@@ -261,7 +263,7 @@ impl DiscourseClient {
             let response = self.get(&path)?;
             let status = response.status();
             let text = response
-                .text()
+                .text_capped()
                 .context("reading deleted-topic list response")?;
             if !status.is_success() {
                 return Err(http_error("deleted-topic list request", status, &text));
@@ -317,7 +319,9 @@ impl DiscourseClient {
         let path = format!("/posts/{}.json?include_raw=1", post_id);
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading post response body")?;
+        let text = response
+            .text_capped()
+            .context("reading post response body")?;
         if !status.is_success() {
             return Err(http_error("post request", status, &text));
         }
@@ -332,7 +336,9 @@ impl DiscourseClient {
         let path = format!("/posts/{}.json", post_id);
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading post response body")?;
+        let text = response
+            .text_capped()
+            .context("reading post response body")?;
         if !status.is_success() {
             return Err(http_error("post request", status, &text));
         }
@@ -354,7 +360,7 @@ impl DiscourseClient {
         let response = self.get(&path)?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading permanent-delete check response")?;
         if !status.is_success() {
             return Err(http_error("permanent-delete check request", status, &text));
@@ -380,7 +386,7 @@ impl DiscourseClient {
         let response = self.get(&path)?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading post absence-check response")?;
         if matches!(status, StatusCode::NOT_FOUND | StatusCode::GONE) {
             return Ok(true);
@@ -397,7 +403,7 @@ impl DiscourseClient {
         let status = response.status();
         if !status.is_success() {
             let text = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(http_error("delete post request", status, &text));
         }
@@ -427,7 +433,9 @@ impl DiscourseClient {
         }
         let response = self.send_retrying(|| Ok(self.post(&path)?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading move-posts response")?;
+        let text = response
+            .text_capped()
+            .context("reading move-posts response")?;
         if !status.is_success() {
             return Err(http_error("move posts request", status, &text));
         }
@@ -449,7 +457,9 @@ impl DiscourseClient {
         let payload = [("title", title)];
         let response = self.send_retrying(|| Ok(self.put(&path)?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading set-title response body")?;
+        let text = response
+            .text_capped()
+            .context("reading set-title response body")?;
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(anyhow!(
                 "topic {} title cannot be changed (reserved slug or insufficient permission)",
@@ -486,7 +496,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| Ok(self.post(&path)?.form(&payload)))?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading change-owner response body")?;
         if !status.is_success() {
             return Err(http_error("change topic owner request", status, &text));
@@ -504,7 +514,7 @@ impl DiscourseClient {
         let status = response.status();
         if !status.is_success() {
             let text = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(http_error("update post request", status, &text));
         }
@@ -517,7 +527,9 @@ impl DiscourseClient {
         let payload = [("title", title), ("raw", raw), ("category", &category)];
         let response = self.send_retrying(|| Ok(self.post("/posts.json")?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading create response body")?;
+        let text = response
+            .text_capped()
+            .context("reading create response body")?;
         if !status.is_success() {
             return Err(http_error("create topic request", status, &text));
         }
@@ -544,7 +556,9 @@ impl DiscourseClient {
         ];
         let response = self.send_retrying(|| Ok(self.post("/posts.json")?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading PM create response body")?;
+        let text = response
+            .text_capped()
+            .context("reading PM create response body")?;
         if !status.is_success() {
             return Err(http_error("create PM request", status, &text));
         }
@@ -583,7 +597,7 @@ impl DiscourseClient {
             let path = json_page_path(&path)?;
             let response = self.get(&path)?;
             let status = response.status();
-            let text = response.text().context("reading PM list response")?;
+            let text = response.text_capped().context("reading PM list response")?;
             if !status.is_success() {
                 return Err(http_error("PM list request", status, &text));
             }
@@ -616,7 +630,9 @@ impl DiscourseClient {
         let payload = [("topic_id", topic.as_str()), ("raw", raw)];
         let response = self.send_retrying(|| Ok(self.post("/posts.json")?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading create response body")?;
+        let text = response
+            .text_capped()
+            .context("reading create response body")?;
         if !status.is_success() {
             return Err(http_error("create post request", status, &text));
         }

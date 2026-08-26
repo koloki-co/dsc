@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use super::models::{
     GroupDetail, GroupDetailResponse, GroupMember, GroupMembersResponse, GroupSummary,
@@ -220,7 +220,9 @@ impl DiscourseClient {
         push_opt(&mut payload, "group[bio_raw]", group.bio_raw.as_deref());
         let response = self.send_retrying(|| Ok(self.post("/admin/groups")?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading group response body")?;
+        let text = response
+            .text_capped()
+            .context("reading group response body")?;
         if !status.is_success() {
             return Err(http_error("create group request", status, &text));
         }
@@ -256,7 +258,9 @@ impl DiscourseClient {
         let payload = [("usernames", joined.as_str()), ("notify_users", notify)];
         let response = self.send_retrying(|| Ok(self.put(&path)?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading add-members response")?;
+        let text = response
+            .text_capped()
+            .context("reading add-members response")?;
         if !status.is_success() {
             return Err(http_error("add group members request", status, &text));
         }
@@ -281,7 +285,7 @@ impl DiscourseClient {
         let status = response.status();
         if !status.is_success() {
             let text = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(http_error("remove group members request", status, &text));
         }
@@ -293,7 +297,9 @@ impl DiscourseClient {
         let path = format!("/u/{}.json", username);
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading user response body")?;
+        let text = response
+            .text_capped()
+            .context("reading user response body")?;
         if !status.is_success() {
             return Err(http_error("user request", status, &text));
         }
@@ -331,7 +337,9 @@ impl DiscourseClient {
         let payload = [("emails", joined.as_str()), ("notify_users", notify)];
         let response = self.send_retrying(|| Ok(self.put(&path)?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading add-members response")?;
+        let text = response
+            .text_capped()
+            .context("reading add-members response")?;
         if !status.is_success() {
             return Err(http_error("add group members request", status, &text));
         }
@@ -341,7 +349,9 @@ impl DiscourseClient {
     fn fetch_group_detail_by_path(&self, path: &str) -> Result<Option<GroupDetail>> {
         let response = self.get(path)?;
         let status = response.status();
-        let text = response.text().context("reading group detail body")?;
+        let text = response
+            .text_capped()
+            .context("reading group detail body")?;
         if !status.is_success() {
             if status == StatusCode::NOT_FOUND {
                 return Ok(None);
@@ -356,7 +366,9 @@ impl DiscourseClient {
     fn fetch_group_members_by_path(&self, path: &str) -> Result<Option<Vec<GroupMember>>> {
         let response = self.get(path)?;
         let status = response.status();
-        let text = response.text().context("reading group members body")?;
+        let text = response
+            .text_capped()
+            .context("reading group members body")?;
         if !status.is_success() {
             if status == StatusCode::NOT_FOUND {
                 return Ok(None);
@@ -371,7 +383,9 @@ impl DiscourseClient {
     fn fetch_groups_admin(&self) -> Result<Option<Vec<GroupSummary>>> {
         let response = self.get("/admin/groups.json")?;
         let status = response.status();
-        let text = response.text().context("reading groups response body")?;
+        let text = response
+            .text_capped()
+            .context("reading groups response body")?;
         if status.is_success() {
             if text.trim().is_empty() {
                 return Ok(None);
@@ -397,7 +411,9 @@ impl DiscourseClient {
             }
             let response = self.get(&path)?;
             let status = response.status();
-            let text = response.text().context("reading groups response body")?;
+            let text = response
+                .text_capped()
+                .context("reading groups response body")?;
             if !status.is_success() {
                 return Err(http_error("groups request", status, &text));
             }

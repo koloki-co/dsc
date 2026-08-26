@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use super::search::urlencode_form;
 use anyhow::{Context, Result};
@@ -73,7 +73,7 @@ impl DiscourseClient {
         let response = self.get(&path)?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading staff action log response")?;
         if !status.is_success() {
             return Err(http_error("staff action log request", status, &text));

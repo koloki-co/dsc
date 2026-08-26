@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -49,7 +49,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| Ok(self.put(&path)?.form(&payload)))?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading site setting update response")?;
         if !status.is_success() {
             return Err(http_error("update site setting request", status, &text));
@@ -62,7 +62,7 @@ impl DiscourseClient {
         let response = self.get("/admin/site_settings.json")?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading site settings list response")?;
         if !status.is_success() {
             return Err(http_error("list site settings request", status, &text));
@@ -79,7 +79,7 @@ impl DiscourseClient {
         let response = self.get("/admin/site_settings.json")?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading site settings list response")?;
         if !status.is_success() {
             return Err(http_error("list site settings request", status, &text));

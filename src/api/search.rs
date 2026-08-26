@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -42,7 +42,9 @@ impl DiscourseClient {
             let path = format!("/search.json?q={}&page={}", urlencode_form(query), page);
             let response = self.get(&path)?;
             let status = response.status();
-            let text = response.text().context("reading search response body")?;
+            let text = response
+                .text_capped()
+                .context("reading search response body")?;
             if !status.is_success() {
                 return Err(http_error("search request", status, &text));
             }

@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::path::Path;
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 
 impl DiscourseClient {
@@ -14,7 +14,9 @@ impl DiscourseClient {
     pub fn list_themes(&self) -> Result<Value> {
         let response = self.get("/admin/themes.json")?;
         let status = response.status();
-        let text = response.text().context("reading themes response body")?;
+        let text = response
+            .text_capped()
+            .context("reading themes response body")?;
         if !status.is_success() {
             return Err(http_error("themes request", status, &text));
         }
@@ -26,7 +28,9 @@ impl DiscourseClient {
     pub fn fetch_theme(&self, theme_id: u64) -> Result<Value> {
         let response = self.get(&format!("/admin/themes/{}.json", theme_id))?;
         let status = response.status();
-        let text = response.text().context("reading theme response body")?;
+        let text = response
+            .text_capped()
+            .context("reading theme response body")?;
         if !status.is_success() {
             return Err(http_error("theme request", status, &text));
         }
@@ -40,7 +44,9 @@ impl DiscourseClient {
         let response =
             self.send_retrying(|| Ok(self.post("/admin/themes.json")?.json(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading create theme response")?;
+        let text = response
+            .text_capped()
+            .context("reading create theme response")?;
         if !status.is_success() {
             return Err(http_error("create theme request", status, &text));
         }
@@ -59,7 +65,9 @@ impl DiscourseClient {
         let path = format!("/admin/themes/{}.json", theme_id);
         let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
-        let text = response.text().context("reading delete theme response")?;
+        let text = response
+            .text_capped()
+            .context("reading delete theme response")?;
         if !status.is_success() {
             return Err(http_error("delete theme request", status, &text));
         }
@@ -72,7 +80,9 @@ impl DiscourseClient {
         let path = format!("/admin/themes/{}.json", theme_id);
         let response = self.send_retrying(|| Ok(self.put(&path)?.json(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading update theme response")?;
+        let text = response
+            .text_capped()
+            .context("reading update theme response")?;
         if !status.is_success() {
             return Err(http_error("update theme request", status, &text));
         }
@@ -88,7 +98,9 @@ impl DiscourseClient {
         let payload = [("name", name), ("value", value)];
         let response = self.send_retrying(|| Ok(self.put(&path)?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading theme setting response")?;
+        let text = response
+            .text_capped()
+            .context("reading theme setting response")?;
         if !status.is_success() {
             return Err(http_error("theme setting update request", status, &text));
         }
@@ -104,7 +116,9 @@ impl DiscourseClient {
         let path = format!("/admin/themes/{}.json", theme_id);
         let response = self.send_retrying(|| Ok(self.put(&path)?.json(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading theme flag response")?;
+        let text = response
+            .text_capped()
+            .context("reading theme flag response")?;
         if !status.is_success() {
             return Err(http_error("theme flag update request", status, &text));
         }
@@ -125,7 +139,9 @@ impl DiscourseClient {
         let response =
             self.send_retrying(|| Ok(self.post("/admin/themes/import.json")?.form(&form)))?;
         let status = response.status();
-        let text = response.text().context("reading theme import response")?;
+        let text = response
+            .text_capped()
+            .context("reading theme import response")?;
         if !status.is_success() {
             return Err(http_error("theme import request", status, &text));
         }
@@ -153,7 +169,7 @@ impl DiscourseClient {
         })?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading theme bundle import response")?;
         if !status.is_success() {
             return Err(http_error("theme bundle import request", status, &text));

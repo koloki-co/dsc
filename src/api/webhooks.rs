@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -166,7 +166,9 @@ impl DiscourseClient {
     fn webhook_page(&self, offset: usize) -> Result<WebhookPage> {
         let response = self.get(&format!("{WEBHOOKS_PATH}?offset={offset}"))?;
         let status = response.status();
-        let text = response.text().context("reading webhook list response")?;
+        let text = response
+            .text_capped()
+            .context("reading webhook list response")?;
         if !status.is_success() {
             return Err(http_error("webhook list request", status, &text));
         }
@@ -195,7 +197,9 @@ impl DiscourseClient {
         let response =
             self.send_retrying(|| Ok(self.post("/admin/api/web_hooks.json")?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading webhook create response")?;
+        let text = response
+            .text_capped()
+            .context("reading webhook create response")?;
         if !status.is_success() {
             return Err(http_error("webhook create request", status, &text));
         }
@@ -233,7 +237,7 @@ impl DiscourseClient {
         let status = response.status();
         if !status.is_success() {
             let text = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(http_error("webhook delete request", status, &text));
         }
@@ -249,7 +253,7 @@ impl DiscourseClient {
         let status = response.status();
         if !status.is_success() {
             let text = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(http_error("webhook ping request", status, &text));
         }

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use super::models::CustomEmoji;
 use anyhow::{Context, Result, anyhow};
@@ -76,7 +76,7 @@ impl DiscourseClient {
                 ));
             }
             let text = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(anyhow!("emoji upload failed with {}: {}", status, text));
         }
@@ -98,7 +98,9 @@ impl DiscourseClient {
         let path = emoji_admin_path("/admin/customize/emojis.json");
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading emoji list response")?;
+        let text = response
+            .text_capped()
+            .context("reading emoji list response")?;
         if !status.is_success() {
             if status == StatusCode::NOT_FOUND {
                 return Ok(None);
@@ -127,7 +129,9 @@ impl DiscourseClient {
     fn list_public_emojis(&self) -> Result<Vec<CustomEmoji>> {
         let response = self.get("/emoji.json")?;
         let status = response.status();
-        let text = response.text().context("reading emoji.json response")?;
+        let text = response
+            .text_capped()
+            .context("reading emoji.json response")?;
         if status == StatusCode::NOT_FOUND {
             return Ok(Vec::new());
         }
@@ -156,7 +160,7 @@ impl DiscourseClient {
         let response = self.get(&path)?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading admin config emoji response")?;
         if status == StatusCode::NOT_FOUND {
             return Ok(None);

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -50,7 +50,9 @@ impl DiscourseClient {
         let response =
             self.send_retrying(|| Ok(self.post("/uploads.json")?.multipart(make_form()?)))?;
         let status = response.status();
-        let text = response.text().context("reading upload response body")?;
+        let text = response
+            .text_capped()
+            .context("reading upload response body")?;
         if !status.is_success() {
             return Err(http_error("upload request", status, &text));
         }

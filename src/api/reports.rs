@@ -10,7 +10,7 @@
 //! not require a second API call for metrics that come straight from a
 //! report.
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -158,7 +158,9 @@ impl DiscourseClient {
         );
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading admin report response")?;
+        let text = response
+            .text_capped()
+            .context("reading admin report response")?;
         if !status.is_success() {
             return Err(http_error(
                 &format!("admin report {} request", report_id),

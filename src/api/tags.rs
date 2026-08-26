@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -64,7 +64,9 @@ impl DiscourseClient {
     pub fn list_tags(&self) -> Result<Vec<TagInfo>> {
         let response = self.get("/tags.json")?;
         let status = response.status();
-        let text = response.text().context("reading tags response body")?;
+        let text = response
+            .text_capped()
+            .context("reading tags response body")?;
         if !status.is_success() {
             return Err(http_error("tags request", status, &text));
         }
@@ -78,7 +80,9 @@ impl DiscourseClient {
         let path = format!("/tag/{}.json", tag_name);
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading tag detail response")?;
+        let text = response
+            .text_capped()
+            .context("reading tag detail response")?;
         if !status.is_success() {
             return Ok(None);
         }
@@ -101,7 +105,7 @@ impl DiscourseClient {
             return Ok(None);
         }
         let text = response
-            .text()
+            .text_capped()
             .context("reading tag groups response body")?;
         if !status.is_success() {
             return Err(http_error("tag groups request", status, &text));
@@ -116,7 +120,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| Ok(self.post("/tag_groups.json")?.json(payload)))?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading create tag group response")?;
         if !status.is_success() {
             return Err(http_error("create tag group", status, &text));
@@ -136,7 +140,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| Ok(self.put(&path)?.json(payload)))?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading update tag group response")?;
         if !status.is_success() {
             return Err(http_error("update tag group", status, &text));
@@ -150,7 +154,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         if !status.is_success() {
-            let text = response.text().unwrap_or_default();
+            let text = response.text_capped().unwrap_or_default();
             return Err(http_error("delete tag group", status, &text));
         }
         Ok(())
@@ -172,7 +176,9 @@ impl DiscourseClient {
         }
         let response = self.send_retrying(|| Ok(self.put(&path)?.json(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading update tag response")?;
+        let text = response
+            .text_capped()
+            .context("reading update tag response")?;
         if !status.is_success() {
             return Err(http_error("update tag", status, &text));
         }
@@ -187,7 +193,9 @@ impl DiscourseClient {
         let payload = serde_json::json!({ "tag": { "id": new_name } });
         let response = self.send_retrying(|| Ok(self.put(&path)?.json(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading rename tag response")?;
+        let text = response
+            .text_capped()
+            .context("reading rename tag response")?;
         if !status.is_success() {
             return Err(http_error("rename tag", status, &text));
         }
@@ -204,7 +212,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         if !status.is_success() {
-            let text = response.text().unwrap_or_default();
+            let text = response.text_capped().unwrap_or_default();
             return Err(http_error("delete tag", status, &text));
         }
         Ok(())
@@ -215,7 +223,9 @@ impl DiscourseClient {
         let path = format!("/t/{}.json", topic_id);
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading topic response body")?;
+        let text = response
+            .text_capped()
+            .context("reading topic response body")?;
         if !status.is_success() {
             return Err(http_error("topic request", status, &text));
         }
@@ -244,7 +254,9 @@ impl DiscourseClient {
         };
         let response = self.send_retrying(|| Ok(self.put(&path)?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading set-tags response body")?;
+        let text = response
+            .text_capped()
+            .context("reading set-tags response body")?;
         if !status.is_success() {
             return Err(http_error("set tags request", status, &text));
         }

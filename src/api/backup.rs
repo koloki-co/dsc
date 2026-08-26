@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -14,7 +14,9 @@ impl DiscourseClient {
         let response =
             self.send_retrying(|| Ok(self.post("/admin/backups.json")?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading backup create response")?;
+        let text = response
+            .text_capped()
+            .context("reading backup create response")?;
         if !status.is_success() {
             return Err(http_error("create backup request", status, &text));
         }
@@ -25,7 +27,9 @@ impl DiscourseClient {
     pub fn list_backups(&self) -> Result<Value> {
         let response = self.get("/admin/backups.json")?;
         let status = response.status();
-        let text = response.text().context("reading backups list response")?;
+        let text = response
+            .text_capped()
+            .context("reading backups list response")?;
         if !status.is_success() {
             return Err(http_error("list backups request", status, &text));
         }
@@ -38,7 +42,9 @@ impl DiscourseClient {
         let path = format!("/admin/backups/{}/restore", backup_path);
         let response = self.send_retrying(|| self.post(&path))?;
         let status = response.status();
-        let text = response.text().context("reading backup restore response")?;
+        let text = response
+            .text_capped()
+            .context("reading backup restore response")?;
         if !status.is_success() {
             return Err(http_error("restore backup request", status, &text));
         }

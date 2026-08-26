@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -149,7 +149,7 @@ impl DiscourseClient {
             let response = self.get(&path)?;
             let status = response.status();
             let text = response
-                .text()
+                .text_capped()
                 .context("reading Data Explorer query list response")?;
             if !status.is_success() {
                 return Err(explorer_http_error(
@@ -181,7 +181,7 @@ impl DiscourseClient {
         let response = self.get(&path)?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading Data Explorer query response")?;
         if !status.is_success() {
             return Err(explorer_http_error("Data Explorer query", status, &text));
@@ -211,7 +211,7 @@ impl DiscourseClient {
         let response = self.send_retrying(|| Ok(self.post(&path)?.form(&payload)))?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading Data Explorer query result")?;
         if !status.is_success() {
             return Err(explorer_http_error(

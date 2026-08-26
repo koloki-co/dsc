@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -56,7 +56,9 @@ impl DiscourseClient {
         );
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading user actions response")?;
+        let text = response
+            .text_capped()
+            .context("reading user actions response")?;
         if !status.is_success() {
             return Err(http_error("user actions request", status, &text));
         }

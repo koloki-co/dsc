@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 
 impl DiscourseClient {
@@ -13,7 +13,9 @@ impl DiscourseClient {
     pub fn list_plugins(&self) -> Result<Value> {
         let response = self.get("/admin/plugins.json")?;
         let status = response.status();
-        let text = response.text().context("reading plugins response body")?;
+        let text = response
+            .text_capped()
+            .context("reading plugins response body")?;
         if !status.is_success() {
             return Err(http_error("plugins request", status, &text));
         }

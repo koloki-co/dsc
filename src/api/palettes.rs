@@ -6,7 +6,7 @@ use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 
 impl DiscourseClient {
@@ -15,7 +15,7 @@ impl DiscourseClient {
         let response = self.get("/admin/color_schemes.json")?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading color schemes response body")?;
         if !status.is_success() {
             return Err(http_error("color schemes request", status, &text));
@@ -50,7 +50,9 @@ impl DiscourseClient {
         let response =
             self.send_retrying(|| Ok(self.post("/admin/color_schemes.json")?.json(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading color scheme response")?;
+        let text = response
+            .text_capped()
+            .context("reading color scheme response")?;
         if !status.is_success() {
             return Err(http_error("create color scheme request", status, &text));
         }
@@ -76,7 +78,9 @@ impl DiscourseClient {
         let path = format!("/admin/color_schemes/{}.json", scheme_id);
         let response = self.send_retrying(|| Ok(self.put(&path)?.json(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading color scheme response")?;
+        let text = response
+            .text_capped()
+            .context("reading color scheme response")?;
         if !status.is_success() {
             return Err(http_error("update color scheme request", status, &text));
         }

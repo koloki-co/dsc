@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -80,7 +80,9 @@ impl DiscourseClient {
         );
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading user list response")?;
+        let text = response
+            .text_capped()
+            .context("reading user list response")?;
         if !status.is_success() {
             return Err(http_error("admin user list request", status, &text));
         }
@@ -94,7 +96,9 @@ impl DiscourseClient {
         let path = format!("/u/{}.json", username);
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading user detail response")?;
+        let text = response
+            .text_capped()
+            .context("reading user detail response")?;
         if !status.is_success() {
             return Err(http_error("user detail request", status, &text));
         }
@@ -117,7 +121,7 @@ impl DiscourseClient {
         let response = self.get(&path)?;
         let status = response.status();
         let text = response
-            .text()
+            .text_capped()
             .context("reading admin user detail response")?;
         if !status.is_success() {
             return Err(http_error("admin user detail request", status, &text));
@@ -135,7 +139,9 @@ impl DiscourseClient {
         );
         let response = self.get(&path)?;
         let status = response.status();
-        let text = response.text().context("reading user search response")?;
+        let text = response
+            .text_capped()
+            .context("reading user search response")?;
         if !status.is_success() {
             return Err(http_error("admin user search request", status, &text));
         }
@@ -225,7 +231,9 @@ impl DiscourseClient {
         }
         let response = self.send_retrying(|| Ok(self.post("/u.json")?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading user create response")?;
+        let text = response
+            .text_capped()
+            .context("reading user create response")?;
         if !status.is_success() {
             return Err(http_error("user create request", status, &text));
         }
@@ -255,7 +263,7 @@ impl DiscourseClient {
         let status = response.status();
         if !status.is_success() {
             let text = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(http_error("password reset request", status, &text));
         }
@@ -270,7 +278,7 @@ impl DiscourseClient {
         let status = response.status();
         if !status.is_success() {
             let text = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(http_error("email set request", status, &text));
         }
@@ -296,7 +304,7 @@ impl DiscourseClient {
         let status = response.status();
         if !status.is_success() {
             let text = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(http_error(action_label, status, &text));
         }

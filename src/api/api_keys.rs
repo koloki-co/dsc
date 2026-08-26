@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::DiscourseClient;
+use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -43,7 +43,9 @@ impl DiscourseClient {
     pub fn list_api_keys(&self) -> Result<Vec<ApiKeySummary>> {
         let response = self.get("/admin/api/keys.json")?;
         let status = response.status();
-        let text = response.text().context("reading api keys response")?;
+        let text = response
+            .text_capped()
+            .context("reading api keys response")?;
         if !status.is_success() {
             return Err(http_error("api keys list request", status, &text));
         }
@@ -70,7 +72,9 @@ impl DiscourseClient {
         let response =
             self.send_retrying(|| Ok(self.post("/admin/api/keys.json")?.form(&payload)))?;
         let status = response.status();
-        let text = response.text().context("reading api key create response")?;
+        let text = response
+            .text_capped()
+            .context("reading api key create response")?;
         if !status.is_success() {
             return Err(http_error("api key create request", status, &text));
         }
@@ -88,7 +92,7 @@ impl DiscourseClient {
         let status = response.status();
         if !status.is_success() {
             let text = response
-                .text()
+                .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(http_error("api key revoke request", status, &text));
         }
