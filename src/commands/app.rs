@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, parse_tags, select_discourse, shell_quote};
+use crate::commands::common::{
+    ensure_api_credentials, fleet_worker_count, run_fleet, select_discourse, selected_discourses,
+    shell_quote,
+};
 use crate::commands::update::run_ssh_command;
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
 use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 const DEFAULT_APP_YML_PATH: &str = "/var/discourse/containers/app.yml";
 const REBUILD_CHECK_CMD: &str =
@@ -114,15 +117,16 @@ pub fn app_env_audit(
     format: ListFormat,
 ) -> Result<()> {
     validate_env_key(key)?;
-    let filter = tags.map(parse_tags).unwrap_or_default();
-    let rows: Vec<AppEnvAuditRow> = config
-        .discourse
-        .iter()
-        .filter(|discourse| matches_tag_filter(discourse, &filter))
-        .map(|discourse| match fetch_app_env(discourse) {
+    let discourses = selected_discourses(config, None, tags)?;
+    let key_owned = key.to_string();
+
+    let rows: Vec<AppEnvAuditRow> = run_fleet(
+        &discourses,
+        fleet_worker_count(None, discourses.len(), 8, false),
+        move |discourse| match fetch_app_env(discourse) {
             Ok(env) => {
-                let value = env.get(key).cloned();
-                let secret = is_secret_key(key) && value.is_some();
+                let value = env.get(&key_owned).cloned();
+                let secret = is_secret_key(&key_owned) && value.is_some();
                 AppEnvAuditRow {
                     discourse: discourse.name.clone(),
                     value: (!secret).then_some(value).flatten(),
@@ -136,8 +140,10 @@ pub fn app_env_audit(
                 redacted: None,
                 error: Some(error.to_string()),
             },
-        })
-        .collect();
+        },
+        |_| {},
+    );
+
     match format {
         ListFormat::Text => {
             if rows.is_empty() {
@@ -484,22 +490,6 @@ fn is_secret_key(key: &str) -> bool {
     .any(|needle| upper.contains(needle))
 }
 
-fn matches_tag_filter(discourse: &DiscourseConfig, filter: &[String]) -> bool {
-    if filter.is_empty() {
-        return true;
-    }
-    let tags: BTreeSet<String> = discourse
-        .tags
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .map(|tag| tag.to_ascii_lowercase())
-        .collect();
-    filter
-        .iter()
-        .any(|tag| tags.contains(&tag.to_ascii_lowercase()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -536,17 +526,6 @@ env:
         assert!(validate_env_key("DISCOURSE_HOSTNAME").is_ok());
         assert!(validate_env_key("bad-name").is_err());
         assert!(validate_env_key("VALUE; rm -rf /").is_err());
-    }
-
-    #[test]
-    fn tag_filter_matches_case_insensitively() {
-        let discourse = DiscourseConfig {
-            name: "forum".to_string(),
-            tags: Some(vec!["Production".to_string()]),
-            ..DiscourseConfig::default()
-        };
-        assert!(matches_tag_filter(&discourse, &["production".to_string()]));
-        assert!(!matches_tag_filter(&discourse, &["staging".to_string()]));
     }
 
     #[test]

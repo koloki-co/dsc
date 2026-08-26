@@ -8,8 +8,15 @@ use crate::config::{Config, DiscourseConfig, find_discourse};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::fmt::Display;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
+
+/// Absolute ceiling on fleet parallelism. Above this, an explicit
+/// `--max` override is required. Each worker may hold an SSH process
+/// and reader threads, so unbounded widths can exhaust local FDs/CPU.
+const MAX_FLEET_WORKERS: usize = 32;
 
 /// Emit a single command result honouring `--format`. Text mode prints the
 /// human-readable `text`; json/yaml serialise `value`. Lets the otherwise
@@ -85,6 +92,88 @@ fn matches_tag_filter(discourse: &DiscourseConfig, filter: &[String]) -> bool {
     filter
         .iter()
         .any(|tag| tags.contains(&tag.to_ascii_lowercase()))
+}
+
+/// Compute the worker count for a fleet operation: the requested value
+/// (or `default`), floored at 1, capped at `count`, and never exceeding
+/// [`MAX_FLEET_WORKERS`] unless `override_ceiling` is true.
+pub fn fleet_worker_count(
+    max: Option<usize>,
+    count: usize,
+    default: usize,
+    override_ceiling: bool,
+) -> usize {
+    let requested = max.unwrap_or(default).max(1);
+    let capped = requested.min(count.max(1));
+    if override_ceiling {
+        capped
+    } else {
+        capped.min(MAX_FLEET_WORKERS)
+    }
+}
+
+/// Run a read-only operation across a fleet of Discourses with a bounded
+/// worker pool, invoking `on_done` on this thread for each result as it
+/// completes (fastest-first). Workers pull from a shared queue, so a slow
+/// forum never blocks others.
+///
+/// `work` runs on a worker thread and must be `Send + Sync`; `on_done`
+/// runs on the calling thread and can safely print. The returned `Vec`
+/// is in completion order; callers that need config-file order should
+/// sort by name afterwards.
+pub fn run_fleet<T, F, G>(
+    discourses: &[&DiscourseConfig],
+    workers: usize,
+    work: F,
+    mut on_done: G,
+) -> Vec<T>
+where
+    T: Send,
+    F: Fn(&DiscourseConfig) -> T + Send + Sync,
+    G: FnMut(&T),
+{
+    if workers <= 1 || discourses.len() <= 1 {
+        return discourses
+            .iter()
+            .map(|d| {
+                let result = work(d);
+                on_done(&result);
+                result
+            })
+            .collect();
+    }
+
+    let queue: Arc<Mutex<VecDeque<usize>>> = Arc::new(Mutex::new((0..discourses.len()).collect()));
+    let work = Arc::new(work);
+    let (tx, rx) = std::sync::mpsc::channel::<(usize, T)>();
+
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            let queue = Arc::clone(&queue);
+            let work = Arc::clone(&work);
+            let tx = tx.clone();
+            s.spawn(move || {
+                loop {
+                    let next = queue.lock().unwrap().pop_front();
+                    let Some(idx) = next else { break };
+                    let result = work(discourses[idx]);
+                    if tx.send((idx, result)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(tx);
+
+        let mut results: Vec<(usize, T)> = Vec::with_capacity(discourses.len());
+        for (idx, result) in rx {
+            on_done(&result);
+            results.push((idx, result));
+        }
+        // sort is safe: handles are joined by the scope when it returns
+        results.sort_by_key(|(idx, _)| *idx);
+        results.into_iter().map(|(_, r)| r).collect()
+    })
 }
 
 pub fn ensure_api_credentials(discourse: &DiscourseConfig) -> Result<()> {

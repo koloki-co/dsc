@@ -4,7 +4,10 @@
 
 use crate::api::{DiscourseClient, SiteSettingDetail};
 use crate::cli::ListFormat;
-use crate::commands::common::{emit_result, ensure_api_credentials, parse_tags, select_discourse};
+use crate::commands::common::{
+    emit_result, ensure_api_credentials, fleet_worker_count, parse_tags, run_fleet,
+    select_discourse, selected_discourses,
+};
 use crate::config::{Config, DiscourseConfig};
 use crate::utils::atomic_write_private;
 use anyhow::{Context, Result, anyhow};
@@ -122,12 +125,13 @@ pub fn audit_site_setting(
     tags: Option<&str>,
     format: ListFormat,
 ) -> Result<()> {
-    let filter = tags.map(parse_tags).unwrap_or_default();
-    let rows: Vec<AuditRow> = config
-        .discourse
-        .iter()
-        .filter(|d| matches_tag_filter(d, &filter))
-        .map(|d| match fetch_one_setting(d, setting) {
+    let discourses = selected_discourses(config, None, tags)?;
+    let setting_owned = setting.to_string();
+
+    let rows: Vec<AuditRow> = run_fleet(
+        &discourses,
+        fleet_worker_count(None, discourses.len(), 8, false),
+        move |d| match fetch_one_setting(d, &setting_owned) {
             Ok(value) => AuditRow {
                 discourse: d.name.clone(),
                 value: Some(value),
@@ -138,8 +142,9 @@ pub fn audit_site_setting(
                 value: None,
                 error: Some(e.to_string()),
             },
-        })
-        .collect();
+        },
+        |_| {},
+    );
 
     match format {
         ListFormat::Text => print!("{}", render_audit_text(setting, &rows)),

@@ -4,7 +4,9 @@
 
 use crate::api::{DiscourseClient, SearchHit};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse, selected_discourses};
+use crate::commands::common::{
+    ensure_api_credentials, fleet_worker_count, run_fleet, select_discourse, selected_discourses,
+};
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
 use serde::Serialize;
@@ -68,18 +70,27 @@ pub fn search_all(
         });
     }
 
+    let query_owned = query.to_string();
+    let results: Vec<(String, Result<Vec<SearchHit>>)> = run_fleet(
+        &discourses,
+        fleet_worker_count(None, discourses.len(), 8, false),
+        move |discourse| (discourse.name.clone(), search_one(discourse, &query_owned)),
+        |(name, res)| {
+            if let Err(e) = res {
+                eprintln!("{name}: search failed - {e}");
+            }
+        },
+    );
+
     let mut hits: Vec<ForumHit> = Vec::new();
     let mut failed = 0usize;
-    for discourse in &discourses {
-        match search_one(discourse, query) {
+    for (name, res) in results {
+        match res {
             Ok(forum_hits) => hits.extend(forum_hits.into_iter().map(|hit| ForumHit {
-                forum: discourse.name.clone(),
+                forum: name.clone(),
                 hit,
             })),
-            Err(e) => {
-                failed += 1;
-                eprintln!("{}: search failed - {e}", discourse.name);
-            }
+            Err(_) => failed += 1,
         }
     }
 
