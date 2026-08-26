@@ -14,6 +14,7 @@ Neither `dsc topic` nor `dsc post` has an ownership-change subcommand. `dsc post
 
 ```text
 dsc topic change-owner <DISCOURSE> <TOPIC_ID> <USERNAME> [--post <POST_ID>]...
+dsc post change-owner <DISCOURSE> <POST_ID> <USERNAME>
 ```
 
 - With no `--post` flags: reassigns just the topic's first post (the OP), matching what most people mean by "change the topic's owner."
@@ -21,6 +22,7 @@ dsc topic change-owner <DISCOURSE> <TOPIC_ID> <USERNAME> [--post <POST_ID>]...
 - `<USERNAME>` is validated against the target Discourse before the request is sent (reuse the existing user-lookup helper used elsewhere in `dsc`), so a typo fails fast with a clear error rather than a confusing 4xx from Discourse.
 - Honours `--dry-run`: prints the resolved topic ID, post ID(s), current author(s), and target username without sending the request.
 - Not a `pull`/`push` pair - this is a one-shot mutation, closer in shape to `dsc topic title` or `dsc topic tag`.
+- `dsc post change-owner <discourse> <post_id> <username>` is a single-post alias: it resolves the post's topic via the same lookup `dsc post info` uses, then delegates to the topic command scoped to just that post via `--post <post_id>`. For the common case where the operator has a post ID (e.g. from `dsc post info` or a Reviewable) but not its topic ID.
 
 ## Reference: API calls observed in the field
 
@@ -37,7 +39,7 @@ Verified against ACCM on 25 August 2026 using `dsc 0.15.0` and Discourse `2026.8
 ### Phase 2 - iteration ergonomics
 
 - [x] `--post <POST_ID>` repeatable flag for reassigning specific non-OP posts.
-- [ ] Consider a corresponding `dsc post change-owner <discourse> <post_id> <username>` alias for the single-post case, mirroring the `topic`/`post` split used elsewhere (e.g. `topic pull --full` vs `post pull`).
+- [x] `dsc post change-owner <discourse> <post_id> <username>` alias for the single-post case, mirroring the `topic`/`post` split used elsewhere (e.g. `topic pull --full` vs `post pull`).
 
 ### Phase 3 - nice to have
 
