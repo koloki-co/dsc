@@ -1531,6 +1531,13 @@ fn main() -> Result<()> {
                 post_id,
                 format,
             } => commands::post::post_info(&config, &discourse, post_id, format),
+            PostCommand::ChangeOwner {
+                discourse,
+                post_id,
+                username,
+            } => {
+                commands::post::post_change_owner(&config, &discourse, post_id, &username, dry_run)
+            }
         },
 
         Commands::Tag { command } => match command {

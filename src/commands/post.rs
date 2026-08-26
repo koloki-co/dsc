@@ -5,6 +5,7 @@
 use crate::api::{DiscourseClient, PostEditOptions};
 use crate::cli::ListFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::topic::topic_change_owner;
 use crate::config::Config;
 use crate::utils::{atomic_write, normalize_baseurl};
 use anyhow::{Context, Result, anyhow};
@@ -211,6 +212,31 @@ pub fn post_info(
     }
 
     Ok(())
+}
+
+/// Reassign the visible author of a single post by ID, without needing its
+/// topic ID. Resolves the post's topic and delegates to `topic change-owner`
+/// scoped to just that post.
+pub fn post_change_owner(
+    config: &Config,
+    discourse_name: &str,
+    post_id: u64,
+    username: &str,
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+
+    let post = client.fetch_post_metadata(post_id)?;
+    topic_change_owner(
+        config,
+        discourse_name,
+        post.topic_id,
+        username,
+        &[post_id],
+        dry_run,
+    )
 }
 
 fn read_body(local_path: Option<&Path>) -> Result<String> {

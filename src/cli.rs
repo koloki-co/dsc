@@ -2559,6 +2559,19 @@ pub enum PostCommand {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
+    /// Reassign the visible author of a single post by ID. Honours `--dry-run`.
+    ///
+    /// A single-post alias for `topic change-owner --post`, for when you
+    /// have a post ID (e.g. from `post info` or a Reviewable) but not its
+    /// topic ID.
+    ChangeOwner {
+        /// Discourse name.
+        discourse: String,
+        /// Post ID.
+        post_id: u64,
+        /// Username to reassign the post to.
+        username: String,
+    },
 }
 
 #[derive(Subcommand)]

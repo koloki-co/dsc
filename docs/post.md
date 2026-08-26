@@ -62,6 +62,19 @@ dsc post info myforum 61695
 dsc post info myforum 61695 --format json
 ```
 
+## dsc post change-owner
+
+```text
+dsc post change-owner <discourse> <post-id> <username>
+```
+
+Reassigns the visible author of a single post by ID, without needing its topic ID. Resolves the post's topic the same way `dsc post info` does, then reassigns just that one post (`POST /t/{topic-id}/change-owner.json`) - a single-post alias for `dsc topic change-owner --post <post-id>`. Useful when you have a post ID (e.g. from `dsc post info` or a Reviewable) but not its topic ID. `<username>` is validated against the target Discourse before the mutating request is sent. Supports `--dry-run`.
+
+```bash
+dsc post change-owner myforum 61695 janedoe
+# post 61695 in topic 723 reassigned: opsadmin → janedoe
+```
+
 ## Notes
 
 - Post edits and deletes require either admin scope or that the API user owns the post.

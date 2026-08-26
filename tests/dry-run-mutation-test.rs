@@ -477,6 +477,11 @@ const CASES: &[Case] = &[
         true,
     ),
     (
+        "post change-owner",
+        &["post", "change-owner", "mock", "1", "tester"],
+        true,
+    ),
+    (
         "category copy",
         &["category", "copy", "mock", "4", "--target", "mock"],
         true,
@@ -968,6 +973,37 @@ fn topic_change_owner_uses_the_canonical_username() {
         request.contains("username=Tester"),
         "unexpected request: {request}"
     );
+    assert!(
+        request.contains("post_ids%5B%5D=1"),
+        "unexpected request: {request}"
+    );
+}
+
+#[test]
+fn post_change_owner_resolves_topic_and_scopes_to_the_one_post() {
+    let (baseurl, log) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = dir.path().join("dsc.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{baseurl}\"\napikey = \"mock-key\"\napi_username = \"tester\"\n"
+        ),
+    )
+    .expect("write config");
+
+    let (output, ok) = run_dsc(&["post", "change-owner", "mock", "1", "tester"], &config);
+    assert!(ok, "post change-owner failed: {output}");
+    assert!(
+        output.contains("post 1 in topic 7 reassigned: tester → Tester"),
+        "unexpected output: {output}"
+    );
+
+    let requests = log.lock().expect("mock log poisoned");
+    let request = requests
+        .iter()
+        .find(|request| request.starts_with("POST /t/7/change-owner.json\n"))
+        .expect("change-owner request");
     assert!(
         request.contains("post_ids%5B%5D=1"),
         "unexpected request: {request}"
