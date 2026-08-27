@@ -3,9 +3,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::api::{DiscourseClient, VersionInfo};
-use crate::commands::common::{
-    ensure_api_credentials, missing_config, shell_quote, validate_ssh_target,
-};
+use crate::commands::common::{ensure_api_credentials, missing_config, shell_quote};
+use crate::commands::ssh::build_ssh_command;
 use crate::commands::update_log::{self, LogKind};
 use crate::config::{Config, DiscourseConfig, find_discourse};
 use crate::utils::color_discourse_label;
@@ -1366,47 +1365,6 @@ fn diagnostic_tail(output: &str) -> String {
             .rev()
             .collect();
         format!("[truncated]\n{truncated}")
-    }
-}
-
-fn build_ssh_command(target: &str, extra_options: &[&str]) -> Result<std::process::Command> {
-    validate_ssh_target(target)?;
-    let mut cmd = std::process::Command::new("ssh");
-    cmd.arg("-o").arg("BatchMode=yes");
-    // Connection and liveness defaults so a black-holed host fails fast
-    // instead of hanging indefinitely. These are conservative for long
-    // rebuild commands: `ServerAliveInterval` sends a keepalive probe
-    // every 30s and drops the connection after 3 missed responses (90s),
-    // distinguishing a legitimately long operation from a dead session.
-    // `ConnectTimeout=10` matches the reboot probe and config check.
-    // `DSC_SSH_OPTIONS` can override any of these.
-    cmd.arg("-o").arg("ConnectTimeout=10");
-    cmd.arg("-o").arg("ServerAliveInterval=30");
-    cmd.arg("-o").arg("ServerAliveCountMax=3");
-    if let Some(strict) = ssh_strict_host_key_checking() {
-        cmd.arg("-o")
-            .arg(format!("StrictHostKeyChecking={}", strict));
-    }
-    for option in extra_options {
-        cmd.arg(option);
-    }
-    if let Ok(raw) = std::env::var("DSC_SSH_OPTIONS")
-        && !raw.trim().is_empty()
-    {
-        cmd.args(raw.split_whitespace());
-    }
-    cmd.arg("--").arg(target);
-    Ok(cmd)
-}
-
-fn ssh_strict_host_key_checking() -> Option<String> {
-    let value = std::env::var("DSC_SSH_STRICT_HOST_KEY_CHECKING")
-        .unwrap_or_else(|_| "accept-new".to_string());
-    let value = value.trim();
-    if value.is_empty() {
-        None
-    } else {
-        Some(value.to_string())
     }
 }
 

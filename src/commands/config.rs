@@ -4,13 +4,12 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::validate_ssh_target;
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
 use serde::Serialize;
 use std::collections::{HashMap, VecDeque};
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 
@@ -259,24 +258,17 @@ fn check_api(discourse: &DiscourseConfig) -> CheckStatus {
 }
 
 fn check_ssh(host: &str) -> CheckStatus {
-    if let Err(err) = validate_ssh_target(host) {
-        return CheckStatus {
-            ok: false,
-            detail: err.to_string(),
-        };
-    }
-    let output = Command::new("ssh")
-        .args([
-            "-o",
-            "BatchMode=yes",
-            "-o",
-            "ConnectTimeout=5",
-            "-o",
-            "StrictHostKeyChecking=accept-new",
-            "--",
-            host,
-            "true",
-        ])
+    let mut command = match crate::commands::ssh::build_ssh_command_with_timeout(host, 5, &[]) {
+        Ok(command) => command,
+        Err(err) => {
+            return CheckStatus {
+                ok: false,
+                detail: err.to_string(),
+            };
+        }
+    };
+    let output = command
+        .arg("true")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())

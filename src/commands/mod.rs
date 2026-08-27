@@ -32,6 +32,7 @@ pub mod render;
 pub mod sar;
 pub mod search;
 pub mod setting;
+pub(crate) mod ssh;
 pub mod tag;
 pub mod theme;
 pub mod topic;
