@@ -143,6 +143,7 @@ pub fn topic_push(
     local_path: &Path,
     dry_run: bool,
     edit_opts: PostEditOptions,
+    render: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -154,6 +155,11 @@ pub fn topic_push(
         .first()
         .ok_or_else(|| anyhow!("topic has no posts"))?;
     let raw = read_markdown(local_path)?;
+    let raw = if render {
+        crate::commands::render::render_content(config, discourse, &raw)?
+    } else {
+        raw
+    };
     // Strip any YAML front matter so a manually-annotated file (or one carried
     // over from a `category pull`) pushes a clean body — the `---` block is
     // local-only metadata and must never reach the published post.
@@ -234,12 +240,18 @@ pub fn topic_reply(
     local_path: Option<&Path>,
     dry_run: bool,
     format: ListFormat,
+    render: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
 
     let raw = read_reply_input(local_path)?;
+    let raw = if render {
+        crate::commands::render::render_content(config, discourse, &raw)?
+    } else {
+        raw
+    };
     if raw.trim().is_empty() {
         return Err(anyhow!("reply body is empty"));
     }
@@ -431,6 +443,7 @@ fn fetch_topic_brief(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn topic_new(
     config: &Config,
     discourse_name: &str,
@@ -439,6 +452,7 @@ pub fn topic_new(
     local_path: Option<&Path>,
     dry_run: bool,
     format: ListFormat,
+    render: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
@@ -448,6 +462,11 @@ pub fn topic_new(
         return Err(anyhow!("topic title is empty"));
     }
     let raw = read_reply_input(local_path)?;
+    let raw = if render {
+        crate::commands::render::render_content(config, discourse, &raw)?
+    } else {
+        raw
+    };
     if raw.trim().is_empty() {
         return Err(anyhow!("topic body is empty"));
     }

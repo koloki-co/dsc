@@ -93,3 +93,19 @@ Both `[template.vars]` and `[discourse.template]` are optional. A config without
 Phase 1 supports plain `{{ variable }}` interpolation only (backed by the [Tera](https://crates.io/crates/tera) engine). Filters, conditionals (`{% if %}`), loops (`{% for %}`), and Tera comments are rejected rather than becoming an accidental supported surface before a later phase.
 
 YAML front matter at the top of a file is rendered like the rest of the content; `dsc topic push`/`category push` strip it separately after any rendering step.
+
+## Rendering inline with `--render`
+
+`--render` applies the same substitution as `dsc render` directly inside a push or post command, so a template file does not need a separate rendering step before it is sent:
+
+```text
+dsc topic new     <discourse> <category> --title <title> <file> --render
+dsc topic push    <discourse> <topic-id> <file> --render
+dsc topic reply   <discourse> <topic-id> <file> --render
+dsc category push <discourse> <category> <dir> --render
+```
+
+- `--render` is a boolean flag. When present, the file (or every `.md` file in the directory, for `category push`) is rendered against the target forum's resolved variables before it is sent.
+- Without `--render`, these commands behave exactly as before: no substitution, files sent as-is.
+- Rendering here is always non-strict: an unknown variable warns to stderr and substitutes an empty string, the same as `dsc render` without `--strict`. Use standalone `dsc render --strict` first to catch unresolved variables if that matters for a given push.
+- `--render` composes with `-n`/`--dry-run`: the dry-run preview reflects the rendered content, not the raw file.

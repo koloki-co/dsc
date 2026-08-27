@@ -273,6 +273,7 @@ fn main() -> Result<()> {
                 topic_id,
                 no_bump,
                 skip_revision,
+                render,
             } => commands::topic::topic_push(
                 &config,
                 &discourse,
@@ -283,6 +284,7 @@ fn main() -> Result<()> {
                     no_bump,
                     skip_revision,
                 },
+                render,
             ),
 
             TopicCommand::Sync {
@@ -306,6 +308,7 @@ fn main() -> Result<()> {
                 topic_id,
                 local_path,
                 format,
+                render,
             } => commands::topic::topic_reply(
                 &config,
                 &discourse,
@@ -313,6 +316,7 @@ fn main() -> Result<()> {
                 local_path.as_deref(),
                 dry_run,
                 format,
+                render,
             ),
 
             TopicCommand::New {
@@ -321,6 +325,7 @@ fn main() -> Result<()> {
                 title,
                 local_path,
                 format,
+                render,
             } => commands::topic::topic_new(
                 &config,
                 &discourse,
@@ -329,6 +334,7 @@ fn main() -> Result<()> {
                 local_path.as_deref(),
                 dry_run,
                 format,
+                render,
             ),
 
             TopicCommand::Delete {
@@ -426,6 +432,7 @@ fn main() -> Result<()> {
                 updates_only,
                 no_bump,
                 skip_revision,
+                render,
             } => commands::category::category_push(
                 &config,
                 &discourse,
@@ -440,6 +447,7 @@ fn main() -> Result<()> {
                     },
                     admonition_style: convert_admonitions,
                     rewrite_links,
+                    render,
                 },
             ),
 
