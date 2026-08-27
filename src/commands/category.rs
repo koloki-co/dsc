@@ -225,6 +225,8 @@ pub struct CategoryPushOptions {
     pub admonition_style: Option<AdmonitionStyle>,
     /// Rewrite local Markdown links to same-category forum topic URLs.
     pub rewrite_links: bool,
+    /// Render `{{ variable }}` template placeholders in each file before pushing.
+    pub render: bool,
 }
 
 /// One planned change for `category push`, decided before any mutation so
@@ -285,6 +287,11 @@ pub fn category_push(
     let mut plan = Vec::with_capacity(paths.len());
     for path in paths {
         let raw = read_markdown(&path)?;
+        let raw = if options.render {
+            crate::commands::render::render_content(config, discourse, &raw)?
+        } else {
+            raw
+        };
         let (front, body) = strip_frontmatter(&raw);
         let body = match options.admonition_style {
             Some(style) => convert_mkdocs_admonitions(&body, style),

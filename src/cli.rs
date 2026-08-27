@@ -953,6 +953,10 @@ pub enum TopicCommand {
         /// trail - use sparingly.
         #[arg(long)]
         skip_revision: bool,
+        /// Render `{{ variable }}` template placeholders (see `dsc render`)
+        /// against this forum's resolved variables before pushing.
+        #[arg(long)]
+        render: bool,
     },
     /// Sync a topic and local Markdown file using newest timestamp.
     #[command(visible_alias = "sy")]
@@ -995,6 +999,10 @@ pub enum TopicCommand {
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
+        /// Render `{{ variable }}` template placeholders (see `dsc render`)
+        /// against this forum's resolved variables before posting.
+        #[arg(long)]
+        render: bool,
     },
     /// Create a new topic in a category, body from a file or stdin.
     #[command(visible_alias = "n")]
@@ -1012,6 +1020,10 @@ pub enum TopicCommand {
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
+        /// Render `{{ variable }}` template placeholders (see `dsc render`)
+        /// against this forum's resolved variables before posting.
+        #[arg(long)]
+        render: bool,
     },
     /// Delete one or more topics by topic ID. Soft-delete by default; `--purge` force-destroys an eligible deleted topic.
     #[command(visible_alias = "rm")]
@@ -1173,6 +1185,10 @@ pub enum CategoryCommand {
         /// trail - use sparingly.
         #[arg(long)]
         skip_revision: bool,
+        /// Render `{{ variable }}` template placeholders (see `dsc render`)
+        /// in each file against this forum's resolved variables before pushing.
+        #[arg(long)]
+        render: bool,
     },
     /// Sync category *definitions* (name, colour, permissions, topic template,
     /// tag rules, ...) as a file. Distinct from `pull`/`push`, which sync topic

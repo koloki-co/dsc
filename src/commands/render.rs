@@ -91,6 +91,21 @@ fn read_template_input(file: &Path) -> Result<String> {
     }
 }
 
+/// Render `content` against `discourse`'s resolved template variables, for
+/// callers integrating rendering into another command (the `--render` flag
+/// on `topic new`/`topic push`/`topic reply`/`category push`) rather than
+/// the standalone `dsc render` command. Non-strict: an unknown variable
+/// warns to stderr and substitutes an empty string, matching `dsc render`'s
+/// default behaviour.
+pub fn render_content(
+    config: &Config,
+    discourse: &DiscourseConfig,
+    content: &str,
+) -> Result<String> {
+    let vars = resolve_template_vars(config, discourse);
+    render_template(content, &vars, false)
+}
+
 /// Resolve the full template variable map for one forum: built-ins first,
 /// then `[template.vars]` globals, then the forum's own `[discourse.template]`
 /// (each layer overriding the previous on a same-name key).
@@ -259,6 +274,23 @@ mod tests {
         vars.insert("community".to_string(), "OpenEHR".to_string());
         let out = render_template("Welcome to {{ community }}!", &vars, true).unwrap();
         assert_eq!(out, "Welcome to OpenEHR!");
+    }
+
+    #[test]
+    fn render_content_substitutes_discourse_template_vars() {
+        let config = Config::default();
+        let mut discourse = DiscourseConfig {
+            name: "openehr".to_string(),
+            baseurl: "https://discourse.openehr.org".to_string(),
+            ..DiscourseConfig::default()
+        };
+        discourse.template.insert(
+            "organisation".to_string(),
+            "openEHR International".to_string(),
+        );
+        let out =
+            render_content(&config, &discourse, "Brought to you by {{ organisation }}.").unwrap();
+        assert_eq!(out, "Brought to you by openEHR International.");
     }
 
     #[test]

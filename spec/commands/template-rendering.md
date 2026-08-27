@@ -222,7 +222,7 @@ A one-time find-and-replace pass over the 24 template files converts them. The `
 
 ### Phase 2 - iteration ergonomics
 
-- [ ] `--render` flag on `dsc topic new`, `dsc topic push`, `dsc topic reply`, `dsc category push`.
+- [x] `--render` flag on `dsc topic new`, `dsc topic push`, `dsc topic reply`, `dsc category push`.
 - [x] `--strict` flag: unknown variables are a hard error (exit non-zero with a message naming every unknown variable).
 - [x] `dsc render --list-vars <discourse>`: print the full resolved variable map for a forum (useful for debugging and for seeing what is available before writing a template).
 - [ ] Raw block protection: content inside ```` ```raw ```` / ```` ``` ```` code fences is not substituted. (Alternatively, Tera's `{% raw %}...{% endraw %}` blocks, but those inject non-Markdown syntax into the file. A Markdown-aware code-fence skip is cleaner for this use case.)
