@@ -131,6 +131,16 @@ pub(crate) fn run_ssh_capture(
     Ok((stdout_buf, stderr_text))
 }
 
+/// Run a remote command and return its stdout as a `String`. This is the
+/// text counterpart of [`run_ssh_capture`] for callers that need the full
+/// stdout but don't need binary-safe handling. Caps stdout at 1 MiB to
+/// prevent a hostile remote from exhausting memory through a text response.
+pub(crate) fn run_ssh_text(target: &str, command: &str) -> Result<String> {
+    const TEXT_CAP: usize = 1024 * 1024;
+    let (bytes, _stderr) = run_ssh_capture(target, command, TEXT_CAP)?;
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
 /// Pipe `input` to a remote command's stdin and return its stdout as a
 /// bounded `Vec<u8>`. Used by callers that need to upload bytes to a remote
 /// process (e.g. `base64 -d > file`). The `stdout_cap` bounds the response

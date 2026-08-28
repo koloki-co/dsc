@@ -7,7 +7,7 @@ use crate::cli::ListFormat;
 use crate::commands::common::{
     emit_result, ensure_api_credentials, not_found, render_shell_template, select_discourse,
 };
-use crate::commands::update::run_ssh_command;
+use crate::commands::ssh::run_ssh_text;
 use crate::config::{Config, DiscourseConfig};
 use crate::utils::{atomic_write_private, slugify};
 use anyhow::{Context, Result, anyhow};
@@ -226,7 +226,7 @@ pub fn theme_remove(
         println!("[dry-run] would run on {}: {}", target, command);
         return Ok(());
     }
-    let output = run_ssh_command(&target, &command)?;
+    let output = run_ssh_text(&target, &command)?;
     println!("Theme removal completed: {}", name);
     if !output.trim().is_empty() {
         println!("{}", output.trim());

@@ -7,7 +7,7 @@ use crate::commands::common::{
     ensure_api_credentials, fleet_worker_count, run_fleet, select_discourse, selected_discourses,
     shell_quote,
 };
-use crate::commands::update::run_ssh_command;
+use crate::commands::ssh::run_ssh_text;
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
 use serde::Serialize;
@@ -201,7 +201,7 @@ fn change_app_env(
     let discourse = select_discourse(config, Some(discourse_name))?;
     let target = ssh_target(discourse)?;
     let path = app_yml_path(discourse);
-    let original = run_ssh_command(target, &format!("cat -- {}", shell_quote(&path)))?;
+    let original = run_ssh_text(target, &format!("cat -- {}", shell_quote(&path)))?;
     let (updated, previous) = edit_app_env(&original, key, new_value)?;
     if updated == original {
         println!("{} is already unchanged on {}.", key, discourse.name);
@@ -226,14 +226,14 @@ fn change_app_env(
             discourse.name
         ));
     }
-    if options.rebuild && run_ssh_command(target, REBUILD_CHECK_CMD)?.contains("REBUILDING") {
+    if options.rebuild && run_ssh_text(target, REBUILD_CHECK_CMD)?.contains("REBUILDING") {
         return Err(anyhow!(
             "a launcher rebuild is already running on {}; no changes were made",
             discourse.name
         ));
     }
     write_app_env(target, &path, &updated, options.backup)?;
-    let verified = run_ssh_command(target, &format!("cat -- {}", shell_quote(&path)))?;
+    let verified = run_ssh_text(target, &format!("cat -- {}", shell_quote(&path)))?;
     let parsed = parse_app_env(&verified)?;
     if parsed.get(key).map(String::as_str) != new_value {
         return Err(anyhow!("post-write verification failed for {key}"));
@@ -243,7 +243,7 @@ fn change_app_env(
         let install_dir = path
             .strip_suffix("/containers/app.yml")
             .unwrap_or("/var/discourse");
-        run_ssh_command(
+        run_ssh_text(
             target,
             &format!(
                 "cd -- {} && ./launcher rebuild app",
@@ -325,7 +325,7 @@ fn write_app_env(target: &str, path: &str, content: &str, backup: bool) -> Resul
         encoded = shell_quote(&encoded),
         path = shell_quote(path),
     );
-    run_ssh_command(target, &command).map(|_| ())
+    run_ssh_text(target, &command).map(|_| ())
 }
 
 fn base64_encode(value: &str) -> String {
@@ -425,7 +425,7 @@ fn fetch_app_env(discourse: &DiscourseConfig) -> Result<BTreeMap<String, String>
         .ok_or_else(|| anyhow!("missing ssh_host for discourse {}", discourse.name))?;
     let path = app_yml_path(discourse);
     let command = format!("cat -- {}", shell_quote(&path));
-    let raw = run_ssh_command(target, &command)?;
+    let raw = run_ssh_text(target, &command)?;
     parse_app_env(&raw)
 }
 
