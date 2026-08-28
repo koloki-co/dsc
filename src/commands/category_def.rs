@@ -16,7 +16,7 @@ use crate::utils::atomic_write;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 
@@ -471,24 +471,54 @@ struct DefAction {
     rename_warning: bool,
 }
 
+/// O(1) lookup indices over a server category list, built once per push
+/// rather than re-scanned linearly for every file entry. Each map keeps the
+/// first server entry for a given key, matching the `Iterator::find` order
+/// the indices replace.
+struct ServerIndex<'a> {
+    by_id: HashMap<u64, &'a CategoryDefEntry>,
+    by_slug: HashMap<&'a str, &'a CategoryDefEntry>,
+    by_name: HashMap<&'a str, &'a CategoryDefEntry>,
+}
+
+impl<'a> ServerIndex<'a> {
+    fn build(server: &'a [CategoryDefEntry]) -> Self {
+        let mut by_id = HashMap::new();
+        let mut by_slug = HashMap::new();
+        let mut by_name = HashMap::new();
+        for s in server {
+            if let Some(id) = s.id {
+                by_id.entry(id).or_insert(s);
+            }
+            if let Some(slug) = &s.slug {
+                by_slug.entry(slug.as_str()).or_insert(s);
+            }
+            by_name.entry(s.name.as_str()).or_insert(s);
+        }
+        Self {
+            by_id,
+            by_slug,
+            by_name,
+        }
+    }
+}
+
 /// Match a file entry to a server entry: by `id`, else `slug`, else `name`.
 fn match_server<'a>(
     e: &CategoryDefEntry,
-    server: &'a [CategoryDefEntry],
+    index: &ServerIndex<'a>,
 ) -> (Option<&'a CategoryDefEntry>, bool) {
     if let Some(id) = e.id {
         // id given but absent -> treat as create, no rename ambiguity.
-        return (server.iter().find(|s| s.id == Some(id)), false);
+        return (index.by_id.get(&id).copied(), false);
     }
     if let Some(sl) = &e.slug
-        && let Some(s) = server
-            .iter()
-            .find(|s| s.slug.as_deref() == Some(sl.as_str()))
+        && let Some(s) = index.by_slug.get(sl.as_str())
     {
-        return (Some(s), false);
+        return (Some(*s), false);
     }
-    if let Some(s) = server.iter().find(|s| s.name == e.name) {
-        return (Some(s), false);
+    if let Some(s) = index.by_name.get(e.name.as_str()) {
+        return (Some(*s), false);
     }
     (None, true)
 }
@@ -599,9 +629,10 @@ fn changed_fields(e: &CategoryDefEntry, s: &CategoryDefEntry) -> Vec<&'static st
 
 /// Classify each file entry against the server (upsert; never delete).
 fn plan_push(file: &[CategoryDefEntry], server: &[CategoryDefEntry]) -> Vec<DefAction> {
+    let index = ServerIndex::build(server);
     file.iter()
         .map(|e| {
-            let (matched, rename_warning) = match_server(e, server);
+            let (matched, rename_warning) = match_server(e, &index);
             let (kind, server_id, changed_fields) = match matched {
                 Some(s) => {
                     let changed_fields = changed_fields(e, s);
@@ -1545,6 +1576,21 @@ mod tests {
         file.slug = Some("general".to_string());
         let plan = plan_push(&[file], &[server]);
         assert_eq!(plan[0].kind, DefActionKind::Unchanged);
+        assert!(!plan[0].rename_warning);
+    }
+
+    #[test]
+    fn plan_matches_first_server_entry_on_duplicate_name() {
+        // Two server categories share a name (a data anomaly Discourse
+        // shouldn't normally allow, but the matcher must stay deterministic
+        // rather than erroring or picking arbitrarily).
+        let mut first = entry("Dup");
+        first.id = Some(1);
+        let mut second = entry("Dup");
+        second.id = Some(2);
+        let file = entry("Dup");
+        let plan = plan_push(&[file], &[first, second]);
+        assert_eq!(plan[0].server_id, Some(1));
         assert!(!plan[0].rename_warning);
     }
 

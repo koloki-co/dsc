@@ -292,6 +292,8 @@ Each file category scans the server category list by ID, then slug, then name. L
 
 **Recommendation:** Build ID/slug/name indexes once and compare normalized sets without repeated cloning if scale measurements justify the extra structure.
 
+**Addressed 2026-08-28 (R52):** `plan_push` now builds a `ServerIndex` (id/slug/name `HashMap`s, first-match order preserved) once per push; `match_server` looks each file entry up in O(1) instead of scanning the server list. The `changed_fields` list-comparison cloning/sorting is unchanged - it operates on a single matched pair, not the full server list, so it was not part of the `O(file categories * server categories)` cost this item targeted.
+
 ### P26 - Low - Several complete-list loops have no total page or item budget
 
 **Evidence:** examples include category pagination in `src/api/categories.rs`, fallback group pagination in `src/api/groups.rs`, deleted-topic pagination in `src/api/topics.rs`, private-message pagination in `src/api/topics.rs`, and all-history user activity in `src/commands/user.rs`.
