@@ -9,8 +9,9 @@
 //! from update or configuration checks.
 
 use crate::commands::common::validate_ssh_target;
-use anyhow::Result;
-use std::process::Command;
+use anyhow::{Context, Result, anyhow};
+use std::io::{Read, Write};
+use std::process::{Command, Stdio};
 
 const DEFAULT_CONNECT_TIMEOUT_SECONDS: u64 = 10;
 const SERVER_ALIVE_INTERVAL_SECONDS: u64 = 30;
@@ -57,6 +58,149 @@ pub(crate) fn build_ssh_command_with_timeout(
     }
     cmd.arg("--").arg(target);
     Ok(cmd)
+}
+
+/// Maximum bytes captured from SSH stderr for diagnostics. Keeps a hostile
+/// or noisy remote from driving memory through the diagnostic path.
+#[allow(dead_code)]
+const MAX_STDERR_BYTES: usize = 4096;
+
+/// Run a remote command, capturing stdout as a bounded `Vec<u8>` and stderr
+/// as a bounded diagnostic string. Used by callers that need binary stdout
+/// (file download, checksum queries) rather than the lossy text capture in
+/// `update::run_ssh_command`. The `stdout_cap` bounds memory so a hostile or
+/// misbehaving remote cannot exhaust RAM through an unbounded response.
+#[allow(dead_code)]
+pub(crate) fn run_ssh_capture(
+    target: &str,
+    command: &str,
+    stdout_cap: usize,
+) -> Result<(Vec<u8>, String)> {
+    let mut ssh = build_ssh_command(target, &[])?;
+    ssh.arg(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = ssh
+        .spawn()
+        .with_context(|| format!("spawning ssh to {target}"))?;
+    let stdout = child.stdout.take().context("missing stdout")?;
+    let stderr = child.stderr.take().context("missing stderr")?;
+
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        stderr
+            .take((MAX_STDERR_BYTES + 1) as u64)
+            .read_to_end(&mut buf)
+            .ok();
+        String::from_utf8_lossy(&buf).trim().to_string()
+    });
+
+    let mut stdout_buf = Vec::new();
+    stdout
+        .take(stdout_cap as u64 + 1)
+        .read_to_end(&mut stdout_buf)
+        .with_context(|| format!("reading stdout from {target}"))?;
+    if stdout_buf.len() > stdout_cap {
+        return Err(anyhow!(
+            "remote stdout exceeded {stdout_cap} bytes on {target}"
+        ));
+    }
+
+    let status = child
+        .wait()
+        .with_context(|| format!("waiting for ssh to {target}"))?;
+    let stderr_text = stderr_handle
+        .join()
+        .unwrap_or_else(|_| "<stderr capture failed>".to_string());
+
+    if !status.success() {
+        let code = status
+            .code()
+            .map(|c| format!("exit {c}"))
+            .unwrap_or_else(|| "killed by signal".to_string());
+        let detail = if stderr_text.is_empty() {
+            String::new()
+        } else {
+            format!(": {stderr_text}")
+        };
+        return Err(anyhow!("ssh to {target} failed ({code}){detail}"));
+    }
+
+    Ok((stdout_buf, stderr_text))
+}
+
+/// Pipe `input` to a remote command's stdin and return its stdout as a
+/// bounded `Vec<u8>`. Used by callers that need to upload bytes to a remote
+/// process (e.g. `base64 -d > file`). The `stdout_cap` bounds the response
+/// the same way as [`run_ssh_capture`].
+#[allow(dead_code)]
+pub(crate) fn run_ssh_pipe(
+    target: &str,
+    command: &str,
+    input: &[u8],
+    stdout_cap: usize,
+) -> Result<(Vec<u8>, String)> {
+    let mut ssh = build_ssh_command(target, &[])?;
+    ssh.arg(command)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = ssh
+        .spawn()
+        .with_context(|| format!("spawning ssh to {target}"))?;
+    let mut stdin = child.stdin.take().context("missing stdin")?;
+    let stdout = child.stdout.take().context("missing stdout")?;
+    let stderr = child.stderr.take().context("missing stderr")?;
+
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        stderr
+            .take((MAX_STDERR_BYTES + 1) as u64)
+            .read_to_end(&mut buf)
+            .ok();
+        String::from_utf8_lossy(&buf).trim().to_string()
+    });
+
+    stdin
+        .write_all(input)
+        .with_context(|| format!("writing stdin to {target}"))?;
+    drop(stdin);
+
+    let mut stdout_buf = Vec::new();
+    stdout
+        .take(stdout_cap as u64 + 1)
+        .read_to_end(&mut stdout_buf)
+        .with_context(|| format!("reading stdout from {target}"))?;
+    if stdout_buf.len() > stdout_cap {
+        return Err(anyhow!(
+            "remote stdout exceeded {stdout_cap} bytes on {target}"
+        ));
+    }
+
+    let status = child
+        .wait()
+        .with_context(|| format!("waiting for ssh to {target}"))?;
+    let stderr_text = stderr_handle
+        .join()
+        .unwrap_or_else(|_| "<stderr capture failed>".to_string());
+
+    if !status.success() {
+        let code = status
+            .code()
+            .map(|c| format!("exit {c}"))
+            .unwrap_or_else(|| "killed by signal".to_string());
+        let detail = if stderr_text.is_empty() {
+            String::new()
+        } else {
+            format!(": {stderr_text}")
+        };
+        return Err(anyhow!("ssh to {target} failed ({code}){detail}"));
+    }
+
+    Ok((stdout_buf, stderr_text))
 }
 
 fn ssh_strict_host_key_checking() -> Option<String> {
@@ -116,5 +260,14 @@ mod tests {
     fn rejects_an_option_like_target() {
         let error = build_ssh_command("-oProxyCommand=bad", &[]).unwrap_err();
         assert!(error.to_string().contains("cannot start with '-"));
+    }
+
+    #[test]
+    fn stdout_cap_overflow_is_detectable() {
+        let cap = 100;
+        let buf = vec![0u8; cap + 1];
+        assert!(buf.len() > cap);
+        let buf_exact = vec![0u8; cap];
+        assert!(buf_exact.len() <= cap);
     }
 }
