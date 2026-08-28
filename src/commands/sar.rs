@@ -9,7 +9,7 @@ use crate::utils::{
     atomic_write_private, current_utc_iso8601, ensure_private_dir, normalize_baseurl, slugify,
     write_markdown_private,
 };
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -28,6 +28,15 @@ struct SectionCounts {
     likes: usize,
     groups: usize,
     messages: usize,
+}
+
+/// Result of a single post-body fetch: either the raw body (which may
+/// legitimately be `None` if Discourse returns no `raw` field), or a fetch
+/// error message. Distinguishing the two prevents a transient network
+/// failure from becoming a silently missing body in a GDPR bundle.
+enum RawFetch {
+    Ok(Option<String>),
+    Failed(String),
 }
 
 /// Discourse user-action type ids we care about for a SAR.
@@ -109,6 +118,12 @@ pub fn sar(
     let post_ids: Vec<u64> = post_actions.iter().filter_map(|a| a.post_id).collect();
     let raws = fetch_post_raws_parallel(&client, &post_ids, 6);
 
+    // Collect post IDs whose body fetch failed so we can surface them
+    // in the bundle and the closing summary rather than silently omitting
+    // them - a GDPR Art. 15 export must not claim completeness it cannot
+    // prove.
+    let mut failed_fetches: Vec<u64> = Vec::new();
+
     // Stream posts.json to disk element by element rather than building a
     // Vec<Value> and serializing the whole thing at once, so memory holds
     // at most one post body at a time.
@@ -121,9 +136,20 @@ pub fn sar(
         if i > 0 {
             file.write_all(b",\n")?;
         }
-        let raw = action
-            .post_id
-            .and_then(|pid| raws.get(&pid).cloned().flatten());
+        let raw = match action.post_id {
+            Some(pid) => match raws.get(&pid) {
+                Some(RawFetch::Ok(body)) => body.clone(),
+                Some(RawFetch::Failed(msg)) => {
+                    if !failed_fetches.contains(&pid) {
+                        failed_fetches.push(pid);
+                    }
+                    eprintln!("Warning: failed to fetch post {pid}: {msg}");
+                    None
+                }
+                None => None,
+            },
+            None => None,
+        };
         if let (Some(pid), Some(body)) = (action.post_id, raw.as_deref()) {
             let stem = action
                 .slug
@@ -185,6 +211,7 @@ pub fn sar(
         &counts,
         include_messages,
         has_ip,
+        &failed_fetches,
     );
     write_json(&dir.join("manifest.json"), &manifest)?;
     write_markdown_private(
@@ -195,7 +222,7 @@ pub fn sar(
 
     println!("SAR bundle written to {}", dir.display());
     println!(
-        "  {} posts, {} likes, {} group(s){}",
+        "  {} posts, {} likes, {} group(s){}{}",
         counts.posts,
         counts.likes,
         counts.groups,
@@ -203,12 +230,35 @@ pub fn sar(
             format!(", {} message thread(s)", counts.messages)
         } else {
             String::new()
+        },
+        if failed_fetches.is_empty() {
+            String::new()
+        } else {
+            format!(", {} post body fetch(es) FAILED", failed_fetches.len())
         }
     );
+    if !failed_fetches.is_empty() {
+        eprintln!(
+            "WARNING: {} post body fetch(es) failed (ids: {}); the bundle may be incomplete.",
+            failed_fetches.len(),
+            failed_fetches
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     println!(
         "This bundle contains personal data. Review it (see README.md), transmit \
          it securely, and delete it once the request is fulfilled."
     );
+    if !failed_fetches.is_empty() {
+        return Err(anyhow!(
+            "{} post body fetch(es) failed; the SAR bundle may be incomplete \
+             (see manifest.json and warnings above)",
+            failed_fetches.len()
+        ));
+    }
     Ok(())
 }
 
@@ -267,21 +317,26 @@ fn collect_all_actions(
 
 /// Fetch raw post bodies for a list of post IDs through a bounded worker
 /// pool, so one slow or rate-limited response does not block the rest.
-/// Returns a map of post_id -> raw body (or None if the fetch failed).
+/// Returns a map of post_id -> `RawFetch`, distinguishing a legitimately
+/// missing `raw` field from a fetch failure so the caller can surface
+/// incomplete bundles rather than silently omitting bodies.
 fn fetch_post_raws_parallel(
     client: &DiscourseClient,
     post_ids: &[u64],
     workers: usize,
-) -> HashMap<u64, Option<String>> {
+) -> HashMap<u64, RawFetch> {
     if workers <= 1 || post_ids.len() <= 1 {
         return post_ids
             .iter()
-            .map(|&pid| (pid, client.fetch_post_raw(pid).ok().flatten()))
+            .map(|&pid| match client.fetch_post_raw(pid) {
+                Ok(body) => (pid, RawFetch::Ok(body)),
+                Err(e) => (pid, RawFetch::Failed(e.to_string())),
+            })
             .collect();
     }
 
     let queue: Arc<Mutex<VecDeque<u64>>> = Arc::new(Mutex::new(post_ids.iter().copied().collect()));
-    let (tx, rx) = std::sync::mpsc::channel::<(u64, Option<String>)>();
+    let (tx, rx) = std::sync::mpsc::channel::<(u64, RawFetch)>();
 
     std::thread::scope(|s| {
         for _ in 0..workers {
@@ -292,8 +347,11 @@ fn fetch_post_raws_parallel(
                 loop {
                     let next = queue.lock().unwrap().pop_front();
                     let Some(pid) = next else { break };
-                    let raw = client.fetch_post_raw(pid).ok().flatten();
-                    if tx.send((pid, raw)).is_err() {
+                    let fetch = match client.fetch_post_raw(pid) {
+                        Ok(body) => RawFetch::Ok(body),
+                        Err(e) => RawFetch::Failed(e.to_string()),
+                    };
+                    if tx.send((pid, fetch)).is_err() {
                         break;
                     }
                 }
@@ -301,9 +359,9 @@ fn fetch_post_raws_parallel(
         }
         drop(tx);
 
-        let mut results: HashMap<u64, Option<String>> = HashMap::with_capacity(post_ids.len());
-        for (pid, raw) in rx {
-            results.insert(pid, raw);
+        let mut results: HashMap<u64, RawFetch> = HashMap::with_capacity(post_ids.len());
+        for (pid, fetch) in rx {
+            results.insert(pid, fetch);
         }
         results
     })
@@ -401,6 +459,7 @@ fn build_manifest(
     counts: &SectionCounts,
     include_messages: bool,
     has_ip: bool,
+    failed_post_fetches: &[u64],
 ) -> Value {
     let mut review_required: Vec<String> = Vec::new();
     if has_ip {
@@ -412,6 +471,17 @@ fn build_manifest(
             "messages/ contains third-party personal data; review and redact before disclosure"
                 .into(),
         );
+    }
+    if !failed_post_fetches.is_empty() {
+        review_required.push(format!(
+            "post body fetch failed for {} post(s): {}; bundle may be incomplete",
+            failed_post_fetches.len(),
+            failed_post_fetches
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+        ));
     }
     json!({
         "subject": {
@@ -428,6 +498,7 @@ fn build_manifest(
             "groups": counts.groups,
             "messages": counts.messages,
         },
+        "failed_post_fetches": failed_post_fetches,
         "review_required": review_required,
     })
 }
@@ -545,6 +616,7 @@ mod tests {
             &counts,
             true,
             true,
+            &[],
         );
         assert_eq!(m["subject"]["user_id"], 412);
         assert_eq!(m["sections"]["posts"], 84);
@@ -561,9 +633,29 @@ mod tests {
             groups: 0,
             messages: 0,
         };
-        let m = build_manifest(&subject(), "rcpch", "t", &counts, false, false);
+        let m = build_manifest(&subject(), "rcpch", "t", &counts, false, false, &[]);
         assert!(m["review_required"].as_array().unwrap().is_empty());
         assert_eq!(m["messages_included"], false);
+    }
+
+    #[test]
+    fn manifest_flags_failed_post_fetches() {
+        let counts = SectionCounts {
+            posts: 10,
+            likes: 0,
+            groups: 0,
+            messages: 0,
+        };
+        let m = build_manifest(&subject(), "rcpch", "t", &counts, false, false, &[42, 99]);
+        let review = m["review_required"].as_array().unwrap();
+        assert!(
+            review
+                .iter()
+                .any(|v| v.as_str().unwrap().contains("2 post(s)")),
+            "expected failed-fetch warning, got {review:?}"
+        );
+        assert_eq!(m["failed_post_fetches"][0], 42);
+        assert_eq!(m["failed_post_fetches"][1], 99);
     }
 
     #[test]

@@ -12,6 +12,7 @@ use base64::Engine;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashSet;
 use std::fs;
+use std::io::Read;
 use std::path::Path;
 
 pub fn pull_emojis(config: &Config, discourse_name: &str, output_dir: &Path) -> Result<()> {
@@ -91,30 +92,10 @@ pub fn pull_emojis(config: &Config, discourse_name: &str, output_dir: &Path) -> 
     if pending.len() <= 1 || EMOJI_WORKERS <= 1 {
         for (_, url, dest, name) in &pending {
             bar.set_message(name.clone());
-            match http.get(url).send() {
-                Ok(resp) if resp.status().is_success() => match resp.bytes() {
-                    Ok(bytes) => {
-                        if bytes.len() as u64 > MAX_EMOJI_BYTES {
-                            eprintln!("Emoji {} exceeds the size limit, skipping", name);
-                            failed += 1;
-                        } else if let Err(e) = atomic_write(dest, &bytes, false) {
-                            eprintln!("Failed to write {}: {}", dest.display(), e);
-                            failed += 1;
-                        } else {
-                            downloaded += 1;
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to read response for {}: {}", name, e);
-                        failed += 1;
-                    }
-                },
-                Ok(resp) => {
-                    eprintln!("HTTP {} downloading {}", resp.status(), name);
-                    failed += 1;
-                }
-                Err(e) => {
-                    eprintln!("Failed to download {}: {}", name, e);
+            match download_one_emoji(&http, url, dest, name, MAX_EMOJI_BYTES) {
+                Ok(()) => downloaded += 1,
+                Err(msg) => {
+                    eprintln!("{}", msg);
                     failed += 1;
                 }
             }
@@ -138,32 +119,7 @@ pub fn pull_emojis(config: &Config, discourse_name: &str, output_dir: &Path) -> 
                         let next = queue.lock().unwrap().pop_front();
                         let Some(idx) = next else { break };
                         let (_, url, dest, name) = &pending[idx];
-                        let result = match http.get(url).send() {
-                            Ok(resp) if resp.status().is_success() => match resp.bytes() {
-                                Ok(bytes) => {
-                                    if bytes.len() as u64 > MAX_EMOJI_BYTES {
-                                        Err(format!(
-                                            "Emoji {} exceeds the size limit, skipping",
-                                            name
-                                        ))
-                                    } else {
-                                        match atomic_write(dest, &bytes, false) {
-                                            Ok(()) => Ok(()),
-                                            Err(e) => Err(format!(
-                                                "Failed to write {}: {}",
-                                                dest.display(),
-                                                e
-                                            )),
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    Err(format!("Failed to read response for {}: {}", name, e))
-                                }
-                            },
-                            Ok(resp) => Err(format!("HTTP {} downloading {}", resp.status(), name)),
-                            Err(e) => Err(format!("Failed to download {}: {}", name, e)),
-                        };
+                        let result = download_one_emoji(&http, url, dest, name, MAX_EMOJI_BYTES);
                         if tx.send((idx, result)).is_err() {
                             break;
                         }
@@ -198,6 +154,38 @@ pub fn pull_emojis(config: &Config, discourse_name: &str, output_dir: &Path) -> 
 
 fn emoji_filename(name: &str, extension: &str) -> String {
     format!("{}.{}", slugify(name), extension)
+}
+
+/// Download one emoji image with an incremental byte cap. Reads at most
+/// `max_bytes + 1` bytes from the response so the limit bounds **memory**,
+/// not just what is written - a hostile CDN cannot drive RSS past the cap
+/// before the check fires. Returns an `Err(String)` (not an `anyhow::Error`)
+/// so both the serial and pooled download arms can format the message
+/// uniformly without a trait boundary.
+fn download_one_emoji(
+    http: &reqwest::blocking::Client,
+    url: &str,
+    dest: &Path,
+    name: &str,
+    max_bytes: u64,
+) -> Result<(), String> {
+    let response = http
+        .get(url)
+        .send()
+        .map_err(|e| format!("Failed to download {name}: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {} downloading {}", response.status(), name));
+    }
+    let mut buf = Vec::new();
+    response
+        .take(max_bytes + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("Failed to read response for {name}: {e}"))?;
+    if buf.len() as u64 > max_bytes {
+        return Err(format!("Emoji {name} exceeds the size limit, skipping"));
+    }
+    atomic_write(dest, &buf, false)
+        .map_err(|e| format!("Failed to write {}: {}", dest.display(), e))
 }
 
 pub fn add_emoji(
