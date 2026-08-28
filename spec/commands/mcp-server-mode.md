@@ -2,7 +2,7 @@
 
 Spec for R24. Goal: let an MCP client that cannot spawn a binary drive a Discourse fleet through `dsc`. Driver: none yet - this spec records the design decisions and the open question that must be answered before any code is written.
 
-**Status: not scheduled.** R24 sits under *Stretch / exploratory*: build only on real demand. This document exists so the reasoning is not lost, and so that whoever picks it up starts from the decisions below rather than re-litigating them.
+**Status: closed as out of scope on 2026-08-28.** CDCK's official `@discourse/mcp` 0.3.1 accepts admin API keys, supports opt-in writes and multiple authenticated sites, and covers the common HTTP administration surface. `dsc mcp` would duplicate a maintained upstream tool rather than filling its original gap.
 
 ## Motivation
 
@@ -10,19 +10,13 @@ Spec for R24. Goal: let an MCP client that cannot spawn a binary drive a Discour
 
 An MCP server earns its place in exactly one situation: a client that **cannot** spawn a binary. Claude Desktop, a mobile client, or any host where the tool surface must be declared rather than executed. For a terminal-capable agent the marginal gain over shelling out is small - schema discovery and no shell quoting - and does not justify a second surface.
 
-## The open question that gates this work
+## Resolved decision
 
-The assumed justification is that `dsc` reaches the **admin** API while the official Discourse MCP is limited to the **User API**, leaving fleet administration uncovered. That assumption is **unverified and looks doubtful**.
+The assumed justification was that `dsc` reaches the **admin** API while the official Discourse MCP is limited to the **User API**, leaving fleet administration uncovered. That assumption is false.
 
-Discourse announced an official MCP server ([Discourse MCP is here!](https://meta.discourse.org/t/discourse-mcp-is-here/386983)). Community setup notes describe a locally-run stdio server configured with `auth_pairs`, plus `read_only` and `allow_writes` flags, which implies configurable authentication and a genuine write surface.
+CDCK's official [`@discourse/mcp`](https://github.com/discourse/discourse-mcp) 0.3.1 accepts Admin API keys through `auth_pairs`, keeps writes disabled unless `--allow_writes` is supplied, supports multiple authenticated sites, and exposes focused toolsets for topics, users, settings, themes, groups, Data Explorer, moderation, and more.
 
-**Before writing any code, establish:**
-
-1. What authentication the official server accepts - User API key only, or an admin API key.
-2. Which operations it exposes, and whether they cover site settings, themes, categories, backups, and fleet-wide reads.
-3. Whether it is multi-forum, or one server instance per forum.
-
-If it already accepts admin credentials and covers the common surface, the case for `dsc mcp` largely collapses and this item should be closed as *Out of scope*, not built. The genuinely distinctive capabilities would then be only those with no HTTP API at all: SSH-driven `update`, `app env`, `harden`, and `plugin`.
+The case for `dsc mcp` therefore collapses. `dsc` remains distinct for declarative multi-forum workflows and operations with no HTTP API, including SSH-driven `update`, `app env`, `harden`, and planned safe file transfer. The reusable safety lessons are tracked separately as R54.
 
 ## Current state (as of 2026-08-01)
 
@@ -66,8 +60,8 @@ Stdio transport, matching how MCP clients launch local servers. `--tags` and `--
 
 ### Phase 1 - answer the gating question
 
-- [ ] Establish the official Discourse MCP's auth model, capability surface, and multi-forum behaviour.
-- [ ] Decide build or close. Record the outcome here either way.
+- [x] Establish the official Discourse MCP's auth model, capability surface, and multi-forum behaviour.
+- [x] Close R24 as out of scope and record the outcome here.
 
 ### Phase 2 - minimum useful server (only if Phase 1 says build)
 
