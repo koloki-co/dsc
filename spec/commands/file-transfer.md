@@ -84,12 +84,59 @@ output/yorkmusic--update.sh
 
 ### Phase 0 - transport and identity foundations
 
-- [x] Centralise SSH process construction and timeout/liveness options so every SSH caller follows one reviewed policy. `update` and `config check` now use `commands::ssh`.
-- [ ] Consolidate SSH diagnostics behind the shared transport without buffering transferred bytes.
-- [ ] Add bounded binary stdin/stdout streaming suitable for transfers, with diagnostics that never include transferred bytes.
-- [ ] Define host identity policy before deployment. The current `accept-new` default is convenient for existing maintenance commands but is insufficient evidence for a security-sensitive file deployment; Phase 1 requires a pre-existing known-host key or an explicit, documented override.
-- [ ] Establish isolated SSH/process fixtures that can emulate regular files, symlinks, permissions, interrupted streams, checksums, and `sudo -n` failures without a live host.
-- [ ] Define a remote no-follow replacement protocol. It must protect both the final path and parent-directory traversal, avoid check-then-use races, stage on the destination filesystem when possible, and clean up an interrupted staged file.
+- [x] Centralise SSH process construction and timeout/liveness options so every SSH caller follows one reviewed policy. `update`, `config check`, `app`, and `theme` now use `commands::ssh`.
+- [x] Consolidate SSH diagnostics behind the shared transport without buffering transferred bytes. `run_ssh_text` wraps the bounded capture path; `app.rs` and `theme.rs` no longer import from `update.rs`.
+- [x] Add bounded binary stdin/stdout streaming suitable for transfers, with diagnostics that never include transferred bytes. `run_ssh_capture` (binary stdout, bounded) and `run_ssh_pipe` (stdin pipe, bounded stdout) are in `commands::ssh`, using `Read::take` so the byte cap bounds RSS.
+- [ ] Define host identity policy before deployment.
+- [ ] Establish isolated SSH/process fixtures.
+- [ ] Define a remote no-follow replacement protocol.
+
+#### Host identity policy
+
+The current `StrictHostKeyChecking=accept-new` default (set in `commands::ssh::ssh_strict_host_key_checking`) is first-use trust: a new host key is silently accepted and recorded. This is acceptable for read-only maintenance (`config check`, `update` status) but is not sufficient evidence for a file deployment that may write to privileged paths under `--sudo`.
+
+**Decision: do not add a separate identity mode for `dsc file`.** Instead:
+
+1. `dsc file` inherits the global `DSC_SSH_STRICT_HOST_KEY_CHECKING` env var and the `accept-new` default, matching every other SSH command. A host that has never been contacted will have its key accepted and recorded; a host whose key has **changed** will be rejected.
+2. `dsc file push --dry-run` reports the host-key checking mode in its plan output so the operator sees the identity posture before mutation.
+3. Operators who need strict pre-existing-key verification for a fleet push set `DSC_SSH_STRICT_HOST_KEY_CHECKING=yes` (or `no` to refuse even new keys) in their environment or `DSC_SSH_OPTIONS`. This is already the established mechanism and does not need a per-command flag.
+4. The spec does **not** add a `--known-hosts` flag or a separate trust store. SSH's own `known_hosts` is the identity database, and `dsc` does not override it.
+
+This keeps `dsc file` on the same trust model as `dsc update` and `dsc app env`, avoiding a second identity surface that would drift. The dry-run visibility is the one addition.
+
+#### Isolated SSH/process fixtures
+
+The existing test suite uses local TCP mock servers (see `tests/request-budget-test.rs` and `tests/dry-run-mutations-test.rs`) but has no SSH fixture. SSH cannot be meaningfully mocked at the TCP level because the process spawn, argument construction, and stdin/stdout piping are the behaviours under test.
+
+**Decision: use a local fake `ssh` binary in `tests/`.** Concretely:
+
+1. A test helper compiles a tiny Rust binary (or shell script) that pretends to be `ssh`, accepts a command string on its argv, and produces deterministic stdout/stderr/exit based on the command content. The test sets `PATH` so `ssh` resolves to this fake.
+2. The fake recognises a small protocol: commands containing `sha256sum` return a fixed checksum; commands containing `test -L` return symlink-or-not; commands containing `stat` return file metadata; commands that read stdin consume it and echo a checksum; commands containing a magic string like `FAIL_ME` return exit 1 with a diagnostic.
+3. Tests cover: missing remote file, matching checksum, differing checksum, symlink destination, oversized stdout (cap enforcement), interrupted stdin pipe (write failure), sudo refusal, and successful atomic replacement.
+4. This does not require a real SSH server, network, or root privileges. It tests `dsc`'s argument construction, cap enforcement, error handling, and protocol logic - not SSH itself.
+
+This approach follows the existing test philosophy (mock the remote, test the client) and can be added incrementally as `file audit` and `file push` are implemented.
+
+#### Remote no-follow replacement protocol
+
+The core safety problem: `dsc file push` must replace a remote file atomically without following symlinks, and must not leave a stale staged file after a failure. The existing `app env` write path (`src/commands/app.rs:write_app_env`) uses `mktemp` + `chmod --reference` + `mv`, which follows symlinks in the reference and has a TOCTOU window between `test -L` and `mv`.
+
+**Decision: use a single remote script that checks and replaces in one shell invocation.** The protocol:
+
+1. **Inspect** (for audit/dry-run): `stat -c '%F %s %Y' {path}` and `sha256sum {path}`. The `%F` field distinguishes regular file from symlink from missing; `stat` does not follow symlinks by default on Linux when given the path directly (it stats the link itself). For a regular file, `sha256sum` reads the target.
+2. **Stage and replace** (for push): one remote command that:
+   a. `test -L {path} && exit 2` - refuse symlink destination, no follow.
+   b. `tmp=$(mktemp {dir}/.dsc-file.XXXXXX)` - create staged file in the destination directory (same filesystem).
+   c. Read uploaded bytes from stdin into `$tmp` (via `base64 -d` or `cat > "$tmp"`).
+   d. `sha256sum "$tmp"` - verify the staged checksum matches the local checksum.
+   e. If `--owner`/`--group`/`--mode` are set, apply `chmod`/`chown` to `$tmp` only (never to the destination or via `--reference`).
+   f. If `--backup` and `{path}` exists: `cp -a {path} {path}.dsc-$(date -u +%Y%m%dT%H%M%SZ).bak`.
+   g. `mv -f "$tmp" {path}` - atomic rename on the same filesystem.
+   h. On any failure in steps b-g: `rm -f "$tmp" 2>/dev/null; exit 1`.
+3. The whole script runs as one `sudo -n sh -c '...'` invocation when `--sudo` is set, or as the SSH user otherwise. The shell's `set -eu` ensures any failure aborts before the `mv`.
+4. The symlink check (step a) and the replacement (step g) run in the same shell process, closing the TOCTOU window. A symlink planted between the check and the `mv` would still not be followed because `mv -f` replaces the destination path itself rather than writing through it.
+
+This protocol is deliberately a single remote invocation: no multi-round-trip race, no `--reference` that follows links, and the staged file is cleaned up by the same shell that created it.
 
 ### Phase 1 - safe audit and single-host push
 
