@@ -5,6 +5,62 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.17.0] - 2026-08-29
+
+### Bug fixes
+
+- **emoji,sar**: Bound memory on download and surface failed SAR fetches (R56, R57) ([c3038b1](https://github.com/koloki-co/dsc/commit/c3038b182a81318857c16abb59467ef1be265b3f))
+
+### Documentation
+
+- **file-transfer**: Complete Phase 0 design - host identity, fixtures, no-follow protocol ([83d0fa2](https://github.com/koloki-co/dsc/commit/83d0fa2e64f78893f17546db8997e4e0ca06834d))
+
+- **roadmap**: Clear completed items ([40d9dc9](https://github.com/koloki-co/dsc/commit/40d9dc90b6fd5a3ee9423d82c2e2d7e0174ae17f))
+
+- **roadmap**: Record bug triage R55-R57 from 2026-08-28 review ([e3632f2](https://github.com/koloki-co/dsc/commit/e3632f235b8998aba8a09c974660a09d57b64ad7))
+
+- **roadmap**: Record official MCP lessons ([f30eeeb](https://github.com/koloki-co/dsc/commit/f30eeeb1a01611ad63ef0bbe1ef716cfad59f8c0))
+
+- **roadmap**: Update R52 with P9/P10/P11 progress ([3b37f93](https://github.com/koloki-co/dsc/commit/3b37f933836f86f96337f885223db557a3012def))
+
+### Features
+
+- **file**: Default-on backup and host-key visibility in dry-run ([8d52083](https://github.com/koloki-co/dsc/commit/8d52083e5cd94ca7a61ec193570b82409cbec8c0))
+
+- **file**: Single-forum file audit and push (R53 Phase 1) ([5e6f4a5](https://github.com/koloki-co/dsc/commit/5e6f4a586d0a42f3a2564255f0c1480a31fd6a20))
+
+- **ssh**: Add bounded binary capture and pipe transport (R53 Phase 0) ([a658e40](https://github.com/koloki-co/dsc/commit/a658e40078e5c9a451d09077d79fe51063d7c18c))
+
+- **render**: Add --render flag to topic new/push/reply and category push (R29 Phase 2) ([076d64c](https://github.com/koloki-co/dsc/commit/076d64cdd444256ac5ee6788c8a0686ff945fdbd))
+
+### Performance
+
+- **category-def**: Index server categories for O(1) push matching (P25) ([a3558ce](https://github.com/koloki-co/dsc/commit/a3558ce78c1b48a16f1cfbff417ebbb2e99d3d21))
+
+- **emoji**: Bounded download pool and image size cap (R52 P11) ([3560002](https://github.com/koloki-co/dsc/commit/3560002533ad91d7b983bc34d579993ba1bb75ce))
+
+- **sar**: Bounded post fetches and streaming JSON (R52 P9) ([83378f0](https://github.com/koloki-co/dsc/commit/83378f09d05afb2922adafa47cc88bdb199980e8))
+
+- **topic**: Filter before detail fetch, index topic lookups (R52 P10/P15) ([50e16f9](https://github.com/koloki-co/dsc/commit/50e16f93ef6a479c1c6b42923084f7c5e77cdbb1))
+
+- **fleet**: Parallelise title discovery (R52 P30) ([a025d01](https://github.com/koloki-co/dsc/commit/a025d01c0f5c894fc79acab0b1910ef0ec2b7c04))
+
+- **fleet**: Shared bounded executor for read-only audits (R52 P12/P28) ([7c5b946](https://github.com/koloki-co/dsc/commit/7c5b946e68e74152b6536146f033814b5768ff6a))
+
+- **update**: Bound SSH output retention (R52 P8) ([800cf0d](https://github.com/koloki-co/dsc/commit/800cf0dde8f1717df5cc3b6d8b588e3f25af2ff4))
+
+### Refactor
+
+- **file**: Unify push onto build_replace_script with verify-before-replace ([14ab786](https://github.com/koloki-co/dsc/commit/14ab7868a6b3c68c454cfa74110fb81f79d50642))
+
+- **ssh**: Migrate app.rs and theme.rs onto shared SSH transport ([4b31e94](https://github.com/koloki-co/dsc/commit/4b31e94278fb0a86bf6cc81cc1f15dda052eb0e4))
+
+- **ssh**: Centralize process construction for R53 ([eb0f450](https://github.com/koloki-co/dsc/commit/eb0f45026ed6e78b779ce599cd8f96a2dff06a67))
+
+### Tests
+
+- **perf**: Add request budget regression coverage ([dd09df7](https://github.com/koloki-co/dsc/commit/dd09df7ea2656c549a5d534cdb9affca9b883dc3))
+
 ## [0.16.0] - 2026-08-26
 
 ### Bug fixes
