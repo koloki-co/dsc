@@ -26,6 +26,13 @@ pub(crate) fn build_ssh_command(target: &str, extra_options: &[&str]) -> Result<
     build_ssh_command_with_timeout(target, DEFAULT_CONNECT_TIMEOUT_SECONDS, extra_options)
 }
 
+/// The effective `StrictHostKeyChecking` value transfers (and other SSH
+/// callers) will use, for display in dry-run plans. `None` means SSH's own
+/// config governs; otherwise this is the explicit policy DSC passes.
+pub(crate) fn effective_host_key_checking() -> String {
+    ssh_strict_host_key_checking().unwrap_or_else(|| "(ssh config default)".to_string())
+}
+
 /// Build an SSH process with a caller-specific connection timeout.
 ///
 /// Configuration checks use a shorter timeout than update and transfer work,

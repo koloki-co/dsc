@@ -30,7 +30,7 @@ dsc list --format json | jq -r '.[] | select(.ssh_host != null and .ssh_host != 
 
 ```text
 dsc file audit <DISCOURSE|all> <LOCAL_PATH> <REMOTE_PATH> [--tags <TAGS>] [--parallel[=<N>]] [--format text|json|yaml]
-dsc file push  <DISCOURSE|all> <LOCAL_PATH> <REMOTE_PATH> [--tags <TAGS>] [--owner <OWNER>] [--group <GROUP>] [--mode <MODE>] [--backup] [--sudo] [--parallel[=<N>]] [--yes]
+dsc file push  <DISCOURSE|all> <LOCAL_PATH> <REMOTE_PATH> [--tags <TAGS>] [--owner <OWNER>] [--group <GROUP>] [--mode <MODE>] [--no-backup] [--sudo] [--parallel[=<N>]] [--yes]
 dsc file pull  <DISCOURSE|all> <REMOTE_PATH> <LOCAL_PATH> [--tags <TAGS>] [--parallel[=<N>]] [--overwrite]
 ```
 
@@ -52,15 +52,15 @@ The target is the first positional argument so a fleet mutation is visually prom
 - Refuse an existing symlink destination. Do not follow it, even with `--yes`.
 - Use the configured SSH account by default. Require explicit `--sudo` before invoking non-interactive `sudo -n`; `--owner root` or another privileged ownership request must not silently imply escalation.
 - Apply `--owner`, `--group`, and octal `--mode` to the staged file before replacement. Without those flags, preserve an existing destination's metadata; for a new destination, use a conservative regular-file mode subject to the remote account's umask.
-- `--backup` creates a timestamped sibling or operator-visible backup before replacement. Phase 1 may require `--backup` whenever the destination already exists; the implementation must settle one consistent default and expose it in dry-run output.
+- `--backup` is off by default per the spec's earlier draft but is now the settled default: a timestamped sibling backup is taken automatically whenever the destination already exists, and `--no-backup` opts out explicitly. Decided 2026-08-29 - "safe as houses" beats symmetry with `app env set`. The dry-run plan always shows the resolved backup path or "(new file, no backup)".
 - Require normal mutating confirmation for one host and explicit `--yes` for non-interactive use. A fleet push always requires `--yes` after a reviewed dry-run.
 - Use the shared bounded fleet executor. Continue across host failures, report every outcome, and exit non-zero for a partial result. Do not attempt fleet-wide rollback: retained per-host backups and checksums are the reconciliation evidence.
 
 Example:
 
 ```console
-dsc -n file push all scripts/update.sh /var/discourse/scripts/update.sh --owner root --group root --mode 0755 --backup --sudo
-dsc file push all scripts/update.sh /var/discourse/scripts/update.sh --owner root --group root --mode 0755 --backup --sudo --yes
+dsc -n file push all scripts/update.sh /var/discourse/scripts/update.sh --owner root --group root --mode 0755 --sudo
+dsc file push all scripts/update.sh /var/discourse/scripts/update.sh --owner root --group root --mode 0755 --sudo --yes
 ```
 
 ### `file pull`
@@ -98,7 +98,7 @@ The current `StrictHostKeyChecking=accept-new` default (set in `commands::ssh::s
 **Decision: do not add a separate identity mode for `dsc file`.** Instead:
 
 1. `dsc file` inherits the global `DSC_SSH_STRICT_HOST_KEY_CHECKING` env var and the `accept-new` default, matching every other SSH command. A host that has never been contacted will have its key accepted and recorded; a host whose key has **changed** will be rejected.
-2. `dsc file push --dry-run` reports the host-key checking mode in its plan output so the operator sees the identity posture before mutation.
+2. `dsc file push --dry-run` reports the host-key checking mode in its plan output so the operator sees the identity posture before mutation. (Implemented 2026-08-29.)
 3. Operators who need strict pre-existing-key verification for a fleet push set `DSC_SSH_STRICT_HOST_KEY_CHECKING=yes` (or `no` to refuse even new keys) in their environment or `DSC_SSH_OPTIONS`. This is already the established mechanism and does not need a per-command flag.
 4. The spec does **not** add a `--known-hosts` flag or a separate trust store. SSH's own `known_hosts` is the identity database, and `dsc` does not override it.
 

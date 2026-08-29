@@ -4,7 +4,10 @@
 
 use crate::cli::{FileCommand, ListFormat};
 use crate::commands::common::{emit_result, select_discourse, shell_quote};
-use crate::commands::ssh::{ReplaceOptions, build_replace_script, run_ssh_capture, run_ssh_pipe};
+use crate::commands::ssh::{
+    ReplaceOptions, build_replace_script, effective_host_key_checking, run_ssh_capture,
+    run_ssh_pipe,
+};
 use crate::config::Config;
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
@@ -27,7 +30,7 @@ pub fn run(config: &Config, command: &FileCommand, dry_run: bool) -> Result<()> 
             owner,
             group,
             mode,
-            backup,
+            no_backup,
             sudo,
             yes,
             format,
@@ -39,7 +42,7 @@ pub fn run(config: &Config, command: &FileCommand, dry_run: bool) -> Result<()> 
             owner.as_deref(),
             group.as_deref(),
             mode.as_deref(),
-            *backup,
+            !(*no_backup),
             *sudo,
             *yes,
             dry_run,
@@ -154,7 +157,7 @@ fn file_push(
 
     if dry_run {
         let plan = format!(
-            "[dry-run] {name}: would push {local} ({local_checksum}, {local_size} bytes) -> {remote}\n  status: {remote_status}\n  owner: {owner}\n  group: {group}\n  mode: {mode}\n  backup: {backup}\n  sudo: {sudo}",
+            "[dry-run] {name}: would push {local} ({local_checksum}, {local_size} bytes) -> {remote}\n  status: {remote_status}\n  owner: {owner}\n  group: {group}\n  mode: {mode}\n  backup: {backup}\n  sudo: {sudo}\n  host-key checking: {hostkey}",
             name = discourse.name,
             local = local_path.display(),
             local_checksum = local_checksum,
@@ -172,6 +175,7 @@ fn file_push(
                 "no"
             },
             sudo = if sudo { "yes" } else { "no" },
+            hostkey = effective_host_key_checking(),
         );
         println!("{plan}");
         return Ok(());

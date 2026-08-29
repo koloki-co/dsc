@@ -2857,9 +2857,10 @@ pub enum FileCommand {
         /// Remote file mode (octal, e.g. `0755`).
         #[arg(long)]
         mode: Option<String>,
-        /// Create a timestamped backup before replacing an existing file.
+        /// Skip the timestamped backup that is taken by default before
+        /// replacing an existing destination file.
         #[arg(long)]
-        backup: bool,
+        no_backup: bool,
         /// Use non-interactive `sudo -n` for privileged operations.
         #[arg(long)]
         sudo: bool,
