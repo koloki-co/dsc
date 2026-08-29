@@ -87,9 +87,9 @@ output/yorkmusic--update.sh
 - [x] Centralise SSH process construction and timeout/liveness options so every SSH caller follows one reviewed policy. `update`, `config check`, `app`, and `theme` now use `commands::ssh`.
 - [x] Consolidate SSH diagnostics behind the shared transport without buffering transferred bytes. `run_ssh_text` wraps the bounded capture path; `app.rs` and `theme.rs` no longer import from `update.rs`.
 - [x] Add bounded binary stdin/stdout streaming suitable for transfers, with diagnostics that never include transferred bytes. `run_ssh_capture` (binary stdout, bounded) and `run_ssh_pipe` (stdin pipe, bounded stdout) are in `commands::ssh`, using `Read::take` so the byte cap bounds RSS.
-- [ ] Define host identity policy before deployment.
-- [ ] Establish isolated SSH/process fixtures.
-- [ ] Define a remote no-follow replacement protocol.
+- [x] Define host identity policy before deployment. Decided below: `dsc file` inherits the existing `accept-new` default and `DSC_SSH_STRICT_HOST_KEY_CHECKING` override rather than adding a second identity surface; the dry-run visibility this implies is Phase 1 work, once `file push --dry-run` exists.
+- [x] Establish isolated SSH/process fixtures. `tests/fixtures/fake-ssh` is a local stand-in that a test resolves in place of the real `ssh` binary (by symlinking it as `ssh` into a scratch directory prepended to `PATH`); rather than pattern-matching canned responses, it really executes the received remote command via `sh -c` against a local scratch directory standing in for the remote filesystem (stripping a leading `sudo -n` there is no privilege escalation in a test sandbox), so it exercises dsc's real argument construction, stdin/stdout/stderr handling, and exit-status propagation. See `commands::ssh::fixture_tests` in `src/commands/ssh.rs`.
+- [x] Define a remote no-follow replacement protocol. Implemented as `commands::ssh::build_replace_script`, matching the decision below exactly (symlink refusal, same-directory `mktemp` staging, staged-file ownership/mode, optional timestamped backup, atomic `mv -f`, single shell invocation), and verified end-to-end against the fake-ssh fixture in `commands::ssh::fixture_tests` (missing/existing destination, symlink refusal, backup, mode). Not yet wired into a CLI command - that's Phase 1's `file push`.
 
 #### Host identity policy
 

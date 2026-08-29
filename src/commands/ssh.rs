@@ -8,7 +8,7 @@
 //! policy belongs here so a future streamed transfer cannot silently diverge
 //! from update or configuration checks.
 
-use crate::commands::common::validate_ssh_target;
+use crate::commands::common::{shell_quote, validate_ssh_target};
 use anyhow::{Context, Result, anyhow};
 use std::io::{Read, Write};
 use std::process::{Command, Stdio};
@@ -213,6 +213,73 @@ pub(crate) fn run_ssh_pipe(
     Ok((stdout_buf, stderr_text))
 }
 
+/// Ownership, mode, and backup requests for [`build_replace_script`].
+///
+/// `owner`/`group`/`mode` are applied to the staged file only, never to the
+/// destination directly or via `--reference`, so a symlink target already at
+/// the destination cannot influence the replacement.
+#[allow(dead_code)]
+pub(crate) struct ReplaceOptions<'a> {
+    pub(crate) owner: Option<&'a str>,
+    pub(crate) group: Option<&'a str>,
+    pub(crate) mode: Option<&'a str>,
+    pub(crate) backup: bool,
+    pub(crate) sudo: bool,
+}
+
+/// Build the remote stage-and-replace script for `dsc file push`'s no-follow
+/// atomic replacement protocol (see the "Remote no-follow replacement
+/// protocol" section of `spec/commands/file-transfer.md`).
+///
+/// The returned string is a single shell invocation, intended to be run via
+/// [`run_ssh_pipe`] with the uploaded file's bytes as stdin. In one shell
+/// process it: refuses an existing symlink destination, stages the uploaded
+/// bytes into a same-directory temporary file, reports the staged file's
+/// checksum (for the caller to compare against the local one), optionally
+/// applies ownership/mode and a timestamped backup of any existing
+/// destination, then atomically renames the staged file over the
+/// destination. Refusing the symlink and performing the rename in the same
+/// shell process closes the TOCTOU window between the check and the
+/// replacement.
+#[allow(dead_code)]
+pub(crate) fn build_replace_script(remote_path: &str, opts: &ReplaceOptions) -> String {
+    let script = build_replace_script_body(remote_path, opts);
+    if opts.sudo {
+        format!("sudo -n sh -c {}", shell_quote(&script))
+    } else {
+        format!("sh -c {}", shell_quote(&script))
+    }
+}
+
+/// The stage-and-replace shell logic itself, before it is wrapped as the
+/// single `sh -c`/`sudo -n sh -c` argument [`build_replace_script`] sends
+/// over SSH. Split out so tests can assert on the unescaped script content
+/// rather than re-deriving the outer quoting.
+fn build_replace_script_body(remote_path: &str, opts: &ReplaceOptions) -> String {
+    let dir = remote_path.rsplit_once('/').map_or(".", |(dir, _)| dir);
+    let quoted_path = shell_quote(remote_path);
+    let mut script = format!(
+        "set -eu; test -L {quoted_path} && exit 2; tmp=$(mktemp {}/.dsc-file.XXXXXX); trap 'rm -f \"$tmp\"' EXIT; cat > \"$tmp\"; sha256sum \"$tmp\"",
+        shell_quote(dir),
+    );
+    if let Some(owner) = opts.owner {
+        script.push_str(&format!("; chown {} \"$tmp\"", shell_quote(owner)));
+    }
+    if let Some(group) = opts.group {
+        script.push_str(&format!("; chgrp {} \"$tmp\"", shell_quote(group)));
+    }
+    if let Some(mode) = opts.mode {
+        script.push_str(&format!("; chmod {} \"$tmp\"", shell_quote(mode)));
+    }
+    if opts.backup {
+        script.push_str(&format!(
+            "; if [ -e {quoted_path} ]; then cp -a {quoted_path} {quoted_path}.dsc-$(date -u +%Y%m%dT%H%M%SZ).bak; fi",
+        ));
+    }
+    script.push_str(&format!("; mv -f \"$tmp\" {quoted_path}"));
+    script
+}
+
 fn ssh_strict_host_key_checking() -> Option<String> {
     let value = std::env::var("DSC_SSH_STRICT_HOST_KEY_CHECKING")
         .unwrap_or_else(|_| "accept-new".to_string());
@@ -226,7 +293,10 @@ fn ssh_strict_host_key_checking() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_ssh_command, build_ssh_command_with_timeout};
+    use super::{
+        ReplaceOptions, build_replace_script, build_replace_script_body, build_ssh_command,
+        build_ssh_command_with_timeout,
+    };
 
     fn args(command: &std::process::Command) -> Vec<String> {
         command
@@ -279,5 +349,378 @@ mod tests {
         assert!(buf.len() > cap);
         let buf_exact = vec![0u8; cap];
         assert!(buf_exact.len() <= cap);
+    }
+
+    fn no_op_options() -> ReplaceOptions<'static> {
+        ReplaceOptions {
+            owner: None,
+            group: None,
+            mode: None,
+            backup: false,
+            sudo: false,
+        }
+    }
+
+    #[test]
+    fn replace_script_checks_symlink_before_staging() {
+        let script =
+            build_replace_script_body("/var/discourse/scripts/update.sh", &no_op_options());
+        let check_pos = script.find("test -L").unwrap();
+        let mktemp_pos = script.find("mktemp").unwrap();
+        assert!(
+            check_pos < mktemp_pos,
+            "the symlink refusal must run before any staged file is created: {script}"
+        );
+    }
+
+    #[test]
+    fn replace_script_stages_and_replaces_atomically() {
+        let script =
+            build_replace_script_body("/var/discourse/scripts/update.sh", &no_op_options());
+        assert!(script.starts_with("set -eu"));
+        assert!(script.contains("cat > \"$tmp\""));
+        assert!(script.contains("sha256sum \"$tmp\""));
+        assert!(script.contains("mv -f \"$tmp\" '/var/discourse/scripts/update.sh'"));
+        assert!(!script.contains("chown"));
+        assert!(!script.contains("chgrp"));
+        assert!(!script.contains("chmod"));
+        assert!(!script.contains(".bak"));
+
+        // The wrapped form sent over SSH is a single `sh -c` argument.
+        let wrapped = build_replace_script("/var/discourse/scripts/update.sh", &no_op_options());
+        assert!(wrapped.starts_with("sh -c "));
+    }
+
+    #[test]
+    fn replace_script_applies_ownership_and_mode_to_the_staged_file_only() {
+        let opts = ReplaceOptions {
+            owner: Some("root"),
+            group: Some("www-data"),
+            mode: Some("0755"),
+            backup: false,
+            sudo: false,
+        };
+        let script = build_replace_script_body("/etc/example.conf", &opts);
+        assert!(script.contains("chown 'root' \"$tmp\""));
+        assert!(script.contains("chgrp 'www-data' \"$tmp\""));
+        assert!(script.contains("chmod '0755' \"$tmp\""));
+        assert!(!script.contains("--reference"));
+    }
+
+    #[test]
+    fn replace_script_backs_up_an_existing_destination_before_replacing() {
+        let opts = ReplaceOptions {
+            backup: true,
+            ..no_op_options()
+        };
+        let script = build_replace_script_body("/etc/example.conf", &opts);
+        assert!(script.contains("if [ -e '/etc/example.conf' ]"));
+        assert!(script.contains("cp -a '/etc/example.conf' '/etc/example.conf'.dsc-"));
+        let backup_pos = script.find(".bak").unwrap();
+        let replace_pos = script.find("mv -f").unwrap();
+        assert!(
+            backup_pos < replace_pos,
+            "the backup must be taken before the destination is replaced: {script}"
+        );
+    }
+
+    #[test]
+    fn replace_script_wraps_in_non_interactive_sudo_only_when_requested() {
+        let opts = ReplaceOptions {
+            sudo: true,
+            ..no_op_options()
+        };
+        let sudo_script = build_replace_script("/etc/example.conf", &opts);
+        assert!(sudo_script.starts_with("sudo -n sh -c "));
+
+        let plain_script = build_replace_script("/etc/example.conf", &no_op_options());
+        assert!(!plain_script.contains("sudo"));
+    }
+
+    #[test]
+    fn replace_script_quotes_a_path_containing_a_single_quote() {
+        let script = build_replace_script_body("/var/discourse/it's.txt", &no_op_options());
+        assert!(script.contains(r"'/var/discourse/it'\''s.txt'"));
+    }
+}
+
+/// Integration tests that run [`build_replace_script`] (and the plain
+/// [`run_ssh_capture`]/[`run_ssh_pipe`] transport) against a real shell via
+/// the `tests/fixtures/fake-ssh` fixture, with a scratch directory standing
+/// in for the remote filesystem. See that fixture's header comment and the
+/// "Isolated SSH/process fixtures" section of `spec/commands/file-transfer.md`
+/// for why this is a real local execution rather than a canned mock: it
+/// exercises dsc's actual argument construction and the protocol's real
+/// shell logic, not just parsed intent.
+#[cfg(all(test, unix))]
+mod fixture_tests {
+    use super::{ReplaceOptions, build_replace_script, run_ssh_capture, run_ssh_pipe};
+    use std::os::unix::fs::{MetadataExt, symlink};
+    use std::sync::Mutex;
+
+    // `PATH` is process-wide, and `cargo test` runs a binary's tests on
+    // multiple threads by default - so every test that installs the fake
+    // `ssh` must hold this lock for the duration of its SSH calls, or two
+    // tests could race and see each other's PATH.
+    static PATH_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct FakeSshPath {
+        original: Option<String>,
+        // Held only so the symlink directory outlives the PATH override;
+        // never read directly.
+        _bin_dir: tempfile::TempDir,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl FakeSshPath {
+        fn install() -> Self {
+            let guard = PATH_ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-ssh");
+            // `Command::new("ssh")` resolves the literal name `ssh` on PATH,
+            // so the fixture (named `fake-ssh` to avoid a file literally
+            // called `ssh` in the repo) is symlinked under that name into a
+            // scratch directory that is prepended to PATH just for this
+            // guard's lifetime.
+            let bin_dir = tempfile::tempdir().expect("create fake-ssh PATH dir");
+            symlink(fixture, bin_dir.path().join("ssh")).expect("symlink fake-ssh as ssh");
+
+            let original = std::env::var("PATH").ok();
+            let new_path = match &original {
+                Some(existing) => format!("{}:{existing}", bin_dir.path().display()),
+                None => bin_dir.path().display().to_string(),
+            };
+            // SAFETY: serialised by `PATH_ENV_LOCK`, held for this guard's
+            // whole lifetime, so no other thread observes a torn PATH.
+            unsafe { std::env::set_var("PATH", new_path) };
+            Self {
+                original,
+                _bin_dir: bin_dir,
+                _guard: guard,
+            }
+        }
+    }
+
+    impl Drop for FakeSshPath {
+        fn drop(&mut self) {
+            // SAFETY: see `install` - still under `PATH_ENV_LOCK`.
+            unsafe {
+                match &self.original {
+                    Some(value) => std::env::set_var("PATH", value),
+                    None => std::env::remove_var("PATH"),
+                }
+            }
+        }
+    }
+
+    fn push_bytes(
+        remote_path: &str,
+        opts: &ReplaceOptions,
+        bytes: &[u8],
+    ) -> anyhow::Result<Vec<u8>> {
+        let _fake_ssh = FakeSshPath::install();
+        let script = build_replace_script(remote_path, opts);
+        run_ssh_pipe("remote.invalid", &script, bytes, 4096).map(|(stdout, _stderr)| stdout)
+    }
+
+    #[test]
+    fn replaces_a_missing_destination_with_uploaded_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("update.sh");
+        let content = b"#!/bin/sh\necho updated\n";
+
+        push_bytes(
+            dest.to_str().unwrap(),
+            &ReplaceOptions {
+                owner: None,
+                group: None,
+                mode: None,
+                backup: false,
+                sudo: false,
+            },
+            content,
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), content);
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".dsc-file.")
+            })
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "no staged temporary file should remain after a successful replace"
+        );
+    }
+
+    #[test]
+    fn replaces_an_existing_destination_and_reports_the_staged_checksum() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("update.sh");
+        std::fs::write(&dest, b"old content").unwrap();
+        let content = b"new content";
+
+        let stdout = push_bytes(
+            dest.to_str().unwrap(),
+            &ReplaceOptions {
+                owner: None,
+                group: None,
+                mode: None,
+                backup: false,
+                sudo: false,
+            },
+            content,
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), content);
+        let mut hasher_output = String::from_utf8_lossy(&stdout).to_string();
+        hasher_output.truncate(64);
+        assert_eq!(hasher_output.len(), 64, "expected a sha256 hex digest");
+    }
+
+    #[test]
+    fn refuses_a_symlink_destination_without_touching_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real-target");
+        std::fs::write(&target, b"do not overwrite me").unwrap();
+        let dest = dir.path().join("update.sh");
+        symlink(&target, &dest).unwrap();
+
+        let error = push_bytes(
+            dest.to_str().unwrap(),
+            &ReplaceOptions {
+                owner: None,
+                group: None,
+                mode: None,
+                backup: false,
+                sudo: false,
+            },
+            b"attempted overwrite",
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("exit 2"));
+        assert_eq!(std::fs::read(&target).unwrap(), b"do not overwrite me");
+        assert!(
+            std::fs::symlink_metadata(&dest)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the symlink itself must be left in place"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".dsc-file.")
+            })
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "the symlink check must run before any staged file is created"
+        );
+    }
+
+    #[test]
+    fn backs_up_the_previous_destination_before_replacing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("update.sh");
+        std::fs::write(&dest, b"old content").unwrap();
+
+        push_bytes(
+            dest.to_str().unwrap(),
+            &ReplaceOptions {
+                owner: None,
+                group: None,
+                mode: None,
+                backup: true,
+                sudo: false,
+            },
+            b"new content",
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&dest).unwrap(), b"new content");
+        let backups: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".dsc-"))
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(".bak"))
+            .collect();
+        assert_eq!(backups.len(), 1, "expected exactly one backup file");
+        assert_eq!(
+            std::fs::read(backups[0].path()).unwrap(),
+            b"old content",
+            "the backup must preserve the pre-replacement content"
+        );
+    }
+
+    #[test]
+    fn applies_the_requested_mode_to_the_replaced_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("update.sh");
+
+        push_bytes(
+            dest.to_str().unwrap(),
+            &ReplaceOptions {
+                owner: None,
+                group: None,
+                mode: Some("0640"),
+                backup: false,
+                sudo: false,
+            },
+            b"content",
+        )
+        .unwrap();
+
+        let mode = std::fs::metadata(&dest).unwrap().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+    }
+
+    #[test]
+    fn strips_sudo_before_local_execution_so_the_fixture_needs_no_privileges() {
+        let _fake_ssh = FakeSshPath::install();
+        let (stdout, _stderr) =
+            run_ssh_capture("remote.invalid", "sudo -n echo unprivileged", 64).unwrap();
+        assert_eq!(String::from_utf8_lossy(&stdout).trim(), "unprivileged");
+    }
+
+    #[test]
+    fn stdout_cap_is_enforced_against_a_real_oversized_remote_response() {
+        let _fake_ssh = FakeSshPath::install();
+        let error = run_ssh_capture("remote.invalid", "head -c 200000 /dev/zero", 100).unwrap_err();
+        assert!(error.to_string().contains("exceeded 100 bytes"));
+    }
+
+    #[test]
+    fn a_remote_command_that_never_reads_stdin_surfaces_a_pipe_write_error() {
+        let _fake_ssh = FakeSshPath::install();
+        let large_input = vec![b'x'; 4 * 1024 * 1024];
+        let result = run_ssh_pipe("remote.invalid", "exit 0", &large_input, 64);
+        assert!(
+            result.is_err(),
+            "writing 4 MiB into a command that exits immediately without reading stdin should fail"
+        );
+    }
+
+    #[test]
+    fn remote_stderr_and_exit_status_are_surfaced_on_failure() {
+        let _fake_ssh = FakeSshPath::install();
+        let error =
+            run_ssh_capture("remote.invalid", "echo diagnostic >&2; exit 7", 64).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains("exit 7"));
+        assert!(message.contains("diagnostic"));
     }
 }
