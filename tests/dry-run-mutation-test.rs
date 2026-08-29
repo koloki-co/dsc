@@ -547,6 +547,11 @@ const CASES: &[Case] = &[
         false,
     ),
     ("backup setup-s3", &["backup", "setup-s3", "mock"], true),
+    (
+        "file push",
+        &["file", "push", "mock", "BODY", "/remote/path.sh"],
+        true,
+    ),
 ];
 
 #[test]
@@ -807,6 +812,7 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "emoji pull",
     "explorer list",
     "explorer show",
+    "file audit",
     "group info",
     "group list",
     "group members",

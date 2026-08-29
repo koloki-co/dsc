@@ -1652,5 +1652,7 @@ fn main() -> Result<()> {
         Commands::Version { discourse, format } => {
             commands::version::version(&config, discourse.as_deref(), format)
         }
+
+        Commands::File { command } => commands::file::run(&config, &command, dry_run),
     }
 }

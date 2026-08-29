@@ -597,6 +597,15 @@ Examples:
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
+    /// Checksum-driven file transfer over SSH to configured Discourse hosts.
+    #[command(after_help = "Examples:
+  dsc file audit myforum scripts/update.sh /var/discourse/scripts/update.sh
+  dsc -n file push myforum scripts/update.sh /var/discourse/scripts/update.sh --owner root --group root --mode 0755 --backup --sudo
+  dsc file push myforum scripts/update.sh /var/discourse/scripts/update.sh --owner root --group root --mode 0755 --backup --sudo --yes")]
+    File {
+        #[command(subcommand)]
+        command: FileCommand,
+    },
 }
 
 impl Commands {
@@ -2810,6 +2819,59 @@ pub enum CompletionCommand {
     },
 }
 
+#[derive(Subcommand)]
+pub enum FileCommand {
+    /// Compare a local file's checksum and size with the remote file on one
+    /// host, without transferring contents. Read-only.
+    #[command(after_help = "Examples:
+  dsc file audit myforum scripts/update.sh /var/discourse/scripts/update.sh")]
+    Audit {
+        /// Discourse name.
+        discourse: String,
+        /// Local file to compare against.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
+        local_path: PathBuf,
+        /// Absolute remote file path to audit.
+        remote_path: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Upload a local file to a remote host with checksum verification,
+    /// atomic replacement, and optional backup and sudo.
+    #[command(visible_alias = "up")]
+    Push {
+        /// Discourse name.
+        discourse: String,
+        /// Local file to upload.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
+        local_path: PathBuf,
+        /// Absolute remote destination path.
+        remote_path: String,
+        /// Remote owner (requires `--sudo` for non-SSH-user ownership).
+        #[arg(long)]
+        owner: Option<String>,
+        /// Remote group.
+        #[arg(long)]
+        group: Option<String>,
+        /// Remote file mode (octal, e.g. `0755`).
+        #[arg(long)]
+        mode: Option<String>,
+        /// Create a timestamped backup before replacing an existing file.
+        #[arg(long)]
+        backup: bool,
+        /// Use non-interactive `sudo -n` for privileged operations.
+        #[arg(long)]
+        sudo: bool,
+        /// Skip confirmation prompt (required for non-interactive use).
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+}
+
 #[derive(ValueEnum, Clone, Copy)]
 pub enum CompletionShell {
     /// Bash shell.
@@ -2909,6 +2971,10 @@ mod tests {
         // `backup push` (alias `restore`) names a backup already on the
         // Discourse host, so completing local filenames would mislead.
         ("backup push", "backup_path"),
+        // `file audit` and `file push` take a remote path on the SSH host,
+        // not a local file.
+        ("file audit", "remote_path"),
+        ("file push", "remote_path"),
     ];
 
     /// Every argument that looks like a local path must carry a completion
@@ -3529,6 +3595,9 @@ mod tests {
                 "--csv",
                 "result.csv",
             ],
+            // `file audit` is read-only; `file push` has a complete dry-run plan.
+            &["dsc", "file", "audit", "forum", "local.sh", "/remote.sh"],
+            &["dsc", "file", "push", "forum", "local.sh", "/remote.sh"],
         ];
 
         for &args in allowed {
