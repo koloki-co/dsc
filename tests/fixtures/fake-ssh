@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Fake `ssh` for isolated dsc test fixtures - see the "Isolated SSH/process
+# fixtures" section of spec/commands/file-transfer.md.
+#
+# `dsc`'s transport (src/commands/ssh.rs) always invokes the real `ssh`
+# binary as `ssh -o <option> ... -- <target> <command>`, where <command> is
+# passed as one exact argv element (never re-split by a shell). Tests point
+# PATH at a directory containing this script named `ssh` so that resolution
+# lands here instead of a real SSH client.
+#
+# This stand-in ignores the connection options and the target, then really
+# executes <command> locally via `sh -c`, with the test's own scratch
+# directory standing in for the "remote" filesystem. That exercises dsc's
+# actual argument construction, stdin/stdout/stderr handling, exit-status
+# propagation, and remote-replacement protocol shell logic against a real
+# shell - without a network connection, an SSH server, or root privileges.
+# `sudo -n ` is stripped from the front of the command for the same reason:
+# there is no real privilege escalation available in a test sandbox, so
+# tests that care about `--sudo` assert on dsc's constructed command string
+# rather than on live privilege escalation.
+set -euo pipefail
+
+command="${@: -1}"
+command="${command#sudo -n }"
+exec sh -c "$command"
