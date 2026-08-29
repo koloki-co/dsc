@@ -213,11 +213,17 @@ pub(crate) fn run_ssh_pipe(
     Ok((stdout_buf, stderr_text))
 }
 
-/// Ownership, mode, and backup requests for [`build_replace_script`].
+/// Ownership, mode, backup, and verification requests for
+/// [`build_replace_script`].
 ///
 /// `owner`/`group`/`mode` are applied to the staged file only, never to the
 /// destination directly or via `--reference`, so a symlink target already at
 /// the destination cannot influence the replacement.
+///
+/// `expected_checksum`, when set, is the SHA-256 hex digest the uploaded
+/// bytes must produce. The script verifies the staged file against it
+/// *before* any metadata, backup, or rename step runs, so a corrupted
+/// transfer aborts with the destination untouched.
 #[allow(dead_code)]
 pub(crate) struct ReplaceOptions<'a> {
     pub(crate) owner: Option<&'a str>,
@@ -225,6 +231,7 @@ pub(crate) struct ReplaceOptions<'a> {
     pub(crate) mode: Option<&'a str>,
     pub(crate) backup: bool,
     pub(crate) sudo: bool,
+    pub(crate) expected_checksum: Option<&'a str>,
 }
 
 /// Build the remote stage-and-replace script for `dsc file push`'s no-follow
@@ -262,6 +269,12 @@ fn build_replace_script_body(remote_path: &str, opts: &ReplaceOptions) -> String
         "set -eu; test -L {quoted_path} && exit 2; tmp=$(mktemp {}/.dsc-file.XXXXXX); trap 'rm -f \"$tmp\"' EXIT; cat > \"$tmp\"; sha256sum \"$tmp\"",
         shell_quote(dir),
     );
+    if let Some(expected) = opts.expected_checksum {
+        script.push_str(&format!(
+            "; actual=$(sha256sum \"$tmp\" | cut -d' ' -f1); test \"$actual\" = {} || exit 3",
+            shell_quote(expected),
+        ));
+    }
     if let Some(owner) = opts.owner {
         script.push_str(&format!("; chown {} \"$tmp\"", shell_quote(owner)));
     }
@@ -358,6 +371,7 @@ mod tests {
             mode: None,
             backup: false,
             sudo: false,
+            expected_checksum: None,
         }
     }
 
@@ -399,6 +413,7 @@ mod tests {
             mode: Some("0755"),
             backup: false,
             sudo: false,
+            expected_checksum: None,
         };
         let script = build_replace_script_body("/etc/example.conf", &opts);
         assert!(script.contains("chown 'root' \"$tmp\""));
@@ -441,6 +456,24 @@ mod tests {
     fn replace_script_quotes_a_path_containing_a_single_quote() {
         let script = build_replace_script_body("/var/discourse/it's.txt", &no_op_options());
         assert!(script.contains(r"'/var/discourse/it'\''s.txt'"));
+    }
+
+    #[test]
+    fn replace_script_verifies_the_expected_checksum_before_replacing() {
+        let opts = ReplaceOptions {
+            expected_checksum: Some("abc123"),
+            ..no_op_options()
+        };
+        let script = build_replace_script_body("/etc/example.conf", &opts);
+        let verify_pos = script.find("test \"$actual\" = 'abc123'").unwrap();
+        let chown_pos = script.find("chown").unwrap_or(script.len());
+        let backup_pos = script.find("cp -a").unwrap_or(script.len());
+        let mv_pos = script.find("mv -f").unwrap();
+        assert!(
+            verify_pos < mv_pos && verify_pos < backup_pos && verify_pos < chown_pos,
+            "checksum verification must precede every mutation and the rename: {script}"
+        );
+        assert!(script.contains("|| exit 3"));
     }
 }
 
@@ -538,6 +571,7 @@ mod fixture_tests {
                 mode: None,
                 backup: false,
                 sudo: false,
+                expected_checksum: None,
             },
             content,
         )
@@ -575,6 +609,7 @@ mod fixture_tests {
                 mode: None,
                 backup: false,
                 sudo: false,
+                expected_checksum: None,
             },
             content,
         )
@@ -602,6 +637,7 @@ mod fixture_tests {
                 mode: None,
                 backup: false,
                 sudo: false,
+                expected_checksum: None,
             },
             b"attempted overwrite",
         )
@@ -646,6 +682,7 @@ mod fixture_tests {
                 mode: None,
                 backup: true,
                 sudo: false,
+                expected_checksum: None,
             },
             b"new content",
         )
@@ -679,6 +716,7 @@ mod fixture_tests {
                 mode: Some("0640"),
                 backup: false,
                 sudo: false,
+                expected_checksum: None,
             },
             b"content",
         )
@@ -686,6 +724,48 @@ mod fixture_tests {
 
         let mode = std::fs::metadata(&dest).unwrap().mode() & 0o777;
         assert_eq!(mode, 0o640);
+    }
+
+    #[test]
+    fn a_checksum_mismatch_aborts_before_the_destination_is_touched() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("update.sh");
+        std::fs::write(&dest, b"original content").unwrap();
+
+        let error = push_bytes(
+            dest.to_str().unwrap(),
+            &ReplaceOptions {
+                owner: None,
+                group: None,
+                mode: None,
+                backup: false,
+                sudo: false,
+                expected_checksum: Some("0".repeat(64).leak() as &str),
+            },
+            b"corrupted in transit",
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("exit 3"));
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            b"original content",
+            "a checksum mismatch must leave the destination untouched"
+        );
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".dsc-file.")
+            })
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "the trap must clean up the staged file after a checksum failure"
+        );
     }
 
     #[test]

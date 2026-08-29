@@ -4,7 +4,7 @@
 
 use crate::cli::{FileCommand, ListFormat};
 use crate::commands::common::{emit_result, select_discourse, shell_quote};
-use crate::commands::ssh::{run_ssh_capture, run_ssh_pipe};
+use crate::commands::ssh::{ReplaceOptions, build_replace_script, run_ssh_capture, run_ssh_pipe};
 use crate::config::Config;
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
@@ -193,63 +193,31 @@ fn file_push(
         ));
     }
 
-    let encoded = base64_encode(&local_bytes);
-    let remote_dir = remote_path
-        .rsplit_once('/')
-        .map(|(dir, _)| if dir.is_empty() { "/" } else { dir })
-        .unwrap_or(".");
-
-    let mut script = String::new();
-    script.push_str("set -eu; ");
-    script.push_str(&format!(
-        "test -L {p} && exit 2; ",
-        p = shell_quote(remote_path)
-    ));
-    script.push_str(&format!(
-        "tmp=$(mktemp {dir}/.dsc-file.XXXXXX); ",
-        dir = shell_quote(remote_dir)
-    ));
-    script.push_str(&format!(
-        "printf '%s' {enc} | base64 -d > \"$tmp\"; ",
-        enc = shell_quote(&encoded)
-    ));
-    script.push_str("actual=$(sha256sum \"$tmp\" | cut -d' ' -f1); ");
-    script.push_str(&format!(
-        "test \"$actual\" = {chk} || {{ rm -f \"$tmp\"; exit 3; }}; ",
-        chk = shell_quote(&local_checksum)
-    ));
-    if let Some(m) = mode {
-        script.push_str(&format!("chmod {m} \"$tmp\"; ", m = m));
-    }
-    if let Some(o) = owner {
-        script.push_str(&format!("chown {o} \"$tmp\"; ", o = o));
-    }
-    if let Some(g) = group {
-        script.push_str(&format!("chgrp {g} \"$tmp\"; ", g = g));
-    }
-    if backup && existing {
-        script.push_str(&format!(
-            "cp -a {p} {bp}; ",
-            p = shell_quote(remote_path),
-            bp = shell_quote(&backup_path)
-        ));
-    }
-    script.push_str(&format!(
-        "mv -f \"$tmp\" {p}; ",
-        p = shell_quote(remote_path)
-    ));
-    script.push_str("rm -f \"$tmp\" 2>/dev/null; ");
-
-    let full_command = if sudo {
-        format!("sudo -n sh -c {}", shell_quote(&script))
-    } else {
-        script
+    let opts = ReplaceOptions {
+        owner,
+        group,
+        mode,
+        backup: backup && existing,
+        sudo,
+        expected_checksum: Some(&local_checksum),
     };
-
-    let (_stdout, stderr) = run_ssh_pipe(target, &full_command, &[], 1024)
+    let full_command = build_replace_script(remote_path, &opts);
+    let (stdout, _stderr) = run_ssh_pipe(target, &full_command, &local_bytes, 1024)
         .context(format!("pushing to {remote_path} on {}", discourse.name))?;
 
-    let _ = stderr;
+    // The script echoes the staged file's checksum; assert it matches what
+    // we sent. (The script also verifies this itself before replacing.)
+    let staged_output = String::from_utf8_lossy(&stdout);
+    let staged_checksum = staged_output.split_whitespace().next().unwrap_or("");
+    if staged_checksum != local_checksum {
+        return Err(anyhow!(
+            "staged checksum mismatch on {}: expected {}, got {}",
+            discourse.name,
+            local_checksum,
+            staged_checksum
+        ));
+    }
+
     println!(
         "{}: pushed {} -> {} ({} bytes, {})",
         discourse.name,
@@ -297,9 +265,4 @@ fn hex_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hex::encode(hasher.finalize())
-}
-
-fn base64_encode(data: &[u8]) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD.encode(data)
 }
