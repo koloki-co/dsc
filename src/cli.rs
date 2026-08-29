@@ -2821,8 +2821,8 @@ pub enum CompletionCommand {
 
 #[derive(Subcommand)]
 pub enum FileCommand {
-    /// Compare a local file's checksum and size with the remote file on one
-    /// host, without transferring contents. Read-only.
+    /// Compare a local file's checksum and size with the remote file on the
+    /// selected host(s), without transferring contents. Read-only.
     #[command(after_help = "Examples:
   dsc file audit myforum scripts/update.sh /var/discourse/scripts/update.sh")]
     Audit {
@@ -2833,21 +2833,46 @@ pub enum FileCommand {
         local_path: PathBuf,
         /// Absolute remote file path to audit.
         remote_path: String,
+        /// Audit every configured forum, or those matching these tags
+        /// (comma/semicolon separated, match-any). Only usable together
+        /// with `all` as the discourse argument.
+        #[arg(long, value_name = "tag1,tag2")]
+        tags: Option<String>,
+        /// Audit forums concurrently (results stream fastest-first).
+        #[arg(long, short = 'p')]
+        parallel: bool,
+        /// Maximum workers when --parallel is set (default: 8, ceiling 32).
+        #[arg(long, short = 'm')]
+        max: Option<usize>,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
     /// Upload a local file to a remote host with checksum verification,
-    /// atomic replacement, and optional backup and sudo.
+    /// atomic replacement, and a timestamped backup of any existing
+    /// destination (`--no-backup` to skip the backup).
     #[command(visible_alias = "up")]
     Push {
-        /// Discourse name.
+        /// Discourse name, or `all` to push to every configured forum with
+        /// an SSH host (use only when the artefact genuinely belongs on
+        /// every selected host).
         discourse: String,
         /// Local file to upload.
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
         /// Absolute remote destination path.
         remote_path: String,
+        /// Push to every configured forum, or those matching these tags
+        /// (comma/semicolon separated, match-any). Only usable together
+        /// with `all` as the discourse argument.
+        #[arg(long, value_name = "tag1,tag2")]
+        tags: Option<String>,
+        /// Upload to forums concurrently (results stream fastest-first).
+        #[arg(long, short = 'p')]
+        parallel: bool,
+        /// Maximum workers when --parallel is set (default: 3, ceiling 32).
+        #[arg(long, short = 'm')]
+        max: Option<usize>,
         /// Remote owner (requires `--sudo` for non-SSH-user ownership).
         #[arg(long)]
         owner: Option<String>,

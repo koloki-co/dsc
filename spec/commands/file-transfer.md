@@ -148,10 +148,10 @@ This protocol is deliberately a single remote invocation: no multi-round-trip ra
 
 ### Phase 2 - fleet push and audit
 
-- [ ] Add `all`, `--tags`, and bounded `--parallel` through the shared R48 selector and fleet executor.
-- [ ] Require a complete dry-run target plan and `--yes` for fleet push.
-- [ ] Return structured per-forum outcomes, continue after individual failures, and exit non-zero on partial failure.
-- [ ] Verify the real driver by auditing, piloting, and then deploying the fallback updater across authorised managed hosts, retaining redacted output and checksums but no host credentials.
+- [x] Add `all`, `--tags`, and bounded `--parallel` through the shared R48 selector and fleet executor. Serial by default; `-p` (default 3 workers, `-m` override, ceiling 32) for both audit and push.
+- [x] Require a complete dry-run target plan and `--yes` for fleet push. The dry-run plan prints every target with a best-effort per-forum state read (degrading to `unknown` on inspection failure so `-n` never hard-fails against an unreachable host) plus the effective host-key checking mode.
+- [x] Return structured per-forum outcomes, continue after individual failures, and exit non-zero on partial failure. JSON/YAML emit one row per forum including failures; failures are also printed to stderr as they complete.
+- [ ] Verify the real driver by auditing, piloting, and then deploying the fallback updater across authorised managed hosts, retaining redacted output and checksums but no host credentials. (Blocked on operator-run deployment window.)
 
 ### Phase 3 - pull
 

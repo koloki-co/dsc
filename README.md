@@ -155,6 +155,7 @@ dsc update myforum
   - [add](docs/add.md) — add installs to config
   - [import](docs/import.md) — import installs from file or stdin
   - [update](docs/update.md) — run OS and Discourse updates over SSH
+  - [file](docs/file.md) — checksum-verified audit/push of a file to hosts over SSH
   - [search](docs/search.md) — search topics on a Discourse
   - [analytics](docs/analytics.md) — community-health snapshot (growth, activity, health)
   - [explorer](docs/explorer.md) — inspect and run saved Data Explorer queries
