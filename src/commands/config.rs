@@ -4,6 +4,7 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
+use crate::commands::common::MAX_FLEET_WORKERS;
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
 use serde::Serialize;
@@ -184,11 +185,14 @@ fn check_parallel(
 }
 
 /// Workers for `--parallel`: the requested max (default 8), never more than
-/// the number of forums.
+/// the number of forums, and never above [`MAX_FLEET_WORKERS`] - each worker
+/// may hold an SSH process and reader threads, so an unbounded `--parallel`
+/// could exhaust local file descriptors/CPU on a large fleet.
 fn check_worker_count(max: Option<usize>, count: usize) -> usize {
     max.unwrap_or(DEFAULT_PARALLEL_CHECK_WORKERS)
         .max(1)
         .min(count.max(1))
+        .min(MAX_FLEET_WORKERS)
 }
 
 /// True when the configured baseurl would put the API key on the wire in
@@ -299,7 +303,7 @@ fn check_ssh(host: &str) -> CheckStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_api, check_worker_count, sends_key_in_cleartext};
+    use super::{MAX_FLEET_WORKERS, check_api, check_worker_count, sends_key_in_cleartext};
     use crate::config::DiscourseConfig;
 
     #[test]
@@ -330,6 +334,11 @@ mod tests {
     #[test]
     fn check_workers_floor_of_one() {
         assert_eq!(check_worker_count(Some(0), 5), 1);
+    }
+
+    #[test]
+    fn check_workers_capped_by_fleet_ceiling() {
+        assert_eq!(check_worker_count(Some(1000), 5000), MAX_FLEET_WORKERS);
     }
 
     #[test]

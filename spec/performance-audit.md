@@ -324,6 +324,8 @@ User-supplied update/config worker counts are capped by forum count but not by a
 
 **Recommendation:** Apply a documented hard ceiling or require an explicit unsafe override above it. A shared fleet executor should own this policy.
 
+**Addressed 2026-08-30:** `update all -p`/`--parallel` and `config check --parallel` now cap their effective worker count at the same `MAX_FLEET_WORKERS` (32) ceiling `run_fleet` already enforced, via `parallel_worker_count`/`check_worker_count`. The constant moved to `src/commands/common.rs` as `pub(crate)` so every parallel-width command shares one ceiling policy, per the recommendation above. No unsafe override is offered yet — an explicit override above the ceiling remains a follow-up if a real fleet size needs it.
+
 ### P29 - Low - `list --open` waits for each browser opener process serially
 
 **Evidence:** `src/commands/list.rs:214-219`; `src/commands/common.rs:124-152`.
