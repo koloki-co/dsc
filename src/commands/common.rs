@@ -16,7 +16,10 @@ use std::sync::{Arc, Mutex};
 /// Absolute ceiling on fleet parallelism. Above this, an explicit
 /// `--max` override is required. Each worker may hold an SSH process
 /// and reader threads, so unbounded widths can exhaust local FDs/CPU.
-const MAX_FLEET_WORKERS: usize = 32;
+/// Shared by every command that accepts a user-supplied parallel width
+/// (`run_fleet` callers, `update all -p`, `config check --parallel`), so
+/// the ceiling policy lives in one place.
+pub(crate) const MAX_FLEET_WORKERS: usize = 32;
 
 /// Emit a single command result honouring `--format`. Text mode prints the
 /// human-readable `text`; json/yaml serialise `value`. Lets the otherwise

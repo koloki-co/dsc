@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::api::{DiscourseClient, VersionInfo};
-use crate::commands::common::{ensure_api_credentials, missing_config, shell_quote};
+use crate::commands::common::{
+    MAX_FLEET_WORKERS, ensure_api_credentials, missing_config, shell_quote,
+};
 use crate::commands::ssh::build_ssh_command;
 use crate::commands::update_log::{self, LogKind};
 use crate::config::{Config, DiscourseConfig, find_discourse};
@@ -291,9 +293,13 @@ fn prompt_yes_no(question: &str, default_yes: bool) -> bool {
     }
 }
 
+/// Workers for `update all -p`: the requested max (default 3), never more
+/// than the number of forums, and never above [`MAX_FLEET_WORKERS`] - each
+/// worker holds an SSH process and reader threads, so an unbounded `-p`
+/// could exhaust local file descriptors/CPU on a large fleet.
 fn parallel_worker_count(max: Option<usize>, discourse_count: usize) -> usize {
     let requested = max.unwrap_or(DEFAULT_PARALLEL_UPDATE_WORKERS).max(1);
-    requested.min(discourse_count.max(1))
+    requested.min(discourse_count.max(1)).min(MAX_FLEET_WORKERS)
 }
 
 #[cfg(test)]
@@ -348,6 +354,11 @@ mod tests {
     #[test]
     fn max_workers_is_capped_by_discourse_count() {
         assert_eq!(parallel_worker_count(Some(8), 2), 2);
+    }
+
+    #[test]
+    fn max_workers_is_capped_by_fleet_ceiling() {
+        assert_eq!(parallel_worker_count(Some(1000), 5000), MAX_FLEET_WORKERS);
     }
 
     #[test]
