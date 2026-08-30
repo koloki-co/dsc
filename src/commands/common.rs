@@ -13,12 +13,12 @@ use std::fmt::Display;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
-/// Absolute ceiling on fleet parallelism. Above this, an explicit
-/// `--max` override is required. Each worker may hold an SSH process
-/// and reader threads, so unbounded widths can exhaust local FDs/CPU.
-/// Shared by every command that accepts a user-supplied parallel width
-/// (`run_fleet` callers, `update all -p`, `config check --parallel`), so
-/// the ceiling policy lives in one place.
+/// Absolute, non-overridable ceiling on fleet parallelism. Every command
+/// that accepts a user-supplied parallel width caps at this value:
+/// `fleet_worker_count` for `run_fleet` callers, `parallel_worker_count`
+/// for `update all -p`, and `check_worker_count` for `config check
+/// --parallel`. Each worker may hold an SSH process and reader threads,
+/// so unbounded widths can exhaust local FDs/CPU.
 pub(crate) const MAX_FLEET_WORKERS: usize = 32;
 
 /// Emit a single command result honouring `--format`. Text mode prints the
