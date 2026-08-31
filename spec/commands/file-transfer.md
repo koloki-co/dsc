@@ -155,9 +155,9 @@ This protocol is deliberately a single remote invocation: no multi-round-trip ra
 
 ### Phase 3 - pull
 
-- [ ] Add single-forum pull with atomic local writes and checksum verification.
-- [ ] Add fleet pull using flat `<discourse>--<remote-basename>` filenames.
-- [ ] Add collision, overwrite, local symlink, partial-failure, and filename-sanitisation tests.
+- [x] Add single-forum pull with atomic local writes and checksum verification. `commands::ssh::build_fetch_script` is one remote invocation that refuses a symlink or non-regular source, writes the source's SHA-256 to stderr, then streams its bytes to stdout; `dsc file pull` verifies the transferred bytes against that checksum before writing the destination atomically via the existing `utils::atomic_write` (same-directory staging, symlink refusal, no clobber without `--overwrite`).
+- [x] Add fleet pull using flat `<discourse>--<remote-basename>` filenames. A fleet pull (`all`/`--tags`) requires `LOCAL_PATH` to already be a directory and rejects a remote basename that would be empty or a traversal segment (`.`/`..`); every forum's destination is validated before any forum is fetched, so one collision aborts the whole pull before the others are touched.
+- [x] Add collision, overwrite, local symlink, partial-failure, and filename-sanitisation tests. Covered in `commands::ssh`'s fixture tests (symlink/missing/non-regular remote source, checksum-on-stderr) and `commands::file`'s own tests (local collision refusal and its `--overwrite`-specific hint, `--overwrite` replacement, local symlink-destination refusal, fleet filename naming, one forum failing without affecting another's write, and `remote_basename` rejecting traversal/empty segments).
 
 ## Backward compatibility
 

@@ -601,7 +601,9 @@ Examples:
     #[command(after_help = "Examples:
   dsc file audit myforum scripts/update.sh /var/discourse/scripts/update.sh
   dsc -n file push myforum scripts/update.sh /var/discourse/scripts/update.sh --owner root --group root --mode 0755 --backup --sudo
-  dsc file push myforum scripts/update.sh /var/discourse/scripts/update.sh --owner root --group root --mode 0755 --backup --sudo --yes")]
+  dsc file push myforum scripts/update.sh /var/discourse/scripts/update.sh --owner root --group root --mode 0755 --backup --sudo --yes
+  dsc file pull myforum /var/discourse/scripts/update.sh ./update.sh
+  dsc file pull all /var/discourse/scripts/update.sh ./output --tags production")]
     File {
         #[command(subcommand)]
         command: FileCommand,
@@ -718,6 +720,9 @@ impl Commands {
                 None => None,
             },
             Commands::Man { .. } => Some("dsc man --dir"),
+            Commands::File {
+                command: FileCommand::Pull { .. },
+            } => Some("dsc file pull"),
             _ => None,
         }
     }
@@ -2896,6 +2901,39 @@ pub enum FileCommand {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
+    /// Download a remote file with checksum verification and an atomic
+    /// local write. Refuses a remote symlink/non-regular-file source and a
+    /// local symlink destination.
+    #[command(visible_alias = "pl")]
+    Pull {
+        /// Discourse name, or `all` to pull from every configured forum with
+        /// an SSH host.
+        discourse: String,
+        /// Absolute remote file path to fetch.
+        remote_path: String,
+        /// Local destination. For a single forum, the exact destination
+        /// file. For `all`/`--tags`, an existing destination directory;
+        /// each forum writes `<discourse>--<remote-basename>`.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::AnyPath)]
+        local_path: PathBuf,
+        /// Pull from every configured forum, or those matching these tags
+        /// (comma/semicolon separated, match-any). Only usable together
+        /// with `all` as the discourse argument.
+        #[arg(long, value_name = "tag1,tag2")]
+        tags: Option<String>,
+        /// Pull from forums concurrently (results stream fastest-first).
+        #[arg(long, short = 'p')]
+        parallel: bool,
+        /// Maximum workers when --parallel is set (default: 8, ceiling 32).
+        #[arg(long, short = 'm')]
+        max: Option<usize>,
+        /// Overwrite an existing local destination file (never a symlink).
+        #[arg(long)]
+        overwrite: bool,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
 }
 
 #[derive(ValueEnum, Clone, Copy)]
@@ -2997,10 +3035,11 @@ mod tests {
         // `backup push` (alias `restore`) names a backup already on the
         // Discourse host, so completing local filenames would mislead.
         ("backup push", "backup_path"),
-        // `file audit` and `file push` take a remote path on the SSH host,
-        // not a local file.
+        // `file audit`, `file push`, and `file pull` take a remote path on
+        // the SSH host, not a local file.
         ("file audit", "remote_path"),
         ("file push", "remote_path"),
+        ("file pull", "remote_path"),
     ];
 
     /// Every argument that looks like a local path must carry a completion
@@ -3532,6 +3571,10 @@ mod tests {
                 "dsc completions install",
             ),
             (&["dsc", "man", "--dir", "man"], "dsc man --dir"),
+            (
+                &["dsc", "file", "pull", "forum", "/remote.sh", "local.sh"],
+                "dsc file pull",
+            ),
             (&["dsc", "config", "check"], "dsc config check"),
             (&["dsc", "doctor"], "dsc doctor"),
             (
