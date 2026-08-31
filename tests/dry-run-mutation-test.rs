@@ -813,6 +813,7 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "explorer list",
     "explorer show",
     "file audit",
+    "file pull",
     "group info",
     "group list",
     "group members",

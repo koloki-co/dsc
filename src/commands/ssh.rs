@@ -300,6 +300,23 @@ fn build_replace_script_body(remote_path: &str, opts: &ReplaceOptions) -> String
     script
 }
 
+/// Build the remote read-only fetch script for `dsc file pull`.
+///
+/// The returned string is run directly as the SSH command (no `sh -c` wrap
+/// is needed - there is no privileged mutation to isolate, unlike
+/// [`build_replace_script`]). In one remote invocation it: refuses a
+/// symlink source, refuses a missing or non-regular source, writes the
+/// source's SHA-256 checksum to stderr, then streams the file's bytes to
+/// stdout. Keeping the checksum on stderr and the file bytes on stdout lets
+/// the caller verify the transfer without a second round trip, using the
+/// same [`run_ssh_capture`] transport used for other bounded binary reads.
+pub(crate) fn build_fetch_script(remote_path: &str) -> String {
+    let quoted_path = shell_quote(remote_path);
+    format!(
+        "set -eu; if test -L {quoted_path}; then echo 'remote path is a symlink' >&2; exit 2; fi; if ! test -e {quoted_path}; then echo 'remote path not found' >&2; exit 4; fi; if ! test -f {quoted_path}; then echo 'remote path is not a regular file' >&2; exit 5; fi; sha256sum {quoted_path} | cut -d' ' -f1 1>&2; cat {quoted_path}"
+    )
+}
+
 fn ssh_strict_host_key_checking() -> Option<String> {
     let value = std::env::var("DSC_SSH_STRICT_HOST_KEY_CHECKING")
         .unwrap_or_else(|_| "accept-new".to_string());
@@ -314,8 +331,8 @@ fn ssh_strict_host_key_checking() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ReplaceOptions, build_replace_script, build_replace_script_body, build_ssh_command,
-        build_ssh_command_with_timeout,
+        ReplaceOptions, build_fetch_script, build_replace_script, build_replace_script_body,
+        build_ssh_command, build_ssh_command_with_timeout,
     };
 
     fn args(command: &std::process::Command) -> Vec<String> {
@@ -482,6 +499,40 @@ mod tests {
         );
         assert!(script.contains("|| exit 3"));
     }
+
+    #[test]
+    fn fetch_script_checks_symlink_and_existence_before_reading() {
+        let script = build_fetch_script("/var/discourse/scripts/update.sh");
+        assert!(script.starts_with("set -eu"));
+        let symlink_pos = script.find("test -L").unwrap();
+        let missing_pos = script.find("! test -e").unwrap();
+        let regular_pos = script.find("! test -f").unwrap();
+        let checksum_pos = script.find("sha256sum").unwrap();
+        let cat_pos = script.find("cat ").unwrap();
+        assert!(symlink_pos < missing_pos);
+        assert!(missing_pos < regular_pos);
+        assert!(regular_pos < checksum_pos);
+        assert!(
+            checksum_pos < cat_pos,
+            "checksum must be reported before the content is streamed: {script}"
+        );
+        assert!(script.contains("exit 2"));
+        assert!(script.contains("exit 4"));
+        assert!(script.contains("exit 5"));
+    }
+
+    #[test]
+    fn fetch_script_writes_the_checksum_to_stderr_not_stdout() {
+        let script = build_fetch_script("/etc/example.conf");
+        assert!(script.contains("sha256sum '/etc/example.conf' | cut -d' ' -f1 1>&2"));
+        assert!(script.ends_with("cat '/etc/example.conf'"));
+    }
+
+    #[test]
+    fn fetch_script_quotes_a_path_containing_a_single_quote() {
+        let script = build_fetch_script("/var/discourse/it's.txt");
+        assert!(script.contains(r"'/var/discourse/it'\''s.txt'"));
+    }
 }
 
 /// Integration tests that run [`build_replace_script`] (and the plain
@@ -493,18 +544,21 @@ mod tests {
 /// exercises dsc's actual argument construction and the protocol's real
 /// shell logic, not just parsed intent.
 #[cfg(all(test, unix))]
-mod fixture_tests {
-    use super::{ReplaceOptions, build_replace_script, run_ssh_capture, run_ssh_pipe};
+pub(crate) mod fixture_tests {
+    use super::{
+        ReplaceOptions, build_fetch_script, build_replace_script, run_ssh_capture, run_ssh_pipe,
+    };
     use std::os::unix::fs::{MetadataExt, symlink};
     use std::sync::Mutex;
 
     // `PATH` is process-wide, and `cargo test` runs a binary's tests on
     // multiple threads by default - so every test that installs the fake
-    // `ssh` must hold this lock for the duration of its SSH calls, or two
-    // tests could race and see each other's PATH.
+    // `ssh` (in this module or borrowed by another command's tests, e.g.
+    // `commands::file`) must hold this lock for the duration of its SSH
+    // calls, or two tests could race and see each other's PATH.
     static PATH_ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    struct FakeSshPath {
+    pub(crate) struct FakeSshPath {
         original: Option<String>,
         // Held only so the symlink directory outlives the PATH override;
         // never read directly.
@@ -513,7 +567,7 @@ mod fixture_tests {
     }
 
     impl FakeSshPath {
-        fn install() -> Self {
+        pub(crate) fn install() -> Self {
             let guard = PATH_ENV_LOCK
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
@@ -773,6 +827,58 @@ mod fixture_tests {
             leftovers.is_empty(),
             "the trap must clean up the staged file after a checksum failure"
         );
+    }
+
+    fn fetch_bytes(remote_path: &str) -> anyhow::Result<(Vec<u8>, String)> {
+        let _fake_ssh = FakeSshPath::install();
+        let script = build_fetch_script(remote_path);
+        run_ssh_capture("remote.invalid", &script, 4096)
+    }
+
+    #[test]
+    fn fetches_a_regular_file_and_reports_its_checksum_on_stderr() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("update.sh");
+        let content = b"#!/bin/sh\necho updated\n";
+        std::fs::write(&source, content).unwrap();
+
+        let (stdout, stderr) = fetch_bytes(source.to_str().unwrap()).unwrap();
+
+        assert_eq!(stdout, content);
+        let mut checksum = stderr.trim().to_string();
+        checksum.truncate(64);
+        assert_eq!(checksum.len(), 64, "expected a sha256 hex digest on stderr");
+    }
+
+    #[test]
+    fn refuses_a_symlink_source_without_reading_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real-target");
+        std::fs::write(&target, b"do not leak me").unwrap();
+        let source = dir.path().join("update.sh");
+        std::os::unix::fs::symlink(&target, &source).unwrap();
+
+        let error = fetch_bytes(source.to_str().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("exit 2"));
+    }
+
+    #[test]
+    fn reports_a_missing_source_distinctly_from_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("missing.sh");
+
+        let error = fetch_bytes(source.to_str().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("exit 4"));
+    }
+
+    #[test]
+    fn refuses_a_non_regular_source_such_as_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("a-directory");
+        std::fs::create_dir(&source).unwrap();
+
+        let error = fetch_bytes(source.to_str().unwrap()).unwrap_err();
+        assert!(error.to_string().contains("exit 5"));
     }
 
     #[test]
