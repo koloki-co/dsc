@@ -678,15 +678,15 @@ fn pull_one_forum_inner(
     let (content, stderr) = run_ssh_capture(target, &script, MAX_PULL_BYTES)
         .map_err(|e| anyhow!("pulling {remote_path} from {target}: {e:#}"))?;
 
-    let reported_checksum = stderr.trim();
     let actual_checksum = hex_sha256(&content);
+    let reported_checksum = extract_checksum(&stderr);
     if reported_checksum != actual_checksum {
         anyhow::bail!(
             "checksum mismatch after transfer: remote reported {}, computed {actual_checksum}",
             if reported_checksum.is_empty() {
                 "(none)"
             } else {
-                reported_checksum
+                reported_checksum.as_str()
             }
         );
     }
@@ -696,6 +696,37 @@ fn pull_one_forum_inner(
         .map_err(rewrite_overwrite_hint)
         .with_context(|| format!("writing {}", dest.display()))?;
     Ok((actual_checksum, size))
+}
+
+/// Extract the 64-hex-char SHA-256 digest the fetch script wrote to stderr.
+///
+/// The SSH session's stderr also carries the ssh client's own diagnostics
+/// (notably `Warning: Permanently added '<host>' to the list of known
+/// hosts` on first contact under the `accept-new` host-key default), so the
+/// checksum cannot simply be the whole trimmed stderr - every first pull
+/// from a newly-known host would otherwise fail a phantom mismatch. A
+/// standalone 64-hex-character token is unambiguous: the script is the only
+/// expected source of such a token on this stream.
+fn extract_checksum(stderr: &str) -> String {
+    let mut reported = String::new();
+    for token in stderr.split_whitespace() {
+        if is_hex64(token) {
+            if !reported.is_empty() {
+                // Two candidate digests is ambiguous; treat as a mismatch by
+                // returning something that cannot compare equal.
+                return String::new();
+            }
+            reported = token.to_string();
+        }
+    }
+    reported
+}
+
+fn is_hex64(token: &str) -> bool {
+    token.len() == 64
+        && token
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
 /// `ensure_output_available`/`atomic_write`'s shared collision message
@@ -782,6 +813,21 @@ mod tests {
         assert!(remote_basename("/var/discourse/scripts/").is_err());
         assert!(remote_basename("/var/discourse/scripts/..").is_err());
         assert!(remote_basename("/").is_err());
+    }
+
+    #[test]
+    fn extract_checksum_finds_the_digest_despite_ssh_client_warnings() {
+        let digest = format!("{:064x}", 0xabcdu32);
+        let stderr = format!(
+            "Warning: Permanently added 'remote.invalid' (ED25519) to the list of known hosts.\n{digest}\n"
+        );
+        assert_eq!(extract_checksum(&stderr), digest);
+
+        assert_eq!(extract_checksum(&digest), digest);
+        assert_eq!(extract_checksum("no digest here"), "");
+        // More than one 64-hex token is ambiguous -> refuse.
+        let other = format!("{:064x}", 0xffffu32);
+        assert_eq!(extract_checksum(&format!("{digest}\n{other}")), "");
     }
 
     #[test]
