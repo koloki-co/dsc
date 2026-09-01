@@ -16,20 +16,59 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::process::Command;
 
-pub fn backup_create(config: &Config, discourse_name: &str) -> Result<()> {
-    let discourse = select_discourse(config, Some(discourse_name))?;
-    ensure_api_credentials(discourse)?;
-    let client = DiscourseClient::new(discourse)?;
-    client.create_backup()?;
-    Ok(())
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum BackupCreateStatus {
+    /// Dry-run only: credentials are configured, so the request would be sent.
+    Planned,
+    /// Dry-run only: credentials are missing, so the request would fail before it starts.
+    Blocked,
+    Requested,
+    Failed,
 }
 
-/// Fan out `backup create` to every configured forum, optionally filtered
-/// by `--tags`. Continues past per-forum failures (missing credentials,
-/// unreachable forum) so one bad entry doesn't block the rest of the fleet;
-/// fails at the end if any forum could not be backed up.
-pub fn backup_create_all(config: &Config, tags: Option<&str>) -> Result<()> {
-    let discourses = selected_discourses(config, None, tags)?;
+impl BackupCreateStatus {
+    fn as_text(self) -> &'static str {
+        match self {
+            Self::Planned => "planned",
+            Self::Blocked => "blocked",
+            Self::Requested => "requested",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BackupCreateRow {
+    discourse: String,
+    status: BackupCreateStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+/// Create a backup on one forum, every configured forum (`--all`), or forums
+/// matching `--tags`. Honours global `--dry-run`: rather than refusing
+/// outright, prints a complete per-forum plan (which forums are reachable
+/// enough to have credentials configured) with no request sent. Continues
+/// past per-forum failures on a real run so one bad entry doesn't block the
+/// rest of the fleet; fails at the end if any forum could not be backed up.
+pub fn backup_create(
+    config: &Config,
+    discourse_name: Option<&str>,
+    tags: Option<&str>,
+    dry_run: bool,
+    format: OutputFormat,
+) -> Result<()> {
+    if !matches!(
+        format,
+        OutputFormat::Text | OutputFormat::Json | OutputFormat::Yaml | OutputFormat::Csv
+    ) {
+        return Err(anyhow!(
+            "backup create supports --format text/json/yaml/csv"
+        ));
+    }
+
+    let discourses = selected_discourses(config, discourse_name, tags)?;
     if discourses.is_empty() {
         return Err(if tags.is_some() {
             anyhow!("no discourses configured matching the given tags")
@@ -38,15 +77,67 @@ pub fn backup_create_all(config: &Config, tags: Option<&str>) -> Result<()> {
         });
     }
 
+    if dry_run {
+        let rows: Vec<BackupCreateRow> = discourses
+            .iter()
+            .map(|discourse| match ensure_api_credentials(discourse) {
+                Ok(()) => BackupCreateRow {
+                    discourse: discourse.name.clone(),
+                    status: BackupCreateStatus::Planned,
+                    detail: Some("POST /admin/backups.json (with_uploads=true)".to_string()),
+                },
+                Err(e) => BackupCreateRow {
+                    discourse: discourse.name.clone(),
+                    status: BackupCreateStatus::Blocked,
+                    detail: Some(e.to_string()),
+                },
+            })
+            .collect();
+        return emit_backup_create(&rows, format, true);
+    }
+
+    let stream = matches!(format, OutputFormat::Text | OutputFormat::Csv);
+    let mut csv_writer =
+        matches!(format, OutputFormat::Csv).then(|| csv::Writer::from_writer(io::stdout()));
+    if let Some(writer) = csv_writer.as_mut() {
+        write_backup_create_csv_header(writer)?;
+        writer.flush()?;
+    }
+
+    let mut rows = Vec::with_capacity(discourses.len());
     let mut failed = 0usize;
     for discourse in &discourses {
-        match backup_create_one(discourse) {
-            Ok(()) => println!("{}: backup requested", discourse.name),
+        let row = match backup_create_one(discourse) {
+            Ok(()) => BackupCreateRow {
+                discourse: discourse.name.clone(),
+                status: BackupCreateStatus::Requested,
+                detail: None,
+            },
             Err(e) => {
                 failed += 1;
-                eprintln!("{}: backup failed - {e}", discourse.name);
+                BackupCreateRow {
+                    discourse: discourse.name.clone(),
+                    status: BackupCreateStatus::Failed,
+                    detail: Some(e.to_string()),
+                }
+            }
+        };
+        if stream {
+            match format {
+                OutputFormat::Text => print_backup_create_text_row(&row),
+                OutputFormat::Csv => {
+                    write_backup_create_csv_row(csv_writer.as_mut().expect("CSV writer"), &row)?;
+                    csv_writer.as_mut().expect("CSV writer").flush()?;
+                }
+                _ => unreachable!(),
             }
         }
+        rows.push(row);
+    }
+
+    if !stream {
+        rows.sort_by(|left, right| left.discourse.cmp(&right.discourse));
+        emit_backup_create(&rows, format, false)?;
     }
 
     if failed > 0 {
@@ -62,6 +153,82 @@ fn backup_create_one(discourse: &DiscourseConfig) -> Result<()> {
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
     client.create_backup()
+}
+
+fn print_backup_create_text_row(row: &BackupCreateRow) {
+    match row.status {
+        BackupCreateStatus::Requested => println!("{}: backup requested", row.discourse),
+        BackupCreateStatus::Failed => eprintln!(
+            "{}: backup failed - {}",
+            row.discourse,
+            row.detail.as_deref().unwrap_or("unknown error")
+        ),
+        BackupCreateStatus::Planned | BackupCreateStatus::Blocked => unreachable!(),
+    }
+}
+
+/// Emits the complete rows for either the dry-run plan (any format) or a
+/// real run's buffered (non-streamed) json/yaml output; a real run's
+/// text/csv output is streamed row-by-row as each backup request completes
+/// and never reaches here.
+fn emit_backup_create(rows: &[BackupCreateRow], format: OutputFormat, dry_run: bool) -> Result<()> {
+    match format {
+        OutputFormat::Text => {
+            debug_assert!(dry_run, "real-run text output is streamed, not emitted");
+            println!("[dry-run] backup create plan: {} forum(s)", rows.len());
+            for row in rows {
+                match row.status {
+                    BackupCreateStatus::Planned => println!(
+                        "  {}: would request a backup ({})",
+                        row.discourse,
+                        row.detail.as_deref().unwrap_or_default()
+                    ),
+                    BackupCreateStatus::Blocked => println!(
+                        "  {}: blocked - {}",
+                        row.discourse,
+                        row.detail.as_deref().unwrap_or("missing credentials")
+                    ),
+                    BackupCreateStatus::Requested | BackupCreateStatus::Failed => {
+                        unreachable!("dry-run rows are always planned or blocked")
+                    }
+                }
+            }
+            println!("Nothing was changed (--dry-run).");
+        }
+        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(rows)?),
+        OutputFormat::Yaml => println!("{}", serde_yaml::to_string(rows)?),
+        OutputFormat::Csv => {
+            let mut writer = csv::Writer::from_writer(io::stdout());
+            write_backup_create_csv_header(&mut writer)?;
+            for row in rows {
+                write_backup_create_csv_row(&mut writer, row)?;
+            }
+            writer.flush()?;
+        }
+        OutputFormat::Markdown | OutputFormat::MarkdownTable | OutputFormat::Urls => {
+            return Err(anyhow!(
+                "backup create supports --format text/json/yaml/csv"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn write_backup_create_csv_header<W: io::Write>(writer: &mut csv::Writer<W>) -> Result<()> {
+    writer.write_record(["discourse", "status", "detail"])?;
+    Ok(())
+}
+
+fn write_backup_create_csv_row<W: io::Write>(
+    writer: &mut csv::Writer<W>,
+    row: &BackupCreateRow,
+) -> Result<()> {
+    writer.write_record([
+        row.discourse.as_str(),
+        row.status.as_text(),
+        row.detail.as_deref().unwrap_or(""),
+    ])?;
+    Ok(())
 }
 
 pub fn backup_list(

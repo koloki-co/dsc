@@ -876,13 +876,16 @@ fn main() -> Result<()> {
         Commands::Backup { command } => match command {
             BackupCommand::Create {
                 discourse,
-                all,
+                all: _,
                 tags,
-            } => match (all || tags.is_some(), discourse.as_deref()) {
-                (true, None) => commands::backup::backup_create_all(&config, tags.as_deref()),
-                (false, Some(name)) => commands::backup::backup_create(&config, name),
-                _ => Err(anyhow!("specify a discourse name, --all, or --tags")),
-            },
+                format,
+            } => commands::backup::backup_create(
+                &config,
+                discourse.as_deref(),
+                tags.as_deref(),
+                dry_run,
+                format,
+            ),
 
             BackupCommand::List {
                 discourse,

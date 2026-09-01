@@ -357,6 +357,99 @@ fn backup_create_requires_a_discourse_all_or_tags() {
 }
 
 #[test]
+fn backup_create_dry_run_plans_without_requesting_a_backup() {
+    // No mock server is started: a dry run must never make a network call.
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "alpha"
+baseurl = "https://alpha.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(&["-n", "backup", "create", "--all"], &config_path);
+    assert!(
+        output.status.success(),
+        "dry-run must not fail offline: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[dry-run] backup create plan: 1 forum(s)"));
+    assert!(stdout.contains("alpha: would request a backup"));
+    assert!(stdout.contains("Nothing was changed (--dry-run)."));
+}
+
+#[test]
+fn backup_create_dry_run_reports_missing_credentials_as_blocked() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "alpha"
+baseurl = "https://alpha.example"
+"#,
+    );
+    let output = run_dsc(&["-n", "backup", "create", "alpha"], &config_path);
+    assert!(
+        output.status.success(),
+        "dry-run must not fail even when credentials are missing: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("alpha: blocked -"));
+}
+
+#[test]
+fn backup_create_dry_run_supports_json_format() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        r#"[[discourse]]
+name = "alpha"
+baseurl = "https://alpha.example"
+apikey = "secret"
+api_username = "system"
+"#,
+    );
+    let output = run_dsc(
+        &["-n", "backup", "create", "alpha", "--format", "json"],
+        &config_path,
+    );
+    assert!(output.status.success());
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).expect("plan JSON");
+    assert_eq!(rows[0]["discourse"], "alpha");
+    assert_eq!(rows[0]["status"], "planned");
+}
+
+#[test]
+fn backup_create_all_supports_json_format() {
+    let alpha_url = start_mock(200);
+
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"alpha\"\nbaseurl = \"{alpha_url}\"\napikey = \"k\"\napi_username = \"tester\"\n"
+        ),
+    );
+
+    let output = run_dsc(
+        &["backup", "create", "--all", "--format", "json"],
+        &config_path,
+    );
+    assert!(
+        output.status.success(),
+        "backup create --all --format json failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let rows: serde_json::Value = serde_json::from_slice(&output.stdout).expect("result JSON");
+    assert_eq!(rows[0]["discourse"], "alpha");
+    assert_eq!(rows[0]["status"], "requested");
+}
+
+#[test]
 fn setup_s3_all_dry_run_fans_out_to_every_configured_forum() {
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
