@@ -34,8 +34,8 @@ fn dry_run_unsafe_commands_short_circuit_before_config_resolution() {
             vec!["--dry-run", "emoji", "push", "example", missing_input],
         ),
         (
-            "backup create",
-            vec!["--dry-run", "backup", "create", "example"],
+            "backup pull",
+            vec!["--dry-run", "backup", "pull", "example", "backup.tar.gz"],
         ),
         (
             "theme update",

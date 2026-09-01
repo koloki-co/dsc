@@ -651,9 +651,6 @@ impl Commands {
                     },
             } => Some("dsc category def pull"),
             Commands::Backup {
-                command: BackupCommand::Create { .. },
-            } => Some("dsc backup create"),
-            Commands::Backup {
                 command: BackupCommand::Pull { .. },
             } => Some("dsc backup pull"),
             Commands::Palette {
@@ -1390,11 +1387,12 @@ pub enum GroupCommand {
 #[derive(Subcommand)]
 #[command(next_display_order = None)]
 pub enum BackupCommand {
-    /// Create a new backup.
+    /// Create a new backup. Honours `--dry-run`.
     #[command(after_help = "Examples:
   dsc backup create myforum
   dsc backup create --all
-  dsc backup create --tags production")]
+  dsc backup create --tags production
+  dsc -n backup create --all   # preview which forums would be backed up")]
     #[command(visible_alias = "cr")]
     Create {
         /// Discourse name. Omit with --all or --tags to fan out across the fleet.
@@ -1406,6 +1404,9 @@ pub enum BackupCommand {
         /// Create a backup on forums matching these tags (comma/semicolon separated, match-any).
         #[arg(long, value_name = "tag1,tag2", conflicts_with = "all")]
         tags: Option<String>,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: OutputFormat,
     },
     /// List backups.
     #[command(visible_alias = "ls")]
@@ -3525,7 +3526,6 @@ mod tests {
                 &["dsc", "category", "def", "pull", "forum"],
                 "dsc category def pull",
             ),
-            (&["dsc", "backup", "create", "forum"], "dsc backup create"),
             (
                 &["dsc", "backup", "pull", "forum", "backup.tar.gz"],
                 "dsc backup pull",
@@ -3606,6 +3606,7 @@ mod tests {
             &["dsc", "topic", "reply", "forum", "1"],
             &["dsc", "category", "push", "forum", "1", "topics"],
             &["dsc", "category", "def", "push", "forum", "categories.yaml"],
+            &["dsc", "backup", "create", "forum"],
             &["dsc", "backup", "push", "forum", "backup.tar.gz"],
             &["dsc", "palette", "push", "forum", "palette.json"],
             &["dsc", "theme", "palette", "push", "forum", "palette.json"],
