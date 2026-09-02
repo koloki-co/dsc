@@ -138,7 +138,7 @@ Phase 1 ships only `{{ variable }}`. The engine is chosen so that conditionals a
 
 - Discourse's own `%{...}` placeholders (e.g. `%{reply_to_username,fallback:there}`, `%{my_name}`, `%{reply_key}`) pass through untouched. These are server-side Discourse substitution tokens, not `dsc`'s concern.
 - YAML front matter (the `---` block at the top of a file) is passed through as-is. `dsc render` operates on the full file content; `dsc topic push` already strips front matter before sending. Rendering happens before stripping, so front matter is available for future metadata uses but its values are not used as variables in Phase 1.
-- Code blocks (```` ``` ````) are not protected in Phase 1. If a code block contains `{{ }}` that should not be substituted, use `--strict` and ensure the variable is defined, or wait for Phase 2 raw-block handling. In practice, Discourse template content rarely contains literal `{{ }}` in code blocks.
+- Markdown fenced code blocks (```` ``` ```` or `~~~`) are protected as of Phase 2: their content, including any `{{ }}` or `{% %}`, passes through byte-for-byte and is not Phase 1-validated. In practice, Discourse template content rarely contains literal `{{ }}` in code blocks, but a template documenting its own placeholder syntax in a fenced example no longer trips validation.
 
 ## Engine choice
 
@@ -225,7 +225,7 @@ A one-time find-and-replace pass over the 24 template files converts them. The `
 - [x] `--render` flag on `dsc topic new`, `dsc topic push`, `dsc topic reply`, `dsc category push`.
 - [x] `--strict` flag: unknown variables are a hard error (exit non-zero with a message naming every unknown variable).
 - [x] `dsc render --list-vars <discourse>`: print the full resolved variable map for a forum (useful for debugging and for seeing what is available before writing a template).
-- [ ] Raw block protection: content inside ```` ```raw ```` / ```` ``` ```` code fences is not substituted. (Alternatively, Tera's `{% raw %}...{% endraw %}` blocks, but those inject non-Markdown syntax into the file. A Markdown-aware code-fence skip is cleaner for this use case.)
+- [x] Raw block protection: content inside Markdown fenced code blocks (```` ``` ```` or `~~~`, three or more delimiters) is not substituted or Phase 1-validated - a template's own documentation of `{{ }}`/`{% %}` syntax in a fenced example passes through untouched. An unterminated fence runs to end-of-file, matching CommonMark.
 
 ### Phase 3 - nice to have
 
