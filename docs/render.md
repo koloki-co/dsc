@@ -94,6 +94,26 @@ Phase 1 supports plain `{{ variable }}` interpolation only (backed by the [Tera]
 
 YAML front matter at the top of a file is rendered like the rest of the content; `dsc topic push`/`category push` strip it separately after any rendering step.
 
+### Code fences are left alone
+
+Content inside a Markdown fenced code block - ```` ``` ```` or `~~~`, three or more delimiter characters, closed by a line with at least as many of the same character and nothing else - is copied through byte-for-byte. It is neither Phase 1-validated nor substituted, so a template that documents its own `{{ }}` (or even `{% if %}`) syntax in a fenced example renders correctly instead of tripping validation or having the example itself replaced. An unterminated fence runs to the end of the file, matching CommonMark.
+
+Given a template file containing:
+
+    Welcome to {{ community }}!
+
+    ```
+    Example syntax: {{ community }}
+    ```
+
+`dsc render` substitutes the first line and leaves the fenced example untouched:
+
+    Welcome to Koloki Community!
+
+    ```
+    Example syntax: {{ community }}
+    ```
+
 ## Rendering inline with `--render`
 
 `--render` applies the same substitution as `dsc render` directly inside a push or post command, so a template file does not need a separate rendering step before it is sent:
