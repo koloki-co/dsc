@@ -5,6 +5,38 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.18.0] - 2026-09-02
+
+### Bug fixes
+
+- **file**: Parse the fetch checksum from mixed ssh stderr ([26d66c3](https://github.com/koloki-co/dsc/commit/26d66c3388da7d235dbfb30ff442ba497bb1efd0))
+
+- **update,config**: Cap parallel widths at shared fleet worker ceiling (P28) ([20e6997](https://github.com/koloki-co/dsc/commit/20e699795b5820f5851ee47e6e4f7810e4c6431b))
+
+### Build
+
+- **deps**: Bump sha2 from 0.10.9 to 0.11.0 ([34268e6](https://github.com/koloki-co/dsc/commit/34268e6e4525fdc742825938b35a3dd7a626d9b0))
+
+- **deps**: Bump taiki-e/install-action ([565c66d](https://github.com/koloki-co/dsc/commit/565c66dc3820e3fa7013a73eda5ad8bdcc8ebf20))
+
+- **deps**: Bump zensical in the routine-minor-and-patch group ([e27d1da](https://github.com/koloki-co/dsc/commit/e27d1da969c2784374061af1d93f2fd75aef7910))
+
+- **deps**: Bump uuid in the routine-minor-and-patch group ([ec3e75e](https://github.com/koloki-co/dsc/commit/ec3e75e3351f059d39bae4f4b0219ca718f302f4))
+
+### Documentation
+
+- **fleet**: Correct the worker-ceiling comment to non-overridable ([4a9f847](https://github.com/koloki-co/dsc/commit/4a9f8474f3d81a9eedfb991b7048dfde6ea09517))
+
+### Features
+
+- **render**: Protect Markdown code fences from template substitution ([6c83196](https://github.com/koloki-co/dsc/commit/6c83196d160ca50fb860fa0ab080d4b8c196900a))
+
+- **backup**: Add --format and a real dry-run plan to backup create ([f06ca88](https://github.com/koloki-co/dsc/commit/f06ca8838351726bece5444b36937f860bf36cbb))
+
+- **file**: Add dsc file pull (R53 Phase 3) ([5596603](https://github.com/koloki-co/dsc/commit/5596603f94d8b86c600314f79be950051e9376c6))
+
+- **file**: Fleet audit and push via R48 selector (R53 Phase 2) ([bf9feb5](https://github.com/koloki-co/dsc/commit/bf9feb56ac18d0b1b897fece16a766b3aea412fe))
+
 ## [0.17.0] - 2026-08-29
 
 ### Bug fixes
