@@ -231,18 +231,35 @@ impl DiscourseClient {
         Ok(result)
     }
 
-    /// Execute one saved query and download the server-generated CSV bytes.
+    /// Execute one saved query and stream the server-generated CSV directly
+    /// into `writer`, returning the number of bytes written. Avoids holding
+    /// the complete CSV (which can contain large text cells) in memory
+    /// before it reaches disk.
     pub fn download_explorer_query_csv(
         &self,
         query_id: i64,
         params: &Map<String, Value>,
         limit: Option<u32>,
-    ) -> Result<Vec<u8>> {
+        writer: &mut impl std::io::Write,
+    ) -> Result<u64> {
         let path = format!("/admin/plugins/discourse-data-explorer/queries/{query_id}/run.csv");
         let mut payload = run_payload(params, false, limit)?;
         payload.push(("download", "1".to_string()));
-        let response = self.send_retrying(|| Ok(self.post(&path)?.form(&payload)))?;
-        response_bytes(response, "Data Explorer CSV download")
+        let mut response = self.send_retrying(|| Ok(self.post(&path)?.form(&payload)))?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response
+                .text_capped()
+                .context("reading Data Explorer CSV download response")?;
+            return Err(explorer_http_error(
+                "Data Explorer CSV download",
+                status,
+                &text,
+            ));
+        }
+        response
+            .copy_to(writer)
+            .context("streaming Data Explorer CSV download")
     }
 }
 

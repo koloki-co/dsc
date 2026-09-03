@@ -9,7 +9,7 @@ use crate::api::{
 use crate::cli::ListFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
 use crate::config::Config;
-use crate::utils::atomic_write_private;
+use crate::utils::{atomic_write_private, create_atomic_output};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Map, Value};
 use std::fs;
@@ -127,9 +127,19 @@ pub fn explorer_run(
     }
 
     if let Some(path) = options.csv {
-        let bytes = client.download_explorer_query_csv(query_id, &params, options.limit)?;
-        atomic_write_private(path, bytes, false)?;
-        eprintln!("Wrote Data Explorer CSV result to {}", path.display());
+        let mut output = create_atomic_output(path, false, true)?;
+        let bytes = client.download_explorer_query_csv(
+            query_id,
+            &params,
+            options.limit,
+            output.file_mut(),
+        )?;
+        output.commit()?;
+        eprintln!(
+            "Wrote Data Explorer CSV result to {} ({} bytes)",
+            path.display(),
+            bytes
+        );
         return Ok(());
     }
 
