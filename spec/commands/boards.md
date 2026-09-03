@@ -117,10 +117,7 @@ dsc board push <discourse> <file> [--dry-run] [--yes]   # later phase
 
 - `list` - one row per accessible board (id, name, slug, constraints, ACL summary).
 - `show` - full board: columns, per-column cards (type, title/topic, position, tags, assignee).
-- `pull` - snapshot to a stable-sorted YAML/JSON file, mirroring `setting pull` /
-  `tag pull` conventions (schema `version`, `pulled_at`, forum identity). The
-  file is the input for a later `push` and for diffing; card order is a list,
-  never a server position.
+- `pull` - snapshot **the entire board, including floater cards**, to a stable-sorted YAML/JSON file, mirroring `setting pull` / `tag pull` conventions (schema `version`, `pulled_at`, forum identity). Floater cards have no topic behind them, so each becomes a title + notes (+ tags, assignee) entry in the snapshot; topic cards reference their `topic_id`. Decided 2026-09-03 with the maintainer: omitting floaters would make the snapshot a false picture of the board and would make a later `push` unable to restore it. The file is the input for a later `push` and for diffing; card order is a list, never a server position.
 - `push` - declarative create/update of columns and floater cards; topic cards
   are created by `topic_id` reference only (never by content). Prune
   (deleting boards/columns/cards missing from the file) requires explicit
