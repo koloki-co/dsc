@@ -125,6 +125,21 @@ fn main() -> Result<()> {
         return commands::version::own_version(*format);
     }
 
+    // Shell-completion and man-page generation consume no configuration, so
+    // dispatch them before config resolution - packaging and completion
+    // installation should not depend on unrelated config size or validity.
+    if let Commands::Completions {
+        command,
+        shell,
+        dir,
+    } = cli.command
+    {
+        return commands::completions::run(command, shell, dir.as_deref());
+    }
+    if let Commands::Man { dir } = cli.command {
+        return commands::manpages::write_manpages(&dir);
+    }
+
     let config_source = resolve_config_source(cli.config)?;
     let config_path = config_source.path().to_path_buf();
     let mut config = load_config(&config_path)?;
@@ -1644,18 +1659,14 @@ fn main() -> Result<()> {
             Ok(())
         }
 
-        Commands::Completions {
-            command,
-            shell,
-            dir,
-        } => commands::completions::run(command, shell, dir.as_deref()),
-
-        Commands::Man { dir } => commands::manpages::write_manpages(&dir),
-
         Commands::Version { discourse, format } => {
             commands::version::version(&config, discourse.as_deref(), format)
         }
 
         Commands::File { command } => commands::file::run(&config, &command, dry_run),
+
+        Commands::Completions { .. } | Commands::Man { .. } => {
+            unreachable!("dispatched before config resolution")
+        }
     }
 }
