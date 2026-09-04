@@ -32,19 +32,17 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
-        # The pin tracks the action's `master` branch, not a `stable`/
-        # `x.y.z` branch: dtolnay/rust-toolchain force-pushes those every
-        # time a new Rust ships, which orphans any SHA pinned there
-        # (zizmor's impostor-commit check). `master`'s action.yml is the
-        # generic entrypoint and only changes for real changes to the
-        # action, so pinning it plus an explicit `toolchain:` input is the
-        # durable form - see the upstream README's "Choice of full-length
-        # commit SHA" and "Toolchain expressions". The `# v1` comment above
-        # matches the tag zizmor resolves for this hash.
-        with:
-          toolchain: stable
-          components: clippy, rustfmt
+        # Plain rustup, no third-party action: GitHub runners ship rustup,
+        # and the runner's rustup version only affects installation
+        # mechanics, never the Rust version the code compiles with. This
+        # removes the recurring dtolnay/rust-toolchain pin-rot problem
+        # (version branches are force-pushed at every Rust release, and
+        # the action's mutable v1 tag kept tripping zizmor's
+        # ref-version-mismatch audit) - there is no third-party action
+        # left to pin.
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup default stable
 
       - name: Cache Cargo registry and build artefacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -78,11 +76,11 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust 1.95.0
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
-        # See the comment on the "Install Rust stable" step above: pinned to
-        # `master` (the tag `v1` tracks it), the durable generic entrypoint.
-        with:
-          toolchain: 1.95.0
+        # See the note on the "Install Rust stable" step above: plain
+        # rustup, no third-party action.
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
 
       - name: cargo test --locked
         env:
