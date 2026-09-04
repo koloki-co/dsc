@@ -32,7 +32,7 @@ jobs:
       - name: Install Rust stable
         # Pinned to `master`, not `stable` - see the comment in ci.yml on the
         # equivalent step for why the version branches orphan their pins.
-        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
           toolchain: stable
 
