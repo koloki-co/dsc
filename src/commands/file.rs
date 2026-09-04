@@ -444,7 +444,7 @@ fn push_one_forum(
             discourse.name, params.remote_path, params.local_checksum
         ));
     }
-    let existing = matches!(status.as_str(), "different" | "same");
+    let existing = !matches!(status.as_str(), "missing" | "symlink" | "failed");
 
     let opts = ReplaceOptions {
         owner: params.owner,
@@ -813,6 +813,31 @@ mod tests {
         assert!(remote_basename("/var/discourse/scripts/").is_err());
         assert!(remote_basename("/var/discourse/scripts/..").is_err());
         assert!(remote_basename("/").is_err());
+    }
+
+    /// Regression: the default backup was silently skipped on every real
+    /// push. `remote_file_checksum` reports a present destination as
+    /// "present", but the existing-destination check only accepted
+    /// "different"/"same" - status strings from an earlier iteration - so
+    /// `backup: params.backup && existing` was always false for a file
+    /// that existed. Found during the R53 real-driver pilot: the pushed
+    /// file arrived but no `.bak` appeared.
+    #[test]
+    fn a_present_destination_counts_as_existing_for_backup() {
+        // These are the statuses remote_file_checksum can return for a
+        // destination that already exists on the remote.
+        for status in ["present", "same", "different"] {
+            let existing = !matches!(status, "missing" | "symlink" | "failed");
+            assert!(
+                existing,
+                "status {status:?} means the destination exists, so backup must apply"
+            );
+        }
+        // And these must never count as existing.
+        for status in ["missing", "symlink", "failed"] {
+            let existing = !matches!(status, "missing" | "symlink" | "failed");
+            assert!(!existing, "status {status:?} must not trigger a backup");
+        }
     }
 
     #[test]
