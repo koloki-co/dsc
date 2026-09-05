@@ -117,35 +117,29 @@ fn main() -> Result<()> {
         ));
     }
 
-    if let Commands::Version {
-        discourse: None,
-        format,
-    } = &cli.command
-    {
-        return commands::version::own_version(*format);
-    }
-
-    // Shell-completion and man-page generation consume no configuration, so
-    // dispatch them before config resolution - packaging and completion
-    // installation should not depend on unrelated config size or validity.
-    if let Commands::Completions {
-        command,
-        shell,
-        dir,
-    } = cli.command
-    {
-        return commands::completions::run(command, shell, dir.as_deref());
-    }
-    if let Commands::Man { dir } = cli.command {
-        return commands::manpages::write_manpages(&dir);
-    }
+    // Dispatch config-free commands before config resolution so packaging,
+    // completion installation, and local version checks cannot be broken by
+    // an unrelated missing or malformed config.
+    let command = match cli.command {
+        Commands::Version {
+            discourse: None,
+            format,
+        } => return commands::version::own_version(format),
+        Commands::Completions {
+            command,
+            shell,
+            dir,
+        } => return commands::completions::run(command, shell, dir.as_deref()),
+        Commands::Man { dir } => return commands::manpages::write_manpages(&dir),
+        command => command,
+    };
 
     let config_source = resolve_config_source(cli.config)?;
     let config_path = config_source.path().to_path_buf();
     let mut config = load_config(&config_path)?;
     let dry_run = cli.dry_run;
 
-    match cli.command {
+    match command {
         Commands::List {
             command: Some(ListCommand::Tidy),
             tags,

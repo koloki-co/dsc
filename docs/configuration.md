@@ -13,7 +13,7 @@ If `--config <path>` is not provided, `dsc` resolves the active config in this o
 
 If none are found, it defaults to `./dsc.toml` (created on first write command).
 
-**Explicit selectors error on missing files.** `-c <path>` and `$DSC_CONFIG` both name a specific file; if that file does not exist, `dsc` errors rather than silently falling through to a lower-precedence config. The discovered hierarchy (steps 3-8) is the only set of paths eligible for skip-if-missing.
+**Explicit selectors error on missing files for commands that use configuration.** `-c <path>` and `$DSC_CONFIG` both name a specific file; if that file does not exist, `dsc` errors rather than silently falling through to a lower-precedence config. The discovered hierarchy (steps 3-8) is the only set of paths eligible for skip-if-missing. Config-free commands (`dsc version` without a forum, `dsc completions`, and `dsc man`) do not resolve or validate configuration, even when a selector is present.
 
 If both `-c` and `$DSC_CONFIG` are set, the flag wins.
 
@@ -23,7 +23,7 @@ All CLI path arguments expand a bare `~` or leading `~/` themselves, including q
 
 | Variable | Purpose |
 |---|---|
-| `DSC_CONFIG` | Absolute or relative path to a `dsc.toml`. Overrides discovery; errors if missing. |
+| `DSC_CONFIG` | Absolute or relative path to a `dsc.toml`. Overrides discovery and errors if missing for commands that use configuration. |
 | `DSC_CONFIG_HOME` | Directory containing `dsc.toml`. Defaults to `$XDG_CONFIG_HOME/dsc` -> `~/.config/dsc`. |
 | `XDG_CONFIG_HOME` | Standard XDG base; used when `DSC_CONFIG_HOME` is unset. |
 | `XDG_CONFIG_DIRS` | Standard XDG system list; each entry contributes a `<dir>/dsc/dsc.toml` candidate. |
