@@ -59,7 +59,7 @@ Note on filename: `sct` stores `config.toml` inside its config-home dir; `dsc` k
 
 ## Explicit-selector semantics (safety)
 
-`-c <path>` and `$DSC_CONFIG` are *explicit selectors*: the user has named a specific file. If that file does not exist, `dsc` must **error**, not silently fall through to a lower-precedence config. Rationale: a typo in a path must not cause `dsc` to quietly act against a different forum using whichever other config it happens to find. The discovered paths (steps 3-8) are the only ones eligible for silent skip-if-missing.
+`-c <path>` and `$DSC_CONFIG` are *explicit selectors*: the user has named a specific file. If that file does not exist, a command that uses configuration must **error**, not silently fall through to a lower-precedence config. Rationale: a typo in a path must not cause `dsc` to quietly act against a different forum using whichever other config it happens to find. The discovered paths (steps 3-8) are the only ones eligible for silent skip-if-missing. Config-free commands (`dsc version` without a forum, `dsc completions`, and `dsc man`) deliberately do not resolve or validate configuration, even when a selector is present.
 
 Precedence between the two explicit selectors: the `-c` flag wins over `$DSC_CONFIG` if both are set (an explicit per-invocation argument is more specific than an environment default).
 

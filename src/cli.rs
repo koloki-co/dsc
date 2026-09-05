@@ -16,7 +16,8 @@ pub struct Cli {
     /// Path to the config file. If omitted, `dsc` consults `$DSC_CONFIG`,
     /// then searches `./dsc.toml`, `$DSC_CONFIG_HOME/dsc.toml`
     /// (default `~/.config/dsc/dsc.toml`), then system locations.
-    /// Errors if the given file does not exist (no silent fallthrough).
+    /// Errors if the given file does not exist (no silent fallthrough) when
+    /// the command uses configuration. Config-free commands ignore it.
     /// See `dsc config` for the active selection.
     #[arg(
         long,

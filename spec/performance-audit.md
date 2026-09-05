@@ -282,6 +282,8 @@ After the own-version special case, configuration is resolved and parsed before 
 
 **Recommendation:** Dispatch known config-free commands before config resolution, using the existing own-version early path as the pattern. Avoid optimizing the tiny argument copy unless startup profiling shows it matters.
 
+**Addressed 2026-09-04:** `dsc completions` and `dsc man` now dispatch before config resolution in `src/main.rs`, alongside the existing own-version early path - both already ran regardless of configured forums and consumed no configuration. The remaining argument-copy note was not pursued, per the recommendation above.
+
 ### P25 - Low - Category-definition planning uses repeated linear matching
 
 **Evidence:** `src/commands/category_def.rs:289-325,391-419`.
