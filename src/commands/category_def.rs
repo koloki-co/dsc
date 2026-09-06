@@ -48,8 +48,9 @@ const VALID_FIELDS: &[&str] = &[
     "num_featured_topics",
     "show_subcategory_list",
 ];
+const CATEGORIES_FILE_VERSION: u32 = 2;
 
-// ─── File schema (version 1) ──────────────────────────────────────────────────
+// ─── File schema ──────────────────────────────────────────────────────────────
 
 /// The on-disk `categories.yaml` (or `.json`) document.
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -164,6 +165,37 @@ fn normalize_description(value: &Option<String>) -> Option<String> {
     value
         .as_ref()
         .map(|value| value.trim_end_matches(['\r', '\n']).to_string())
+}
+
+fn validate_style_type(value: &str) -> Result<&str> {
+    let value = value.trim();
+    if matches!(value, "square" | "icon" | "emoji") {
+        Ok(value)
+    } else {
+        Err(anyhow!(
+            "invalid category style_type '{}' (expected square|icon|emoji)",
+            value
+        ))
+    }
+}
+
+fn validate_style_state(
+    category: &str,
+    style_type: Option<&str>,
+    icon: Option<&str>,
+    emoji: Option<&str>,
+) -> Result<()> {
+    match validate_style_type(style_type.unwrap_or("square"))? {
+        "icon" if icon.is_none_or(|value| value.trim().is_empty()) => Err(anyhow!(
+            "category '{}' uses style_type 'icon' but has no icon; set icon before selecting the icon style",
+            category
+        )),
+        "emoji" if emoji.is_none_or(|value| value.trim().is_empty()) => Err(anyhow!(
+            "category '{}' uses style_type 'emoji' but has no emoji; set emoji before selecting the emoji style",
+            category
+        )),
+        _ => Ok(()),
+    }
 }
 
 // ─── API model <-> file entry ─────────────────────────────────────────────────
@@ -382,7 +414,12 @@ fn entry_to_params(
     push_opt(&mut p, "slug", &entry.slug);
     push_opt(&mut p, "color", &entry.color);
     push_opt(&mut p, "text_color", &entry.text_color);
-    push_opt(&mut p, "style_type", &entry.style_type);
+    if let Some(style_type) = &entry.style_type {
+        p.push((
+            "style_type".to_string(),
+            validate_style_type(style_type)?.to_string(),
+        ));
+    }
     push_opt(&mut p, "icon", &entry.icon);
     push_opt(&mut p, "emoji", &entry.emoji);
     if let Some(v) = entry.position {
@@ -541,8 +578,57 @@ fn match_server<'a>(
     (None, true)
 }
 
+/// Validate every explicitly managed style against the effective state after
+/// applying its partial file entry. This runs before planning so dry-runs and
+/// real pushes reject the same invalid input before any write can happen.
+fn validate_styles(file: &[CategoryDefEntry], server: &[CategoryDefEntry]) -> Result<()> {
+    let index = ServerIndex::build(server);
+    let mut invalid = Vec::new();
+
+    for entry in file {
+        if entry.style_type.is_none() && entry.icon.is_none() && entry.emoji.is_none() {
+            continue;
+        }
+        let current = match_server(entry, &index).0;
+        let style_type = entry
+            .style_type
+            .as_deref()
+            .or_else(|| current.and_then(|value| value.style_type.as_deref()));
+        let icon = entry
+            .icon
+            .as_deref()
+            .or_else(|| current.and_then(|value| value.icon.as_deref()));
+        let emoji = entry
+            .emoji
+            .as_deref()
+            .or_else(|| current.and_then(|value| value.emoji.as_deref()));
+
+        if let Err(error) = validate_style_state(&entry.name, style_type, icon, emoji) {
+            invalid.push(error.to_string());
+        }
+    }
+
+    if invalid.is_empty() {
+        Ok(())
+    } else {
+        Err(anyhow!("invalid category styles: {}", invalid.join(", ")))
+    }
+}
+
 fn opt_diff<T: PartialEq>(a: &Option<T>, b: &Option<T>) -> bool {
     a.is_some() && a != b
+}
+
+/// Empty strings explicitly clear nullable string fields. Discourse returns a
+/// cleared value as null, so compare empty and absent as equivalent.
+fn opt_nullable_string_diff(a: &Option<String>, b: &Option<String>) -> bool {
+    a.as_ref()
+        .is_some_and(|desired| desired != b.as_deref().unwrap_or_default())
+}
+
+fn opt_style_type_diff(a: &Option<String>, b: &Option<String>) -> bool {
+    a.as_ref()
+        .is_some_and(|desired| desired.trim() != b.as_deref().unwrap_or("square"))
 }
 
 fn opt_list_diff(a: &Option<Vec<String>>, b: &Option<Vec<String>>) -> bool {
@@ -586,13 +672,13 @@ fn changed_fields(e: &CategoryDefEntry, s: &CategoryDefEntry) -> Vec<&'static st
     if opt_diff(&e.text_color, &s.text_color) {
         fields.push("text_color");
     }
-    if opt_diff(&e.style_type, &s.style_type) {
+    if opt_style_type_diff(&e.style_type, &s.style_type) {
         fields.push("style_type");
     }
-    if opt_diff(&e.icon, &s.icon) {
+    if opt_nullable_string_diff(&e.icon, &s.icon) {
         fields.push("icon");
     }
-    if opt_diff(&e.emoji, &s.emoji) {
+    if opt_nullable_string_diff(&e.emoji, &s.emoji) {
         fields.push("emoji");
     }
     if opt_diff(&e.position, &s.position) {
@@ -695,6 +781,32 @@ fn is_json_path(p: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn contains_style_fields(value: &Value) -> bool {
+    value
+        .get("categories")
+        .and_then(Value::as_array)
+        .is_some_and(|categories| {
+            categories.iter().any(|category| {
+                category.as_object().is_some_and(|category| {
+                    ["style_type", "icon", "emoji"]
+                        .iter()
+                        .any(|field| category.contains_key(*field))
+                })
+            })
+        })
+}
+
+fn validate_file_version(file: &CategoriesFile, contains_style_fields: bool) -> Result<()> {
+    match file.version {
+        1 if contains_style_fields => Err(anyhow!(
+            "categories file version 1 cannot contain style_type, icon, or emoji; set version to {}",
+            CATEGORIES_FILE_VERSION
+        )),
+        1 | CATEGORIES_FILE_VERSION => Ok(()),
+        version => Err(anyhow!("unsupported categories file version: {}", version)),
+    }
+}
+
 pub fn category_def_pull(
     config: &Config,
     discourse_name: &str,
@@ -720,7 +832,7 @@ pub fn category_def_pull(
     });
 
     let file = CategoriesFile {
-        version: 1,
+        version: CATEGORIES_FILE_VERSION,
         categories: entries,
     };
 
@@ -752,14 +864,17 @@ pub fn category_def_push(
 
     let content = fs::read_to_string(local_path)
         .with_context(|| format!("reading {}", local_path.display()))?;
+    let raw: Value = if is_json_path(local_path) {
+        serde_json::from_str(&content).context("parsing categories JSON")?
+    } else {
+        serde_yaml::from_str(&content).context("parsing categories YAML")?
+    };
     let file: CategoriesFile = if is_json_path(local_path) {
         serde_json::from_str(&content).context("parsing categories JSON")?
     } else {
         serde_yaml::from_str(&content).context("parsing categories YAML")?
     };
-    if file.version != 1 {
-        anyhow::bail!("unsupported categories file version: {}", file.version);
-    }
+    validate_file_version(&file, contains_style_fields(&raw))?;
 
     let mut defs = client.fetch_category_definitions()?;
     if file
@@ -776,6 +891,7 @@ pub fn category_def_push(
         defs.iter().map(|d| def_to_entry(d, &id_to_slug)).collect();
 
     validate_parents(&file.categories, &slug_to_id, &name_to_ids)?;
+    validate_styles(&file.categories, &server_entries)?;
 
     let plan = plan_push(&file.categories, &server_entries);
 
@@ -1224,6 +1340,24 @@ pub fn category_set(
         };
         params
     } else {
+        if matches!(field.trim(), "style_type" | "icon" | "emoji") {
+            let style_type = if field.trim() == "style_type" {
+                Some(value)
+            } else {
+                def.style_type.as_deref()
+            };
+            let icon = if field.trim() == "icon" {
+                Some(value)
+            } else {
+                def.icon.as_deref()
+            };
+            let emoji = if field.trim() == "emoji" {
+                Some(value)
+            } else {
+                def.emoji.as_deref()
+            };
+            validate_style_state(&def.name, style_type, icon, emoji)?;
+        }
         field_to_set_params(field, value, &slug_to_id, &name_to_ids)?
     };
 
@@ -1489,7 +1623,7 @@ fn field_to_set_params(
         "slug" => one("slug", value.to_string()),
         "color" => one("color", value.trim_start_matches('#').to_string()),
         "text_color" => one("text_color", value.trim_start_matches('#').to_string()),
-        "style_type" => one("style_type", value.to_string()),
+        "style_type" => one("style_type", validate_style_type(value)?.to_string()),
         "icon" => one("icon", value.to_string()),
         "emoji" => one("emoji", value.to_string()),
         "position" => {
@@ -1675,10 +1809,14 @@ mod tests {
 
     #[test]
     fn icon_and_emoji_round_trip_through_entry_and_params() {
-        let mut category = def(3, "Marketplace");
-        category.style_type = Some("icon".to_string());
-        category.icon = Some("star".to_string());
-        category.emoji = Some("guitar".to_string());
+        let category: CategoryDefinition = serde_json::from_value(json!({
+            "id": 3,
+            "name": "Marketplace",
+            "style_type": "icon",
+            "icon": "star",
+            "emoji": "guitar"
+        }))
+        .unwrap();
 
         let entry = def_to_entry(&category, &BTreeMap::new());
         assert_eq!(entry.style_type, Some("icon".to_string()));
@@ -1705,15 +1843,76 @@ mod tests {
             field_to_set_params("style_type", "emoji", &BTreeMap::new(), &BTreeMap::new()).unwrap(),
             vec![("style_type".to_string(), "emoji".to_string())]
         );
+        assert!(
+            field_to_set_params("style_type", "image", &BTreeMap::new(), &BTreeMap::new()).is_err()
+        );
     }
 
     #[test]
-    fn changed_fields_detects_icon_and_emoji_changes() {
+    fn changed_fields_detects_every_style_change() {
+        let mut server = entry("General");
+        server.style_type = Some("icon".to_string());
+        server.icon = Some("star".to_string());
+        server.emoji = Some("wave".to_string());
+        let mut file = entry("General");
+        file.style_type = Some("emoji".to_string());
+        file.icon = Some("heart".to_string());
+        file.emoji = Some("guitar".to_string());
+        assert_eq!(
+            changed_fields(&file, &server),
+            vec!["style_type", "icon", "emoji"]
+        );
+    }
+
+    #[test]
+    fn cleared_icon_and_emoji_match_absent_server_values() {
+        let mut file = entry("General");
+        file.icon = Some(String::new());
+        file.emoji = Some(String::new());
+        assert!(changed_fields(&file, &entry("General")).is_empty());
+
         let mut server = entry("General");
         server.icon = Some("star".to_string());
+        server.emoji = Some("wave".to_string());
+        assert_eq!(changed_fields(&file, &server), vec!["icon", "emoji"]);
+    }
+
+    #[test]
+    fn style_type_comparison_uses_the_normalized_value_sent_to_discourse() {
+        let mut server = entry("General");
+        server.style_type = Some("icon".to_string());
         let mut file = entry("General");
-        file.icon = Some("heart".to_string());
-        assert!(changed_fields(&file, &server).contains(&"icon"));
+        file.style_type = Some(" icon ".to_string());
+        file.icon = Some("star".to_string());
+        server.icon = Some("star".to_string());
+        assert!(changed_fields(&file, &server).is_empty());
+    }
+
+    #[test]
+    fn validates_effective_style_state_before_push() {
+        let mut create = entry("New");
+        create.style_type = Some("icon".to_string());
+        let error = validate_styles(&[create], &[]).unwrap_err();
+        assert!(error.to_string().contains("has no icon"));
+
+        let mut server = entry("Existing");
+        server.style_type = Some("icon".to_string());
+        server.icon = Some("star".to_string());
+        let mut update = entry("Existing");
+        update.style_type = Some("icon".to_string());
+        assert!(validate_styles(&[update.clone()], &[server.clone()]).is_ok());
+
+        update.icon = Some(String::new());
+        let error = validate_styles(&[update], &[server]).unwrap_err();
+        assert!(error.to_string().contains("has no icon"));
+    }
+
+    #[test]
+    fn validates_style_type_and_emoji_companion() {
+        assert!(validate_style_state("General", Some("image"), None, None).is_err());
+        let error = validate_style_state("General", Some("emoji"), None, None).unwrap_err();
+        assert!(error.to_string().contains("has no emoji"));
+        assert!(validate_style_state("General", Some("emoji"), None, Some("wave")).is_ok());
     }
 
     #[test]
@@ -1776,6 +1975,38 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn category_definition_versions_style_fields_explicitly() {
+        let version_one_source = "version: 1\ncategories:\n  - name: Marketplace\n";
+        let version_one: CategoriesFile = serde_yaml::from_str(version_one_source).unwrap();
+        let version_one_raw: Value = serde_yaml::from_str(version_one_source).unwrap();
+        assert!(
+            validate_file_version(&version_one, contains_style_fields(&version_one_raw)).is_ok()
+        );
+
+        let version_one_source =
+            "version: 1\ncategories:\n  - name: Marketplace\n    style_type: null\n";
+        let version_one_with_style: CategoriesFile =
+            serde_yaml::from_str(version_one_source).unwrap();
+        let version_one_with_style_raw: Value = serde_yaml::from_str(version_one_source).unwrap();
+        assert!(
+            validate_file_version(
+                &version_one_with_style,
+                contains_style_fields(&version_one_with_style_raw)
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("set version to 2")
+        );
+
+        let version_two_source = "version: 2\ncategories:\n  - name: Marketplace\n    style_type: icon\n    icon: star\n";
+        let version_two: CategoriesFile = serde_yaml::from_str(version_two_source).unwrap();
+        let version_two_raw: Value = serde_yaml::from_str(version_two_source).unwrap();
+        assert!(
+            validate_file_version(&version_two, contains_style_fields(&version_two_raw)).is_ok()
+        );
     }
 
     #[test]
