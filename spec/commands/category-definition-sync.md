@@ -438,7 +438,7 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   (`resolve_parent_id`, `validate_parents`); unit-tested.
 - [x] `custom_fields` round-trip. **Status: implemented (unreleased).** Reads each category's complete custom-field map from `/c/{id}/show.json`; applies changes via JSON `PUT /categories/{id}.json`, using nulls to remove keys omitted from a specified file map. `category set` accepts a complete scalar-valued JSON object. Object and array values are rejected because Discourse stringifies them. Verified reversibly on koloki-demo.
 - [x] `topic_title_placeholder` round-trip. **Status: implemented (unreleased).** Reads the category-list response and writes the `topic_title_placeholder` form parameter, exactly mirroring `topic_template`. `category get`/`set`/`show`, `def pull`/`push`, and `category diff` all support the field. Unit-tested (entry round-trip and `set` params); no live test needed - same request shape as `topic_template`.
-- [ ] Logo/background asset fields, `icon`/`emoji` — surface as `category set` fields once the asset-upload path is decided.
+- [x] `style_type`/`icon`/`emoji` round-trip. **Status: implemented (unreleased).** `style_type` (`square`/`icon`/`emoji`), `icon` (FontAwesome name), and `emoji` (shortcode) are plain scalar fields on the category object, not asset uploads, so they follow the same read/write path as `topic_title_placeholder`: `def pull`/`push`, `category show`/`get`/`set` all support them. `category set style_type icon` plus `category set icon <name>` mirrors the admin UI's style picker. Logo/background image assets remain out of scope pending an asset-upload path.
 
 ### Phase 3 — nice to have
 

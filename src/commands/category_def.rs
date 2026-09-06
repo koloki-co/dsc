@@ -26,6 +26,9 @@ const VALID_FIELDS: &[&str] = &[
     "slug",
     "color",
     "text_color",
+    "style_type",
+    "icon",
+    "emoji",
     "position",
     "parent",
     "read_restricted",
@@ -71,6 +74,15 @@ pub struct CategoryDefEntry {
     pub color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub text_color: Option<String>,
+    /// Category style: `square` (colour swatch, the default), `icon`, or `emoji`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style_type: Option<String>,
+    /// FontAwesome icon name, used when `style_type` is `icon`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Emoji shortcode (without colons), used when `style_type` is `emoji`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emoji: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
     /// Parent category slug or unambiguous name (or null for a top-level category).
@@ -183,6 +195,9 @@ fn def_to_entry(def: &CategoryDefinition, id_to_slug: &BTreeMap<u64, String>) ->
         slug: nonempty(&def.slug),
         color: nonempty(&def.color),
         text_color: nonempty(&def.text_color),
+        style_type: nonempty(&def.style_type),
+        icon: nonempty(&def.icon),
+        emoji: nonempty(&def.emoji),
         position: def.position,
         parent,
         read_restricted: def.read_restricted,
@@ -367,6 +382,9 @@ fn entry_to_params(
     push_opt(&mut p, "slug", &entry.slug);
     push_opt(&mut p, "color", &entry.color);
     push_opt(&mut p, "text_color", &entry.text_color);
+    push_opt(&mut p, "style_type", &entry.style_type);
+    push_opt(&mut p, "icon", &entry.icon);
+    push_opt(&mut p, "emoji", &entry.emoji);
     if let Some(v) = entry.position {
         p.push(("position".to_string(), v.to_string()));
     }
@@ -567,6 +585,15 @@ fn changed_fields(e: &CategoryDefEntry, s: &CategoryDefEntry) -> Vec<&'static st
     }
     if opt_diff(&e.text_color, &s.text_color) {
         fields.push("text_color");
+    }
+    if opt_diff(&e.style_type, &s.style_type) {
+        fields.push("style_type");
+    }
+    if opt_diff(&e.icon, &s.icon) {
+        fields.push("icon");
+    }
+    if opt_diff(&e.emoji, &s.emoji) {
+        fields.push("emoji");
     }
     if opt_diff(&e.position, &s.position) {
         fields.push("position");
@@ -1083,6 +1110,9 @@ fn entry_field(e: &CategoryDefEntry, field: &str) -> Result<(String, Value)> {
         "slug" => optstr(&e.slug),
         "color" => optstr(&e.color),
         "text_color" => optstr(&e.text_color),
+        "style_type" => optstr(&e.style_type),
+        "icon" => optstr(&e.icon),
+        "emoji" => optstr(&e.emoji),
         "position" => match e.position {
             Some(n) => (n.to_string(), json!(n)),
             None => ("(unset)".to_string(), Value::Null),
@@ -1459,6 +1489,9 @@ fn field_to_set_params(
         "slug" => one("slug", value.to_string()),
         "color" => one("color", value.trim_start_matches('#').to_string()),
         "text_color" => one("text_color", value.trim_start_matches('#').to_string()),
+        "style_type" => one("style_type", value.to_string()),
+        "icon" => one("icon", value.to_string()),
+        "emoji" => one("emoji", value.to_string()),
         "position" => {
             value
                 .parse::<i64>()
@@ -1638,6 +1671,49 @@ mod tests {
                 "Genre, instrument, and location".to_string()
             )]
         );
+    }
+
+    #[test]
+    fn icon_and_emoji_round_trip_through_entry_and_params() {
+        let mut category = def(3, "Marketplace");
+        category.style_type = Some("icon".to_string());
+        category.icon = Some("star".to_string());
+        category.emoji = Some("guitar".to_string());
+
+        let entry = def_to_entry(&category, &BTreeMap::new());
+        assert_eq!(entry.style_type, Some("icon".to_string()));
+        assert_eq!(entry.icon, Some("star".to_string()));
+        assert_eq!(entry.emoji, Some("guitar".to_string()));
+
+        let params = entry_to_params(&entry, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        assert!(params.contains(&("style_type".to_string(), "icon".to_string())));
+        assert!(params.contains(&("icon".to_string(), "star".to_string())));
+        assert!(params.contains(&("emoji".to_string(), "guitar".to_string())));
+    }
+
+    #[test]
+    fn set_params_icon_and_emoji() {
+        assert_eq!(
+            field_to_set_params("icon", "star", &BTreeMap::new(), &BTreeMap::new()).unwrap(),
+            vec![("icon".to_string(), "star".to_string())]
+        );
+        assert_eq!(
+            field_to_set_params("emoji", "guitar", &BTreeMap::new(), &BTreeMap::new()).unwrap(),
+            vec![("emoji".to_string(), "guitar".to_string())]
+        );
+        assert_eq!(
+            field_to_set_params("style_type", "emoji", &BTreeMap::new(), &BTreeMap::new()).unwrap(),
+            vec![("style_type".to_string(), "emoji".to_string())]
+        );
+    }
+
+    #[test]
+    fn changed_fields_detects_icon_and_emoji_changes() {
+        let mut server = entry("General");
+        server.icon = Some("star".to_string());
+        let mut file = entry("General");
+        file.icon = Some("heart".to_string());
+        assert!(changed_fields(&file, &server).contains(&"icon"));
     }
 
     #[test]

@@ -142,6 +142,15 @@ pub struct CategoryDefinition {
     pub color: Option<String>,
     #[serde(default)]
     pub text_color: Option<String>,
+    /// Category style: `square` (colour swatch, the default), `icon`, or `emoji`.
+    #[serde(default)]
+    pub style_type: Option<String>,
+    /// FontAwesome icon name, used when `style_type` is `icon`.
+    #[serde(default)]
+    pub icon: Option<String>,
+    /// Emoji shortcode (without colons), used when `style_type` is `emoji`.
+    #[serde(default)]
+    pub emoji: Option<String>,
     #[serde(default)]
     pub position: Option<i64>,
     #[serde(default)]
