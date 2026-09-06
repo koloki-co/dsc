@@ -60,7 +60,7 @@ fn webhook_list_body(path: &str) -> String {
 fn get_body(path: &str) -> String {
     let p = path.split('?').next().unwrap_or(path);
     let post = r#"{"id":1,"topic_id":7,"post_number":1,"raw":"hello","cooked":"<p>hello</p>","username":"tester","created_at":"2026-01-01T00:00:00.000Z","category_id":4}"#;
-    let category = r#"{"id":4,"name":"Test","slug":"test","color":"0088CC","text_color":"FFFFFF","position":1,"description":"d","read_restricted":false,"permission":1,"topic_template":"","allowed_tags":[],"allowed_tag_groups":[]}"#;
+    let category = r#"{"id":4,"name":"Test","slug":"test","color":"0088CC","text_color":"FFFFFF","style_type":"icon","icon":"star","emoji":null,"position":1,"description":"d","read_restricted":false,"permission":1,"topic_template":"","allowed_tags":[],"allowed_tag_groups":[]}"#;
     let theme = r#"{"id":1,"name":"Test theme","component":false,"enabled":true,"user_selectable":true,"default":false,"color_scheme_id":19,"theme_fields":[{"target":"common","name":"scss","value":"body{}","type_id":1}],"settings":[{"setting":"k","value":"old","type":"string","default":"old"}],"child_themes":[{"id":2,"name":"Child"}],"remote_theme":null}"#;
     let group = r#"{"id":41,"name":"testgroup","full_name":"Test Group","user_count":1}"#;
 
@@ -593,7 +593,7 @@ fn dry_run_never_issues_a_mutating_request() {
     let catdef = dir.path().join("categories.yaml");
     std::fs::write(
         &catdef,
-        "version: 1\ncategories:\n  - id: 4\n    name: Renamed Test\n    slug: test\n",
+        "version: 2\ncategories:\n  - id: 4\n    name: Renamed Test\n    slug: test\n    style_type: emoji\n    emoji: wave\n",
     )
     .expect("write catdef");
     let themeset = dir.path().join("theme-settings.yaml");
@@ -671,6 +671,59 @@ fn dry_run_never_issues_a_mutating_request() {
         "explorer run --csv wrote {} during a dry run",
         csvout.display()
     );
+}
+
+#[test]
+fn category_definition_style_contract_is_enforced_before_dry_run_writes() {
+    let (baseurl, log) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = dir.path().join("dsc.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{baseurl}\"\napikey = \"mock-key\"\napi_username = \"tester\"\n"
+        ),
+    )
+    .expect("write config");
+
+    let pulled = dir.path().join("categories.yaml");
+    let (output, ok) = run_dsc(
+        &[
+            "category",
+            "def",
+            "pull",
+            "mock",
+            pulled.to_str().expect("UTF-8 path"),
+        ],
+        &config,
+    );
+    assert!(ok, "category def pull failed: {output}");
+    let snapshot = std::fs::read_to_string(&pulled).expect("read categories snapshot");
+    assert!(snapshot.contains("version: 2"));
+    assert!(snapshot.contains("style_type: icon"));
+    assert!(snapshot.contains("icon: star"));
+
+    let invalid = dir.path().join("invalid-categories.yaml");
+    std::fs::write(
+        &invalid,
+        "version: 2\ncategories:\n  - id: 4\n    name: Test\n    style_type: emoji\n",
+    )
+    .expect("write invalid category definition");
+    let before = mutating(&log).len();
+    let (output, ok) = run_dsc(
+        &[
+            "-n",
+            "category",
+            "def",
+            "push",
+            "mock",
+            invalid.to_str().expect("UTF-8 path"),
+        ],
+        &config,
+    );
+    assert!(!ok, "invalid category style unexpectedly passed: {output}");
+    assert!(output.contains("uses style_type 'emoji' but has no emoji"));
+    assert_eq!(mutating(&log).len(), before);
 }
 
 #[test]

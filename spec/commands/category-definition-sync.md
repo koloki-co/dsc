@@ -140,7 +140,7 @@ dsc category set  <DISCOURSE> <CATEGORY> <FIELD> <VALUE>    # set one field
 
 - `<CATEGORY>` resolves by `id`, `slug`, or `name` (reuse `resolve_category_id`).
 - `<FIELD>` is one of the definition keys below (e.g. `description`,
-  `topic_template`, `color`, `text_color`, `position`, `read_restricted`,
+  `topic_template`, `color`, `text_color`, `style_type`, `icon`, `emoji`, `position`, `read_restricted`,
   `parent_category_id`, `allowed_tags`, `allowed_tag_groups`,
   `minimum_required_tags`, `default_view`, `sort_order`,
   `subcategory_list_style`, …). Unknown field → error listing valid fields.
@@ -164,9 +164,11 @@ convenience face of the same writes `def push` does in bulk.
 `categories.yaml` is the contract: `def pull` emits this shape, `def push`
 accepts it. Field names mirror the Discourse category object (snake_case) so the
 mapping is mechanical; a few are normalised for human editing (see notes).
+Version 2 adds the category-style fields. Push continues to accept version 1
+files when those fields are absent.
 
 ```yaml
-version: 1
+version: 2
 
 categories:
   - name: Bands looking for musicians
@@ -174,6 +176,9 @@ categories:
     slug: bands-looking-for-musicians   # optional; defaults to slugify(name). Changing slug is a rename (see Backward compatibility).
     color: "BF1E2E"            # 6-hex, no '#'
     text_color: "FFFFFF"
+    style_type: icon            # square (default), icon, or emoji
+    icon: life-ring             # required when style_type is icon; "" clears
+    # emoji: guitar             # required when style_type is emoji; "" clears
     position: 1               # 0-based ordering within the parent (or top level)
     parent: null               # parent category slug (or name), or null for top-level
     read_restricted: false     # false = public; true = access by permission only
@@ -323,12 +328,13 @@ create_as_post_voting_default, only_post_voting_in_this_category,
 uploaded_logo, uploaded_logo_dark, uploaded_background, uploaded_background_dark, topics
 ```
 
-`def pull` keeps the definition keys in the schema above and drops:
+`def pull` keeps the definition keys in the schema above, including
+`style_type`/`icon`/`emoji`, and drops:
 `topic_count`, `post_count`, `topics_day/week/month/year/all_time`,
 `topics`, `can_edit`, `notification_level`, `topic_url`, `description_excerpt`
 (derived from description), `description_text` (rendered), `subcategory_ids`
-(derived from `parent`), `style_type/icon/emoji/uploaded_logo*/uploaded_background*`
-(Phase 2 — asset upload is its own problem).
+(derived from `parent`), and `uploaded_logo*`/`uploaded_background*` (asset
+upload is its own problem).
 
 Note: `/c/{id}.json` returns the **topic list**, not the category definition —
 do not use it for definitions. The categories list endpoint is the right read.
@@ -343,7 +349,7 @@ Api-Username: <admin>
 Content-Type: application/x-www-form-urlencoded
 
 Form params (all optional except name on create):
-  name, slug, color, text_color, parent_category_id,
+  name, slug, color, text_color, style_type, icon, emoji, parent_category_id,
   description, topic_template, position, read_restricted,
   permissions[<group_name>] = full | create_post | readonly,   # one per group
   allowed_tags[]=, allowed_tag_groups[]=,
@@ -438,7 +444,7 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   (`resolve_parent_id`, `validate_parents`); unit-tested.
 - [x] `custom_fields` round-trip. **Status: implemented (unreleased).** Reads each category's complete custom-field map from `/c/{id}/show.json`; applies changes via JSON `PUT /categories/{id}.json`, using nulls to remove keys omitted from a specified file map. `category set` accepts a complete scalar-valued JSON object. Object and array values are rejected because Discourse stringifies them. Verified reversibly on koloki-demo.
 - [x] `topic_title_placeholder` round-trip. **Status: implemented (unreleased).** Reads the category-list response and writes the `topic_title_placeholder` form parameter, exactly mirroring `topic_template`. `category get`/`set`/`show`, `def pull`/`push`, and `category diff` all support the field. Unit-tested (entry round-trip and `set` params); no live test needed - same request shape as `topic_template`.
-- [ ] Logo/background asset fields, `icon`/`emoji` — surface as `category set` fields once the asset-upload path is decided.
+- [x] `style_type`/`icon`/`emoji` round-trip. **Status: implemented (unreleased).** `style_type` (`square`/`icon`/`emoji`), `icon` (FontAwesome name), and `emoji` (shortcode) are plain scalar fields on the category object, not asset uploads, so they follow the same read/write path as `topic_title_placeholder`: `def pull`/`push`, `category show`/`get`/`set` all support them. Push and dry-run reject unknown style types or an active icon/emoji style without its companion value. For imperative edits, set the icon/emoji first and then activate its style; change to another style before clearing the active companion. Logo/background image assets remain out of scope pending an asset-upload path.
 
 ### Phase 3 — nice to have
 
@@ -476,6 +482,10 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 - `id` in the file is new and optional; push treats its absence as name/slug
   matching (the tag-sync model). Existing hand-written category files (none yet)
   need no `id`.
+- Schema version 2 adds `style_type`, `icon`, and `emoji`. `def push` continues
+  to accept version 1 files when they omit those fields; files using the new
+  fields must declare version 2 so older strict readers reject the new schema
+  explicitly rather than appearing compatible.
 - Renames: with `id` present, a name change is a safe in-place update (no
   behaviour change for users who never rename). Without `id`, a name change now
   errors/warns rather than silently delete-creating — this is *more* correct
