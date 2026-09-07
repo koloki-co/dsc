@@ -130,11 +130,13 @@ dsc board push <discourse> <file> [--dry-run] [--yes]   # later phase
 
 ### Phase 1 - read-only (blocking)
 
-- [ ] `board list` and `board show` with text/JSON/YAML output.
-- [ ] `board pull` snapshot with schema version + provenance header.
-- [ ] Request-budget test coverage against the mock Discourse (board endpoints mocked).
-- [ ] Graceful 404 when the plugin is disabled/not licensed (`boards_enabled` absent
-  from `admin/site_settings.json` on non-Business plans).
+- [x] `board list` and `board show` with text/JSON/YAML output.
+- [x] `board pull` snapshot with schema version + provenance header.
+- [x] Request-budget test coverage against the mock Discourse (board endpoints mocked).
+- [x] Graceful 404 when the plugin is disabled/not licensed - translated to a
+  Boards-specific hint (unlicensed, disabled, unavailable, or missing board)
+  rather than a pre-flight `admin/site_settings.json` check, matching the
+  existing Data Explorer precedent.
 
 ### Phase 2 - guarded writes
 

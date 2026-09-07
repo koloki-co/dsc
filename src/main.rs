@@ -1507,6 +1507,23 @@ fn main() -> Result<()> {
             ),
         },
 
+        Commands::Board { command } => match command {
+            BoardCommand::List { discourse, format } => {
+                commands::board::board_list(&config, &discourse, format)
+            }
+            BoardCommand::Show {
+                discourse,
+                board_id,
+                format,
+            } => commands::board::board_show(&config, &discourse, board_id, format),
+            BoardCommand::Pull {
+                discourse,
+                board_id,
+                local_path,
+                force,
+            } => commands::board::board_pull(&config, &discourse, board_id, &local_path, force),
+        },
+
         Commands::Upload {
             discourse,
             file,

@@ -469,6 +469,16 @@ pub enum Commands {
         #[command(subcommand)]
         command: ExplorerCommand,
     },
+    /// List, show, and snapshot Discourse Boards (core kanban plugin,
+    /// Business/Enterprise plans). Read-only; guarded writes are a later phase.
+    #[command(after_help = "Examples:
+  dsc board list myforum
+  dsc board show myforum 3
+  dsc board pull myforum 3 board.yaml")]
+    Board {
+        #[command(subcommand)]
+        command: BoardCommand,
+    },
     /// Search topics on a Discourse, or `all` to fan out across every
     /// configured forum and print one merged, forum-tagged result list.
     #[command(visible_alias = "s")]
@@ -849,6 +859,48 @@ impl ExplorerOrderArg {
             Self::LastRunAt => "last_run_at",
         }
     }
+}
+
+#[derive(Subcommand)]
+#[command(next_display_order = None)]
+pub enum BoardCommand {
+    /// List boards accessible to the configured API user.
+    #[command(visible_alias = "ls")]
+    List {
+        /// Discourse name.
+        discourse: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Show one board's columns and cards.
+    Show {
+        /// Discourse name.
+        discourse: String,
+        /// Board ID.
+        board_id: i64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Snapshot a board, including floater cards, to a local YAML/JSON file.
+    #[command(visible_alias = "pl")]
+    Pull {
+        /// Discourse name.
+        discourse: String,
+        /// Board ID.
+        board_id: i64,
+        /// Local file path. YAML by default; a `.json` extension writes JSON.
+        #[arg(
+            default_value = "board.yaml",
+            value_parser = tilde_pathbuf,
+            value_hint = ValueHint::FilePath
+        )]
+        local_path: PathBuf,
+        /// Overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3646,6 +3698,9 @@ mod tests {
             &["dsc", "explorer", "list", "forum"],
             &["dsc", "explorer", "show", "forum", "1"],
             &["dsc", "explorer", "run", "forum", "1"],
+            &["dsc", "board", "list", "forum"],
+            &["dsc", "board", "show", "forum", "1"],
+            &["dsc", "board", "pull", "forum", "1"],
             &[
                 "dsc",
                 "webhook",
