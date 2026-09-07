@@ -15,13 +15,40 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// The `created_by`/`assigned_to` shape shared by boards and cards.
+/// The `created_by` shape used by boards and cards.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BoardUserRef {
     #[serde(default)]
     pub username: Option<String>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
+}
+
+/// A tag attached directly to a floater card.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BoardCardTag {
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub slug: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+/// A user or group assigned directly to a floater card.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum BoardAssignee {
+    User {
+        username: String,
+        #[serde(flatten)]
+        extra: BTreeMap<String, Value>,
+    },
+    Group {
+        name: String,
+        #[serde(flatten)]
+        extra: BTreeMap<String, Value>,
+    },
 }
 
 /// One accessible board, as returned by both `boards.json` (list) and the
@@ -105,7 +132,7 @@ pub struct BoardCard {
     #[serde(default)]
     pub tag_ids: Vec<i64>,
     #[serde(default)]
-    pub tags: Vec<String>,
+    pub tags: Vec<BoardCardTag>,
     #[serde(default)]
     pub topic_id: Option<i64>,
     #[serde(default)]
@@ -121,7 +148,7 @@ pub struct BoardCard {
     #[serde(default)]
     pub created_by: Option<BoardUserRef>,
     #[serde(default)]
-    pub assigned_to: Option<Value>,
+    pub assigned_to: Option<BoardAssignee>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -146,9 +173,9 @@ pub struct BoardColumn {
     #[serde(default)]
     pub move_to_category_id: Option<i64>,
     #[serde(default)]
-    pub move_to_assigned: Option<Value>,
+    pub move_to_assigned: Option<String>,
     #[serde(default)]
-    pub move_to_status: Option<Value>,
+    pub move_to_status: Option<String>,
     /// Bare hex string without a leading `#` (e.g. `"2f7ed8"`).
     #[serde(default)]
     pub color: Option<String>,
@@ -256,7 +283,7 @@ mod tests {
                         "id": 10,
                         "title": "Backlog",
                         "cards": [
-                            {"id": 100, "board_id": 3, "column_id": 10, "card_type": "floater", "title": "Idea", "notes": "n"},
+                            {"id": 100, "board_id": 3, "column_id": 10, "card_type": "floater", "title": "Idea", "notes": "n", "tags": [{"id": 7, "name": "planning", "slug": "planning"}], "assigned_to": {"type": "User", "username": "alice", "avatar_template": "/user_avatar/alice/{size}/1.png"}},
                             {"id": 101, "board_id": 3, "column_id": 10, "card_type": "topic", "title": null, "topic_id": 42, "topic": {"id": 42, "title": "A topic"}}
                         ]
                     }
@@ -269,6 +296,11 @@ mod tests {
         assert_eq!(cards.len(), 2);
         assert_eq!(cards[0].card_type, "floater");
         assert_eq!(cards[0].title.as_deref(), Some("Idea"));
+        assert_eq!(cards[0].tags[0].name, "planning");
+        assert!(matches!(
+            cards[0].assigned_to.as_ref(),
+            Some(BoardAssignee::User { username, .. }) if username == "alice"
+        ));
         assert_eq!(cards[1].card_type, "topic");
         assert!(cards[1].title.is_none());
         assert_eq!(

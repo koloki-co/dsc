@@ -470,7 +470,7 @@ pub enum Commands {
         command: ExplorerCommand,
     },
     /// List, show, and snapshot Discourse Boards (core kanban plugin,
-    /// Business/Enterprise plans). Read-only; guarded writes are a later phase.
+    /// Business/Enterprise plans). Detail reads may trigger server-side sync.
     #[command(after_help = "Examples:
   dsc board list myforum
   dsc board show myforum 3
@@ -722,6 +722,12 @@ impl Commands {
                         export: Some(_), ..
                     },
             } => Some("dsc explorer show --export"),
+            Commands::Board {
+                command: BoardCommand::Show { .. },
+            } => Some("dsc board show"),
+            Commands::Board {
+                command: BoardCommand::Pull { .. },
+            } => Some("dsc board pull"),
             Commands::Completions { command, dir, .. } => match command {
                 Some(CompletionCommand::Install { .. }) => Some("dsc completions install"),
                 None if dir.is_some() => Some("dsc completions --dir"),
@@ -866,6 +872,9 @@ impl ExplorerOrderArg {
 pub enum BoardCommand {
     /// List boards accessible to the configured API user.
     #[command(visible_alias = "ls")]
+    #[command(after_help = "Examples:
+  dsc board list myforum
+  dsc board list myforum --format json")]
     List {
         /// Discourse name.
         discourse: String,
@@ -873,22 +882,30 @@ pub enum BoardCommand {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
-    /// Show one board's columns and cards.
+    /// Show columns and cards. Discourse may sync topic cards during this GET.
+    #[command(after_help = "Examples:
+  dsc board show myforum 3
+  dsc board show myforum 3 --format yaml")]
     Show {
         /// Discourse name.
         discourse: String,
         /// Board ID.
+        #[arg(value_parser = clap::value_parser!(i64).range(1..))]
         board_id: i64,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
-    /// Snapshot a board, including floater cards, to a local YAML/JSON file.
+    /// Snapshot a board. Discourse may sync topic cards during this GET.
     #[command(visible_alias = "pl")]
+    #[command(after_help = "Examples:
+  dsc board pull myforum 3 roadmap.yaml
+  dsc board pull myforum 3 roadmap.json --force")]
     Pull {
         /// Discourse name.
         discourse: String,
         /// Board ID.
+        #[arg(value_parser = clap::value_parser!(i64).range(1..))]
         board_id: i64,
         /// Local file path. YAML by default; a `.json` extension writes JSON.
         #[arg(
@@ -3543,6 +3560,14 @@ mod tests {
         );
     }
 
+    #[test]
+    fn board_ids_must_be_positive() {
+        for command in ["show", "pull"] {
+            assert!(Cli::try_parse_from(["dsc", "board", command, "forum", "0"]).is_err());
+            assert!(Cli::try_parse_from(["dsc", "board", command, "forum", "1"]).is_ok());
+        }
+    }
+
     fn command_from(args: &[&str]) -> Commands {
         Cli::try_parse_from(args.iter().copied())
             .unwrap_or_else(|error| panic!("{args:?} should parse: {error}"))
@@ -3642,6 +3667,8 @@ mod tests {
                 ],
                 "dsc explorer show --export",
             ),
+            (&["dsc", "board", "show", "forum", "1"], "dsc board show"),
+            (&["dsc", "board", "pull", "forum", "1"], "dsc board pull"),
         ];
 
         for &(args, expected) in blocked {
@@ -3699,8 +3726,6 @@ mod tests {
             &["dsc", "explorer", "show", "forum", "1"],
             &["dsc", "explorer", "run", "forum", "1"],
             &["dsc", "board", "list", "forum"],
-            &["dsc", "board", "show", "forum", "1"],
-            &["dsc", "board", "pull", "forum", "1"],
             &[
                 "dsc",
                 "webhook",

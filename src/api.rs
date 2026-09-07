@@ -30,7 +30,10 @@ mod users;
 mod webhooks;
 
 pub use api_keys::{ApiKeySummary, CreatedApiKey};
-pub use boards::{Board, BoardCard, BoardCardTopic, BoardColumn, BoardDetail, BoardUserRef};
+pub use boards::{
+    Board, BoardAssignee, BoardCard, BoardCardTag, BoardCardTopic, BoardColumn, BoardDetail,
+    BoardUserRef,
+};
 pub use client::{DiscourseClient, VersionInfo};
 pub use explorer::{
     ExplorerParamInfo, ExplorerQueryCatalogue, ExplorerQueryDetails, ExplorerQuerySummary,
