@@ -35,6 +35,7 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 |---|---|---|
 | **Topics & posts** | pull / push / sync as Markdown, reply, create, rename (`topic title`), set tags, full-thread export; per-post edit / delete / move | — |
 | **Categories** | list; pull / push a whole category as Markdown with durable `topic_id` binding, a reviewable dry-run plan, `--updates-only`, `--no-bump`, admonition/link conversion; declarative definition pull/push/diff/set/rename | definition assets and guarded prune |
+| **Boards** | list, inspect, and snapshot Discourse Boards with columns, topic cards, and floater cards | guarded declarative push and prune |
 | **Tags** | pull / push the taxonomy, rename, per-topic tag / untag | — |
 | **Site settings** | get / set / list, pull / push snapshots, diff two sources, **audit one setting across every forum** | — |
 | **Themes & palettes** | list / install / remove / pull / push / duplicate / show; component settings and fields; assets; enable / disable; attach / detach; colour palettes; remote update | — |
@@ -159,6 +160,7 @@ dsc update myforum
   - [search](docs/search.md) — search topics on a Discourse
   - [analytics](docs/analytics.md) — community-health snapshot (growth, activity, health)
   - [explorer](docs/explorer.md) — inspect and run saved Data Explorer queries
+  - [board](docs/board.md) - list, inspect, and snapshot Discourse Boards
   - [upload](docs/upload.md) — upload a file and return its short URL
   - [emoji](docs/emoji.md) — upload and list custom emoji
   - [topic](docs/topic.md) — pull, push, and sync topics as Markdown

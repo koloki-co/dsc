@@ -11,17 +11,20 @@ Discourse remains the write-master.
 ## Motivation
 
 Discourse Boards organises topics and standalone cards into kanban boards at
-`/boards`. Everything a sync tool needs lives behind a clean JSON plugin API,
-but that API is undocumented in the official API docs and invisible to
-`dsc` today. Discovery on 2026-09-03 against `bawmedical.co.uk`
+`/boards`. Everything a sync tool needs lives behind a JSON plugin API, but
+that API is undocumented in the official API docs and was invisible to
+`dsc`. Discovery on 2026-09-03 against `bawmedical.co.uk`
 (Discourse 2026.9.0, commit `dd4cc4f4cc`) captured the full request/response
 shape; this spec records it so implementation does not need to re-derive it.
 
-## Current state (as of 2026-09-03)
+## Current state (as of 2026-09-07)
 
-No `dsc board` surface exists. The API is live on bawmedical but no boards
-remain (the discovery scratch board was deleted after capture). The plugin is
-not enabled on any other configured forum.
+Phase 1 provides `dsc board list`, `show`, and `pull`. There are no explicit
+board write commands yet, but the detail GET used by `show` and `pull` invokes
+Discourse's own topic-card backfill and board-view history writes. The API is
+live on bawmedical but no boards remain (the discovery scratch board was
+deleted after capture). The plugin is not enabled on any other configured
+forum.
 
 ## API surface (observed 2026-09-03)
 
@@ -67,14 +70,21 @@ Column: `id`, `title`, `icon`, `position`, `default_sort` (`priority`|`recency`)
 
 Card: `id`, `board_id`, `column_id`, `card_type` (`floater`|`topic`),
 `position` (fractional-style integer ordering, 65536, 131072, ...),
-`title` (null for topic cards - topic supplies it), `notes`, `tag_ids`/`tags`
-(floater only), `topic_id` + embedded `topic` (topic cards; topic has title,
+`title` (null for topic cards - topic supplies it), `notes`, `tag_ids` and
+`tags` objects (`id`, `name`, `slug`) for floaters, `topic_id` + embedded
+`topic` (topic cards; topic has title,
 slug, category_id, tags, bumped_at, closed, image_url, posts_count),
 `created_at`/`updated_at` (floater only), `column_changed_at`, `recency_at`,
 `created_by.username`, `assigned_to`.
 
 ### Behaviours and quirks observed
 
+- **The detail GET mutates server state.** Current core source calls
+  `TopicSync.backfill_board`, which can create and delete tag-driven topic
+  cards, then calls `Boards::ViewBoard`, which records one view per user per
+  board per day. `board show` and `board pull` therefore refuse under global
+  `--dry-run`; `board list` remains safe. Verified against Discourse commit
+  `a6ade3e9915f427d115f082a2ddbc6c208c5f3c1` on 2026-09-07.
 - **Positions are large integer gaps** (65536, 131072). Client reordering is
   by `after_card_id` / `before_card_id`-style relative placement, not by
   sending an absolute position; the server recomputes. Moving the last card
@@ -109,15 +119,15 @@ slug, category_id, tags, bumped_at, closed, image_url, posts_count),
 ## Proposed CLI surface
 
 ```text
-dsc board list [--format text|json|yaml]
+dsc board list <discourse> [--format text|json|yaml]
 dsc board show <discourse> <board-id> [--format text|json|yaml]
-dsc board pull <discourse> <board-id> <file> [--format yaml|json]
+dsc board pull <discourse> <board-id> [<file>] [--force]
 dsc board push <discourse> <file> [--dry-run] [--yes]   # later phase
 ```
 
 - `list` - one row per accessible board (id, name, slug, constraints, ACL summary).
-- `show` - full board: columns, per-column cards (type, title/topic, position, tags, assignee).
-- `pull` - snapshot **the entire board, including floater cards**, to a stable-sorted YAML/JSON file, mirroring `setting pull` / `tag pull` conventions (schema `version`, `pulled_at`, forum identity). Floater cards have no topic behind them, so each becomes a title + notes (+ tags, assignee) entry in the snapshot; topic cards reference their `topic_id`. Decided 2026-09-03 with the maintainer: omitting floaters would make the snapshot a false picture of the board and would make a later `push` unable to restore it. The file is the input for a later `push` and for diffing; card order is a list, never a server position.
+- `show` - full board: columns, per-column cards (type, title/topic, position, tags, assignee). This invokes Discourse's detail GET and its server-side sync/history behavior.
+- `pull` - snapshot **the entire board visible to the API user, including floater cards**, to stable YAML/JSON, mirroring `setting pull` / `tag pull` conventions (schema `version`, `pulled_at`, `discourse_version`). Floater cards have no topic behind them, so each becomes a title + notes (+ tag names, typed assignee) entry in the snapshot; topic cards reference their `topic_id`. Decided 2026-09-03 with the maintainer: omitting floaters would make the snapshot a false picture of the board and would make a later `push` unable to restore it. The file retains only stable mutable fields plus optional reconciliation IDs; omitted column/card IDs represent objects to create in the later push phase. It excludes opaque positions, raw unknown API fields, ACL/runtime fields, timestamps, and embedded topic metadata. Card and column order are lists; cards are canonicalized by persisted position even for recency-sorted columns so topic activity does not create diff noise. Assignees retain their user/group discriminator. Pull invokes the same server-side sync/history behavior as `show`.
 - `push` - declarative create/update of columns and floater cards; topic cards
   are created by `topic_id` reference only (never by content). Prune
   (deleting boards/columns/cards missing from the file) requires explicit
@@ -128,13 +138,19 @@ dsc board push <discourse> <file> [--dry-run] [--yes]   # later phase
 
 ## Phases
 
-### Phase 1 - read-only (blocking)
+### Phase 1 - inspection and snapshots (blocking)
 
-- [ ] `board list` and `board show` with text/JSON/YAML output.
-- [ ] `board pull` snapshot with schema version + provenance header.
-- [ ] Request-budget test coverage against the mock Discourse (board endpoints mocked).
-- [ ] Graceful 404 when the plugin is disabled/not licensed (`boards_enabled` absent
-  from `admin/site_settings.json` on non-Business plans).
+- [x] `board list` and `board show` with text/JSON/YAML output.
+- [x] `board pull` snapshot with schema version + provenance header.
+- [x] Accurate floater-tag object modelling and a stable snapshot DTO separate
+  from the raw API response models.
+- [x] Detail-GET side effects documented; `show` and `pull` refused under
+  global `--dry-run` because no side-effect-free detail endpoint exists.
+- [x] Request-budget test coverage against the mock Discourse (board endpoints mocked).
+- [x] Graceful 404 when the plugin is disabled/not licensed - translated to a
+  Boards-specific hint (unlicensed, disabled, unavailable, or missing board)
+  rather than a pre-flight `admin/site_settings.json` check, matching the
+  existing Data Explorer precedent.
 
 ### Phase 2 - guarded writes
 
@@ -148,7 +164,9 @@ dsc board push <discourse> <file> [--dry-run] [--yes]   # later phase
 
 ## Backward compatibility
 
-New command surface; no existing command changes.
+New command surface; no existing command changes. The global `--dry-run`
+contract intentionally refuses `board show` and `board pull` before resolving
+configuration because Discourse's GET endpoint can write server state.
 
 ## Out of scope
 
@@ -168,3 +186,5 @@ directions, deleted a floater card, then deleted the board (204; index
 confirmed empty; topic tags unchanged). Full JSON payloads retained in this
 session's transcript; response shapes are documented above. Tested against
 Discourse 2026.9.0-latest (dd4cc4f4cc5aa73d8eb8efc3c154f4e139ff6052).
+Serializer and controller behavior re-verified in current core source at
+`a6ade3e9915f427d115f082a2ddbc6c208c5f3c1` on 2026-09-07.

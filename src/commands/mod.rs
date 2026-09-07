@@ -8,6 +8,7 @@ pub mod api_key;
 pub mod app;
 pub mod backup;
 pub mod backup_s3;
+pub mod board;
 pub mod category;
 pub mod category_def;
 pub mod common;

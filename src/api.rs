@@ -4,6 +4,7 @@
 
 mod api_keys;
 mod backup;
+mod boards;
 mod categories;
 mod client;
 mod emoji;
@@ -29,6 +30,10 @@ mod users;
 mod webhooks;
 
 pub use api_keys::{ApiKeySummary, CreatedApiKey};
+pub use boards::{
+    Board, BoardAssignee, BoardCard, BoardCardTag, BoardCardTopic, BoardColumn, BoardDetail,
+    BoardUserRef,
+};
 pub use client::{DiscourseClient, VersionInfo};
 pub use explorer::{
     ExplorerParamInfo, ExplorerQueryCatalogue, ExplorerQueryDetails, ExplorerQuerySummary,

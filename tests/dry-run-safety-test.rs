@@ -38,6 +38,14 @@ fn dry_run_unsafe_commands_short_circuit_before_config_resolution() {
             vec!["--dry-run", "backup", "pull", "example", "backup.tar.gz"],
         ),
         (
+            "board show",
+            vec!["--dry-run", "board", "show", "example", "1"],
+        ),
+        (
+            "board pull",
+            vec!["--dry-run", "board", "pull", "example", "1"],
+        ),
+        (
             "theme update",
             vec!["--dry-run", "theme", "update", "example", "1"],
         ),

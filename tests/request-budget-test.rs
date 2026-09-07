@@ -104,6 +104,12 @@ fn get_body(path: &str) -> String {
     if p == "/user_actions.json" {
         return r#"{"user_actions":[],"total_rows":0}"#.to_string();
     }
+    if p == "/boards/api/boards.json" {
+        return r#"{"boards":[{"id":3,"name":"Roadmap"}]}"#.to_string();
+    }
+    if p.starts_with("/boards/api/boards/") {
+        return r#"{"board":{"id":3,"name":"Roadmap"},"columns":[{"id":10,"title":"Backlog","cards":[]}]}"#.to_string();
+    }
     "{}".to_string()
 }
 
@@ -382,5 +388,40 @@ fn setting_audit_makes_one_settings_request_per_forum() {
     assert_eq!(
         settings_gets, 1,
         "setting audit should request /admin/site_settings.json exactly once for one forum, but got {settings_gets}"
+    );
+}
+
+// ─── R58: board list/pull request counts ─────────────────────────────────
+
+#[test]
+fn board_list_uses_one_list_request() {
+    let (baseurl, log) = start_mock();
+    let (_dir, config) = make_config(&baseurl);
+    let (output, ok) = run_dsc(&["board", "list", "mock"], &config);
+    assert!(ok, "board list failed: {output}");
+
+    let list_gets = count_gets(&log, "/boards/api/boards.json");
+    assert_eq!(
+        list_gets, 1,
+        "expected exactly one board list request, got {list_gets}"
+    );
+}
+
+#[test]
+fn board_pull_uses_one_show_request_not_n_plus_1() {
+    let (baseurl, log) = start_mock();
+    let (_dir, config) = make_config(&baseurl);
+    let out = TempDir::new().expect("tempdir");
+    let out_file = out.path().join("board.yaml");
+    let (output, ok) = run_dsc(
+        &["board", "pull", "mock", "3", out_file.to_str().unwrap()],
+        &config,
+    );
+    assert!(ok, "board pull failed: {output}");
+
+    let show_gets = count_gets(&log, "/boards/api/boards/3.json");
+    assert_eq!(
+        show_gets, 1,
+        "expected exactly one board show request, got {show_gets}"
     );
 }
