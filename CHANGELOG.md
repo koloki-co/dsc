@@ -5,6 +5,54 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.19.0] - 2026-09-08
+
+### Bug fixes
+
+- **category**: Preflight hierarchy and identity changes safely ([3088fd3](https://github.com/koloki-co/dsc/commit/3088fd34f726f06cbd0b169fb95e5778cb4a462f))
+
+- **board**: Harden API and snapshot contracts ([c1d98c2](https://github.com/koloki-co/dsc/commit/c1d98c2842195ae769143ba540647bf9291d902d))
+
+- **category**: Validate category style definitions ([470e5ea](https://github.com/koloki-co/dsc/commit/470e5ea268b216d55925842cb7c6d6c785bec408))
+
+- **file**: Default backup was silently skipped on every push ([0a7afec](https://github.com/koloki-co/dsc/commit/0a7afec8e80e3adb2ab4919f64da34ff6e07d6b5))
+
+### CI
+
+- Replace dtolnay/rust-toolchain with plain rustup ([89c283f](https://github.com/koloki-co/dsc/commit/89c283fc04e2dd97b125ba7ffb8f6b00f073a416))
+
+- Fix zizmor ref-version-mismatch findings on dtolnay/rust-toolchain ([acf44ba](https://github.com/koloki-co/dsc/commit/acf44ba47a432d20b19d9f5a8f5f450a5793a8c9))
+
+### Documentation
+
+- **spec**: Define R59 upcoming changes and uploads ([cb784d0](https://github.com/koloki-co/dsc/commit/cb784d01e4ad36e288ebef52705edf528a755b07))
+
+- **roadmap**: Record R53 real-driver verification (3 internal hosts) ([907594f](https://github.com/koloki-co/dsc/commit/907594f72dcb909f2698e45ef06ce52760bd4547))
+
+- **roadmap**: Audit for stale and complete items ([12084da](https://github.com/koloki-co/dsc/commit/12084da86b38ced2c41308434f928d6b429ec4b9))
+
+- **boards**: Board pull includes floater cards (decided with maintainer) ([e9d02bc](https://github.com/koloki-co/dsc/commit/e9d02bc5e1c06b33514907250790bbfb5c4ea6f8))
+
+- **boards**: Capture Discourse Boards API discovery (R58) ([4699d19](https://github.com/koloki-co/dsc/commit/4699d19c4bbf4e9f36f720603c63e8e3ace06e22))
+
+### Features
+
+- **category**: Allow same-file parent/child creation on def push ([1af87b1](https://github.com/koloki-co/dsc/commit/1af87b12c3fc0e717a5734b3ca0cfab670c96008))
+
+- **board**: Add dsc board list|show|pull (R58 Phase 1) ([621a21a](https://github.com/koloki-co/dsc/commit/621a21a76bd1756ac56c0c011f24d49f831f6a54))
+
+- **category**: Add style_type/icon/emoji to category definitions (R11) ([cd39c09](https://github.com/koloki-co/dsc/commit/cd39c0925a8a7a5d303d905a83202ece487094ee))
+
+### Performance
+
+- **main**: Dispatch completions/man before config resolution (P24) ([be01419](https://github.com/koloki-co/dsc/commit/be01419a9c071183e76ee80c544ae8749541b208))
+
+- **explorer**: Stream Data Explorer CSV downloads to disk (P20) ([6942a9b](https://github.com/koloki-co/dsc/commit/6942a9b82771b3fdbde52eaff27bf42081b882e7))
+
+### Tests
+
+- **main**: Cover config-free generation dispatch ([c9917f0](https://github.com/koloki-co/dsc/commit/c9917f0ad014fe13125ec9c2171c1d6378820e08))
+
 ## [0.18.0] - 2026-09-02
 
 ### Bug fixes
