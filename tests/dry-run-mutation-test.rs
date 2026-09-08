@@ -180,6 +180,8 @@ fn handle(mut stream: TcpStream, log: &Arc<Mutex<Vec<String>>>) {
         get_body(&path)
     } else if method == "POST" && path == "/admin/api/web_hooks.json" {
         r#"{"web_hook":{"id":999,"payload_url":"https://user:server-url-canary@example.test/hook","content_type":1,"active":true,"wildcard_web_hook":true,"secret":"server-secret-canary","verify_certificate":true,"last_delivery_status":3,"category_ids":[],"group_ids":[],"tags":[],"web_hook_event_types":[]}}"#.to_string()
+    } else if method == "POST" && path == "/categories" {
+        r#"{"category":{"id":999}}"#.to_string()
     } else {
         r#"{"success":"OK","id":999,"topic_id":999}"#.to_string()
     };
@@ -726,6 +728,126 @@ fn category_definition_style_contract_is_enforced_before_dry_run_writes() {
     assert!(!ok, "invalid category style unexpectedly passed: {output}");
     assert!(output.contains("uses style_type 'emoji' but has no emoji"));
     assert_eq!(mutating(&log).len(), before);
+}
+
+#[test]
+fn category_definition_parent_cycles_are_rejected_before_writes() {
+    let (baseurl, log) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = dir.path().join("dsc.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{baseurl}\"\napikey = \"mock-key\"\napi_username = \"tester\"\n"
+        ),
+    )
+    .expect("write config");
+    let categories = dir.path().join("categories.yaml");
+    std::fs::write(
+        &categories,
+        "version: 2\ncategories:\n  - id: 4\n    name: Test\n    slug: test\n    parent: test\n",
+    )
+    .expect("write category definition");
+
+    let before = mutating(&log).len();
+    let (output, ok) = run_dsc(
+        &[
+            "category",
+            "def",
+            "push",
+            "mock",
+            categories.to_str().expect("UTF-8 path"),
+        ],
+        &config,
+    );
+    assert!(!ok, "category cycle unexpectedly passed: {output}");
+    assert!(output.contains("circular parent reference"));
+    assert_eq!(mutating(&log).len(), before);
+}
+
+#[test]
+fn category_definition_creates_a_same_file_parent_before_its_child() {
+    let (baseurl, log) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = dir.path().join("dsc.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{baseurl}\"\napikey = \"mock-key\"\napi_username = \"tester\"\n"
+        ),
+    )
+    .expect("write config");
+    let categories = dir.path().join("categories.yaml");
+    std::fs::write(
+        &categories,
+        "version: 2\ncategories:\n  - name: Child\n    parent: Parent\n  - name: Parent\n",
+    )
+    .expect("write category definition");
+
+    let (output, ok) = run_dsc(
+        &[
+            "category",
+            "def",
+            "push",
+            "mock",
+            categories.to_str().expect("UTF-8 path"),
+        ],
+        &config,
+    );
+    assert!(ok, "category def push failed: {output}");
+    let writes = mutating(&log);
+    assert_eq!(writes.len(), 2, "unexpected writes: {writes:?}");
+    assert!(
+        writes[0].contains("name=Parent"),
+        "parent was not created first: {writes:?}"
+    );
+    assert!(
+        writes[1].contains("name=Child"),
+        "child was not created second: {writes:?}"
+    );
+    assert!(
+        writes[1].contains("parent_category_id=999"),
+        "child did not use the created parent id: {writes:?}"
+    );
+}
+
+#[test]
+fn category_definition_explicit_null_parent_is_sent_as_a_top_level_move() {
+    let (baseurl, log) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = dir.path().join("dsc.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{baseurl}\"\napikey = \"mock-key\"\napi_username = \"tester\"\n"
+        ),
+    )
+    .expect("write config");
+    let categories = dir.path().join("categories.yaml");
+    std::fs::write(
+        &categories,
+        "version: 2\ncategories:\n  - id: 4\n    name: Renamed Test\n    slug: test\n    parent: null\n",
+    )
+    .expect("write category definition");
+
+    let (output, ok) = run_dsc(
+        &[
+            "category",
+            "def",
+            "push",
+            "mock",
+            categories.to_str().expect("UTF-8 path"),
+        ],
+        &config,
+    );
+    assert!(ok, "category def push failed: {output}");
+    let writes = mutating(&log);
+    assert_eq!(writes.len(), 1, "unexpected writes: {writes:?}");
+    assert!(writes[0].starts_with("PUT /categories/4.json"));
+    assert!(
+        writes[0].contains("parent_category_id="),
+        "explicit null parent was omitted: {writes:?}"
+    );
 }
 
 #[test]

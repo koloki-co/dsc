@@ -129,7 +129,7 @@ dsc category def push <discourse> <categories.yaml>   # apply the file (upsert; 
 ```
 
 - `def pull` writes one `categories.yaml` (or `.json` by extension) holding every category's definition - name, slug, colour, position, parent, `read_restricted`, description, topic template, permissions, tag rules, category types, custom fields, and display knobs. Usage counts and other volatile fields are dropped so re-pulls diff cleanly.
-- `def push` reconciles the server toward the file: it **creates** missing categories and **updates** changed ones, matching by `id` (stable), then `slug`, then `name`. It never deletes. `--dry-run` prints the plan with `+` (create), `~` (update), `=` (unchanged) sigils and names each field that would change. A file entry with no `id` that matches nothing is flagged loudly - it would create a new category, so if you meant to rename an existing one, keep its `id` in the file to preserve its topics, or use `dsc category rename` below.
+- `def push` reconciles the server toward the file: it **creates** missing categories and **updates** changed ones, matching by `id` (stable), then by parent-scoped `slug`, then by parent-scoped `name`. Discourse permits the same slug or name under different parents; `parent` disambiguates those aliases when possible, while any remaining ambiguity requires an `id`. It never deletes. `--dry-run` prints the plan with `+` (create), `~` (update), `=` (unchanged) sigils and names each field that would change. A file entry with no `id` that matches nothing is flagged loudly - it would create a new category, so if you meant to rename an existing one, keep its `id` in the file to preserve its topics, or use `dsc category rename` below.
 - The file schema is strict: unknown top-level or category fields are errors rather than silently ignored. This protects declarative configuration from misspellings and unsupported settings.
 - The push is idempotent: a pull followed by a push with no edits reports every category `= unchanged`. Description terminal line endings are normalised because Discourse removes them from category descriptions.
 
@@ -143,19 +143,20 @@ dsc category get  <discourse> <category> <field>    # one field
 dsc category set  <discourse> <category> <field> <value>
 ```
 
-- `<category>` resolves by `id`, `slug`, or `name`.
+- `<category>` resolves by `id`, `slug`, or `name`; an ambiguous slug or name is rejected with guidance to use the ID.
 - `<field>` is one of: `name`, `slug`, `color`, `text_color`, `style_type`, `icon`, `emoji`, `position`, `parent`, `read_restricted`, `description`, `topic_template`, `topic_title_placeholder`, `permissions`, `allowed_tags`, `allowed_tag_groups`, `minimum_required_tags`, `required_tag_groups`, `category_types`, `custom_fields`, `sort_order`, `default_view`, `subcategory_list_style`, `num_featured_topics`, `show_subcategory_list`.
 - `style_type` is `square` (colour swatch, the default), `icon`, or `emoji`. `icon` is a FontAwesome icon name; `emoji` is a shortcode without colons. Set the companion first, then activate its style: `dsc category set forum1 support icon life-ring`, followed by `dsc category set forum1 support style_type icon`. An empty `icon` or `emoji` value clears it, but the active style must be changed first. Logo/background image assets are out of scope (asset upload is a separate problem).
 - List fields (`allowed_tags`, `allowed_tag_groups`) take a comma-separated value; an empty value clears the list. Pass `--append` or `--remove` (mutually exclusive) to add or remove the given comma-separated items instead of replacing the whole list - e.g. `dsc category set forum1 support allowed_tags urgent,bug --append`.
 - `permissions` takes `group:level,...` where level is `full`, `create_post`, or `readonly` (e.g. `staff:full`). Granting any group other than `everyone` also sets `read_restricted=true`, matching the admin UI.
 - `required_tag_groups` takes `group:min_count,...` (e.g. `Role:1,Genre:2`); an empty value clears the rules. `category_types` takes a comma-separated list of additional type IDs (e.g. `support`); the built-in `discussion` type is implicit.
+- Setting `parent` to an empty value moves the category to the top level. Because Discourse permits repeated names and slugs under different parents, use an ID for `<category>` or the parent value when an alias is ambiguous.
 - `custom_fields` takes a complete JSON object with string, number, or boolean values (e.g. `'{"enable_accepted_answers":"true"}'`). `def pull` reads the complete map from each category's detail endpoint; a `def push` removes keys omitted from a specified map, while omitting `custom_fields` leaves it untouched. Object and array values are rejected because Discourse stringifies them.
 - `show`/`get` honour `--format text|json|yaml`; `set` honours the global `--dry-run`.
 
 Notes:
 
 - `description` is read from the plain-text form; on write, Discourse re-cooks it as the category's "About" topic excerpt (settles a moment after a create).
-- When `def push` creates a category whose `parent` is itself brand-new in the same file, run the push twice (or create the parent first) - a parent is resolved against categories that already exist on the server.
+- `def push` accepts a parent and its new children in the same file, regardless of file order. It resolves parents against both desired file names/slugs and existing server categories, creates new parents before their children, and rejects missing, ambiguous, self-referential, or circular relationships before writing anything.
 
 ## dsc category diff
 

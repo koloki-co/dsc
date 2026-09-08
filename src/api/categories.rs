@@ -13,6 +13,20 @@ use reqwest::StatusCode;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
+fn flatten_category_definitions(categories: Vec<CategoryDefinition>) -> Vec<CategoryDefinition> {
+    let mut flattened = Vec::new();
+    let mut pending: Vec<_> = categories.into_iter().rev().collect();
+    while let Some(mut category) = pending.pop() {
+        pending.extend(
+            std::mem::take(&mut category.subcategory_list)
+                .into_iter()
+                .rev(),
+        );
+        flattened.push(category);
+    }
+    flattened
+}
+
 impl DiscourseClient {
     /// Fetch a category by ID (topics list included).
     pub fn fetch_category(&self, category_id: u64) -> Result<CategoryResponse> {
@@ -133,7 +147,7 @@ impl DiscourseClient {
         }
         let body: CategoryDefinitionsResponse =
             serde_json::from_str(&text).context("reading category definitions json")?;
-        Ok(body.category_list.categories)
+        Ok(flatten_category_definitions(body.category_list.categories))
     }
 
     /// Fetch one category's complete definition. Unlike the category-list
@@ -237,5 +251,45 @@ impl DiscourseClient {
             }
         }
         Ok(categories)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn category_definitions_flatten_nested_subcategory_lists_in_api_order() {
+        let child = CategoryDefinition {
+            id: Some(2),
+            name: "Child".to_string(),
+            parent_category_id: Some(1),
+            ..Default::default()
+        };
+        let parent = CategoryDefinition {
+            id: Some(1),
+            name: "Parent".to_string(),
+            subcategory_list: vec![child],
+            ..Default::default()
+        };
+        let sibling = CategoryDefinition {
+            id: Some(3),
+            name: "Sibling".to_string(),
+            ..Default::default()
+        };
+
+        let flattened = flatten_category_definitions(vec![parent, sibling]);
+        assert_eq!(
+            flattened
+                .iter()
+                .map(|category| category.id)
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2), Some(3)]
+        );
+        assert!(
+            flattened
+                .iter()
+                .all(|category| category.subcategory_list.is_empty())
+        );
     }
 }

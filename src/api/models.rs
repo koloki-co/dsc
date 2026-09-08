@@ -198,6 +198,8 @@ pub struct CategoryDefinition {
     pub num_featured_topics: Option<u64>,
     #[serde(default)]
     pub show_subcategory_list: Option<bool>,
+    #[serde(default)]
+    pub subcategory_list: Vec<CategoryDefinition>,
 }
 
 /// Response payload for `/categories.json?show_permissions=true`.
