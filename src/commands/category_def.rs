@@ -16,7 +16,7 @@ use crate::utils::atomic_write;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -86,9 +86,17 @@ pub struct CategoryDefEntry {
     pub emoji: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<i64>,
-    /// Parent category slug or unambiguous name (or null for a top-level category).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub parent: Option<String>,
+    /// Parent category slug, unambiguous name, or existing ID. `Some(None)`
+    /// explicitly moves the category to the top level; `None` leaves its current
+    /// parent untouched.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_present_parent"
+    )]
+    pub parent: Option<Option<String>>,
+    #[serde(skip)]
+    server_parent_id: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub read_restricted: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -135,6 +143,13 @@ pub struct CategoryDefEntry {
 pub struct RequiredTagGroupEntry {
     pub name: String,
     pub min_count: u64,
+}
+
+fn deserialize_present_parent<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 // ─── Permission level <-> label ───────────────────────────────────────────────
@@ -214,9 +229,10 @@ fn def_to_entry(def: &CategoryDefinition, id_to_slug: &BTreeMap<u64, String>) ->
             .collect();
         (!map.is_empty()).then_some(map)
     });
-    let parent = def
-        .parent_category_id
-        .and_then(|pid| id_to_slug.get(&pid).cloned());
+    let parent = Some(
+        def.parent_category_id
+            .and_then(|pid| id_to_slug.get(&pid).cloned()),
+    );
     let nonempty = |s: &Option<String>| s.clone().filter(|v| !v.is_empty());
     let nonempty_list = |v: &Option<Vec<String>>| v.clone().filter(|l| !l.is_empty());
     let description = nonempty(&def.description_text).or_else(|| nonempty(&def.description));
@@ -232,6 +248,7 @@ fn def_to_entry(def: &CategoryDefinition, id_to_slug: &BTreeMap<u64, String>) ->
         emoji: nonempty(&def.emoji),
         position: def.position,
         parent,
+        server_parent_id: def.parent_category_id,
         read_restricted: def.read_restricted,
         // Prefer the plain-text description over the cooked HTML `description`
         // so pull -> push -> pull is idempotent (see CategoryDefinition).
@@ -330,13 +347,14 @@ fn id_to_slug_map(defs: &[CategoryDefinition]) -> BTreeMap<u64, String> {
         .collect()
 }
 
-fn slug_to_id_map(defs: &[CategoryDefinition]) -> BTreeMap<String, u64> {
-    defs.iter()
-        .filter_map(|d| match (&d.slug, d.id) {
-            (Some(slug), Some(id)) => Some((slug.clone(), id)),
-            _ => None,
-        })
-        .collect()
+fn slug_to_ids_map(defs: &[CategoryDefinition]) -> BTreeMap<String, Vec<u64>> {
+    let mut slugs = BTreeMap::<String, Vec<u64>>::new();
+    for def in defs {
+        if let (Some(slug), Some(id)) = (&def.slug, def.id) {
+            slugs.entry(slug.clone()).or_default().push(id);
+        }
+    }
+    slugs
 }
 
 fn name_to_ids_map(defs: &[CategoryDefinition]) -> BTreeMap<String, Vec<u64>> {
@@ -353,143 +371,573 @@ fn name_to_ids_map(defs: &[CategoryDefinition]) -> BTreeMap<String, Vec<u64>> {
 /// trying slug first (stable, preferred) then name.
 fn resolve_parent_id(
     parent: &str,
-    slug_to_id: &BTreeMap<String, u64>,
+    slug_to_ids: &BTreeMap<String, Vec<u64>>,
     name_to_ids: &BTreeMap<String, Vec<u64>>,
 ) -> Result<Option<u64>> {
-    if let Some(id) = slug_to_id.get(parent) {
-        return Ok(Some(*id));
+    if let Ok(id) = parent.parse::<u64>()
+        && (slug_to_ids.values().any(|ids| ids.contains(&id))
+            || name_to_ids.values().any(|ids| ids.contains(&id)))
+    {
+        return Ok(Some(id));
+    }
+    match slug_to_ids.get(parent).map(Vec::as_slice) {
+        Some([id]) => return Ok(Some(*id)),
+        Some(ids) => {
+            return Err(anyhow!(
+                "parent category slug '{}' is ambiguous (matches {} categories); use an unambiguous name",
+                parent,
+                ids.len()
+            ));
+        }
+        None => {}
     }
     match name_to_ids.get(parent).map(Vec::as_slice) {
         None => Ok(None),
         Some([id]) => Ok(Some(*id)),
         Some(ids) => Err(anyhow!(
-            "parent category name '{}' is ambiguous (matches {} categories); use its unique slug",
+            "parent category name '{}' is ambiguous (matches {} categories); use an unambiguous slug",
             parent,
             ids.len()
         )),
     }
 }
 
-/// Resolve a `parent` reference against another entry in the same file (not
-/// the server), trying slug first then name, mirroring `resolve_parent_id`'s
-/// priority. Excludes `self_index` so an entry can never be its own parent.
-/// Used so a brand-new parent and its brand-new child can be declared in one
-/// push file instead of requiring two separate pushes.
-fn resolve_parent_in_file(
-    parent: &str,
-    file: &[CategoryDefEntry],
-    self_index: usize,
-) -> Option<usize> {
-    file.iter()
-        .enumerate()
-        .find(|(i, e)| *i != self_index && e.slug.as_deref() == Some(parent))
-        .or_else(|| {
-            file.iter()
-                .enumerate()
-                .find(|(i, e)| *i != self_index && e.name == parent)
-        })
-        .map(|(i, _)| i)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ParentTarget {
+    Server(u64),
+    File(usize),
 }
 
-/// Check every file entry's `parent` reference resolves against the server
-/// or another entry in the same file *before* any writes happen, so a typo
-/// surfaces as one clear error instead of a mid-push 4xx after earlier
-/// entries have already been created/updated.
-fn validate_parents(
+struct FileIndex<'a> {
+    by_slug: HashMap<&'a str, Vec<usize>>,
+    by_name: HashMap<&'a str, Vec<usize>>,
+}
+
+impl<'a> FileIndex<'a> {
+    fn build(file: &'a [CategoryDefEntry]) -> Self {
+        let mut by_slug = HashMap::<&str, Vec<usize>>::new();
+        let mut by_name = HashMap::<&str, Vec<usize>>::new();
+        for (index, entry) in file.iter().enumerate() {
+            if let Some(slug) = &entry.slug {
+                by_slug.entry(slug).or_default().push(index);
+            }
+            by_name.entry(&entry.name).or_default().push(index);
+        }
+        Self { by_slug, by_name }
+    }
+}
+
+fn unique_file_parent(
+    matches: Option<&Vec<usize>>,
+    parent: &str,
+    field: &str,
+    current_parent_id: Option<u64>,
+    plan: &[DefAction],
+) -> Result<Option<usize>> {
+    match matches.map(Vec::as_slice) {
+        None => Ok(None),
+        Some([index]) => Ok(Some(*index)),
+        Some(indices)
+            if current_parent_id.is_some()
+                && indices
+                    .iter()
+                    .filter(|index| plan[**index].server_id == current_parent_id)
+                    .count()
+                    == 1 =>
+        {
+            Ok(indices
+                .iter()
+                .find(|index| plan[**index].server_id == current_parent_id)
+                .copied())
+        }
+        Some(indices) => Err(anyhow!(
+            "parent category {} '{}' is ambiguous (matches {} entries in this file)",
+            field,
+            parent,
+            indices.len()
+        )),
+    }
+}
+
+fn unique_server_parent(
+    matches: Option<&Vec<&CategoryDefEntry>>,
+    parent: &str,
+    field: &str,
+) -> Result<Option<u64>> {
+    match matches.map(Vec::as_slice) {
+        None => Ok(None),
+        Some([entry]) => entry
+            .id
+            .map(Some)
+            .ok_or_else(|| anyhow!("internal: server category without an id")),
+        Some(entries) => Err(anyhow!(
+            "parent category {} '{}' is ambiguous (matches {} server categories)",
+            field,
+            parent,
+            entries.len()
+        )),
+    }
+}
+
+/// Resolve every explicit parent once, before writes. Same-file desired aliases
+/// take precedence so children can refer to a parent whose name or slug is being
+/// changed in this push.
+fn resolve_parent_targets(
     file: &[CategoryDefEntry],
-    slug_to_id: &BTreeMap<String, u64>,
-    name_to_ids: &BTreeMap<String, Vec<u64>>,
-) -> Result<()> {
-    let invalid: Vec<String> = file
+    server: &[CategoryDefEntry],
+    plan: &[DefAction],
+) -> Result<Vec<Option<ParentTarget>>> {
+    let file_index = FileIndex::build(file);
+    let server_index = ServerIndex::build(server);
+    let server_to_file: HashMap<u64, usize> = plan
         .iter()
         .enumerate()
-        .filter_map(|(i, entry)| {
-            let parent = entry.parent.as_ref()?;
-            match resolve_parent_id(parent, slug_to_id, name_to_ids) {
-                Ok(Some(_)) => None,
-                Ok(None) => {
-                    if resolve_parent_in_file(parent, file, i).is_some() {
-                        None
-                    } else {
-                        Some(format!(
-                            "'{}' -> parent '{}' was not found by slug or name, and no category named '{}' is defined elsewhere in this file",
-                            entry.name, parent, parent
-                        ))
-                    }
-                }
-                Err(error) => Some(format!("'{}' -> {error}", entry.name)),
-            }
-        })
+        .filter_map(|(index, action)| action.server_id.map(|id| (id, index)))
         .collect();
+    let mut targets = Vec::with_capacity(file.len());
+    let mut invalid = Vec::new();
+
+    for (entry_index, entry) in file.iter().enumerate() {
+        let parent = match &entry.parent {
+            Some(Some(parent)) => parent,
+            None | Some(None) => {
+                targets.push(None);
+                continue;
+            }
+        };
+        let current_parent_id = plan[entry_index].server_id.and_then(|id| {
+            server
+                .iter()
+                .find(|category| category.id == Some(id))
+                .and_then(|category| category.server_parent_id)
+        });
+
+        let resolved = (|| -> Result<Option<ParentTarget>> {
+            if let Ok(id) = parent.parse::<u64>()
+                && server_index.by_id.contains_key(&id)
+            {
+                return Ok(Some(
+                    server_to_file
+                        .get(&id)
+                        .copied()
+                        .map_or(ParentTarget::Server(id), ParentTarget::File),
+                ));
+            }
+            if let Some(index) = unique_file_parent(
+                file_index.by_slug.get(parent.as_str()),
+                parent,
+                "slug",
+                current_parent_id,
+                plan,
+            )? {
+                return Ok(Some(ParentTarget::File(index)));
+            }
+            if let Some(id) =
+                unique_server_parent(server_index.by_slug.get(parent.as_str()), parent, "slug")?
+            {
+                return Ok(Some(
+                    server_to_file
+                        .get(&id)
+                        .copied()
+                        .map_or(ParentTarget::Server(id), ParentTarget::File),
+                ));
+            }
+            if let Some(index) = unique_file_parent(
+                file_index.by_name.get(parent.as_str()),
+                parent,
+                "name",
+                current_parent_id,
+                plan,
+            )? {
+                return Ok(Some(ParentTarget::File(index)));
+            }
+            if let Some(id) =
+                unique_server_parent(server_index.by_name.get(parent.as_str()), parent, "name")?
+            {
+                return Ok(Some(
+                    server_to_file
+                        .get(&id)
+                        .copied()
+                        .map_or(ParentTarget::Server(id), ParentTarget::File),
+                ));
+            }
+            Ok(None)
+        })();
+
+        match resolved {
+            Ok(Some(target)) => targets.push(Some(target)),
+            Ok(None) => {
+                invalid.push(format!(
+                    "'{}' -> parent '{}' was not found by slug or name on the server or in this file",
+                    entry.name, parent
+                ));
+                targets.push(None);
+            }
+            Err(error) => {
+                invalid.push(format!("'{}' -> {error}", entry.name));
+                targets.push(None);
+            }
+        }
+    }
+
     if invalid.is_empty() {
-        Ok(())
+        Ok(targets)
     } else {
         Err(anyhow!("invalid parent categories: {}", invalid.join(", ")))
     }
 }
 
-/// Order file entries for push so a `Create` entry that is itself referenced
-/// as another entry's `parent` is applied before that entry - letting a
-/// brand-new parent/child pair be declared and pushed together in one file,
-/// which a single static id/slug/name lookup built before any writes cannot
-/// resolve on its own. A parent reference that already resolves on the
-/// server needs no ordering (see `validate_parents`), so only in-file
-/// references to a to-be-created entry become dependency edges here.
-///
-/// Returns indices into `file` in dependency-respecting order. Errors with
-/// the involved category names if the in-file parent references form a
-/// cycle, since no order could ever satisfy it.
-fn order_for_push(
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
+enum CategoryNode {
+    Server(u64),
+    File(usize),
+}
+
+fn file_node(index: usize, plan: &[DefAction]) -> Result<CategoryNode> {
+    match plan[index].server_id {
+        Some(id) => Ok(CategoryNode::Server(id)),
+        None if plan[index].kind == DefActionKind::Create => Ok(CategoryNode::File(index)),
+        None => Err(anyhow!("internal: planned category has no identity")),
+    }
+}
+
+fn target_node(target: ParentTarget, plan: &[DefAction]) -> Result<CategoryNode> {
+    match target {
+        ParentTarget::Server(id) => Ok(CategoryNode::Server(id)),
+        ParentTarget::File(index) => file_node(index, plan),
+    }
+}
+
+/// Validate the complete hierarchy that would exist after the push, including
+/// current parent edges for server categories omitted from the file.
+fn validate_hierarchy(
     file: &[CategoryDefEntry],
+    defs: &[CategoryDefinition],
     plan: &[DefAction],
-    slug_to_id: &BTreeMap<String, u64>,
-    name_to_ids: &BTreeMap<String, Vec<u64>>,
-) -> Result<Vec<usize>> {
-    let n = file.len();
-    let mut depends_on: Vec<Option<usize>> = vec![None; n];
-    for (i, entry) in file.iter().enumerate() {
-        let Some(parent) = &entry.parent else {
-            continue;
-        };
-        if resolve_parent_id(parent, slug_to_id, name_to_ids)
-            .ok()
-            .flatten()
-            .is_some()
-        {
-            continue;
+    targets: &[Option<ParentTarget>],
+) -> Result<()> {
+    let mut parents = HashMap::<CategoryNode, Option<CategoryNode>>::new();
+    for def in defs {
+        if let Some(id) = def.id {
+            parents.insert(
+                CategoryNode::Server(id),
+                def.parent_category_id.map(CategoryNode::Server),
+            );
         }
-        if let Some(j) = resolve_parent_in_file(parent, file, i)
-            && plan[j].kind == DefActionKind::Create
-        {
-            depends_on[i] = Some(j);
+    }
+    for (index, entry) in file.iter().enumerate() {
+        let node = file_node(index, plan)?;
+        if entry.parent.is_some() || plan[index].kind == DefActionKind::Create {
+            let parent = targets[index]
+                .map(|target| target_node(target, plan))
+                .transpose()?;
+            parents.insert(node, parent);
         }
     }
 
-    let mut placed = vec![false; n];
-    let mut order = Vec::with_capacity(n);
-    while order.len() < n {
+    let mut finished = HashMap::<CategoryNode, bool>::new();
+    let mut starts: Vec<_> = parents.keys().copied().collect();
+    starts.sort();
+    for start in starts {
+        if finished.contains_key(&start) {
+            continue;
+        }
+        let mut path = Vec::new();
+        let mut positions = HashMap::new();
+        let mut current = Some(start);
+        while let Some(node) = current {
+            if finished.contains_key(&node) {
+                break;
+            }
+            if let Some(&position) = positions.get(&node) {
+                let names: Vec<&str> = path[position..]
+                    .iter()
+                    .map(|cycle_node| match cycle_node {
+                        CategoryNode::File(index) => file[*index].name.as_str(),
+                        CategoryNode::Server(id) => file
+                            .iter()
+                            .zip(plan)
+                            .find(|(_, action)| action.server_id == Some(*id))
+                            .map_or_else(
+                                || {
+                                    defs.iter()
+                                        .find(|def| def.id == Some(*id))
+                                        .map_or("<unknown>", |def| def.name.as_str())
+                                },
+                                |(entry, _)| entry.name.as_str(),
+                            ),
+                    })
+                    .collect();
+                return Err(anyhow!(
+                    "circular parent reference among categories: {}",
+                    names.join(", ")
+                ));
+            }
+            positions.insert(node, path.len());
+            path.push(node);
+            current = parents.get(&node).copied().flatten();
+        }
+        for node in path {
+            finished.insert(node, true);
+        }
+    }
+    Ok(())
+}
+
+/// Refuse duplicate desired identities that Discourse would reject after an
+/// earlier entry has already been applied.
+fn validate_desired_identities(
+    file: &[CategoryDefEntry],
+    server: &[CategoryDefEntry],
+    plan: &[DefAction],
+    targets: &[Option<ParentTarget>],
+) -> Result<()> {
+    #[derive(Clone)]
+    struct Identity {
+        label: String,
+        parent: Option<CategoryNode>,
+        name: String,
+        slug: Option<String>,
+    }
+
+    let mut identities = HashMap::<CategoryNode, Identity>::new();
+    for category in server {
+        if let Some(id) = category.id {
+            identities.insert(
+                CategoryNode::Server(id),
+                Identity {
+                    label: category.name.clone(),
+                    parent: category.server_parent_id.map(CategoryNode::Server),
+                    name: category.name.clone(),
+                    slug: category.slug.clone(),
+                },
+            );
+        }
+    }
+    for (index, entry) in file.iter().enumerate() {
+        let node = file_node(index, plan)?;
+        let current = identities.get(&node).cloned();
+        let parent = if entry.parent.is_some() || plan[index].kind == DefActionKind::Create {
+            targets[index]
+                .map(|target| target_node(target, plan))
+                .transpose()?
+        } else {
+            current.as_ref().and_then(|identity| identity.parent)
+        };
+        identities.insert(
+            node,
+            Identity {
+                label: entry.name.clone(),
+                parent,
+                name: entry.name.clone(),
+                slug: entry
+                    .slug
+                    .clone()
+                    .or_else(|| current.as_ref().and_then(|identity| identity.slug.clone())),
+            },
+        );
+    }
+
+    let mut names = HashMap::<(Option<CategoryNode>, String), CategoryNode>::new();
+    let mut slugs = HashMap::<(Option<CategoryNode>, String), CategoryNode>::new();
+    for (node, identity) in &identities {
+        let name_key = (identity.parent, identity.name.to_lowercase());
+        if let Some(previous) = names.insert(name_key, *node)
+            && previous != *node
+        {
+            return Err(anyhow!(
+                "categories '{}' and '{}' would have duplicate name '{}' under the same parent",
+                identities[&previous].label,
+                identity.label,
+                identity.name
+            ));
+        }
+        if let Some(slug) = &identity.slug
+            && let Some(previous) = slugs.insert((identity.parent, slug.to_lowercase()), *node)
+            && previous != *node
+        {
+            return Err(anyhow!(
+                "categories '{}' and '{}' would have duplicate slug '{}' under the same parent",
+                identities[&previous].label,
+                identity.label,
+                slug
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Parent references are compared by resolved identity, not by their textual
+/// slug/name/ID form, so equivalent aliases remain idempotent.
+fn reconcile_parent_changes(
+    file: &[CategoryDefEntry],
+    server: &[CategoryDefEntry],
+    plan: &mut [DefAction],
+    targets: &[Option<ParentTarget>],
+) {
+    for (index, entry) in file.iter().enumerate() {
+        if entry.parent.is_none() || plan[index].kind == DefActionKind::Create {
+            continue;
+        }
+        let current_parent = plan[index].server_id.and_then(|id| {
+            server
+                .iter()
+                .find(|category| category.id == Some(id))
+                .and_then(|category| category.server_parent_id)
+        });
+        let desired_parent = match targets[index] {
+            None => None,
+            Some(ParentTarget::Server(id)) => Some(id),
+            Some(ParentTarget::File(parent)) => plan[parent].server_id,
+        };
+        let same_parent = desired_parent.is_some() && desired_parent == current_parent
+            || desired_parent.is_none()
+                && current_parent.is_none()
+                && !matches!(targets[index], Some(ParentTarget::File(_)));
+
+        if same_parent {
+            plan[index]
+                .changed_fields
+                .retain(|field| *field != "parent");
+        } else if !plan[index].changed_fields.contains(&"parent") {
+            plan[index].changed_fields.push("parent");
+        }
+        plan[index].kind = if plan[index].changed_fields.is_empty() {
+            DefActionKind::Unchanged
+        } else {
+            DefActionKind::Update
+        };
+    }
+}
+
+/// Return file indices in dependency order. Parents are applied before children,
+/// and categories release occupied names/slugs before another entry claims them.
+fn order_for_push(
+    file: &[CategoryDefEntry],
+    server: &[CategoryDefEntry],
+    plan: &[DefAction],
+    targets: &[Option<ParentTarget>],
+) -> Result<Vec<usize>> {
+    let server_to_file: HashMap<u64, usize> = plan
+        .iter()
+        .enumerate()
+        .filter_map(|(index, action)| action.server_id.map(|id| (id, index)))
+        .collect();
+    let mut depends_on = vec![Vec::<usize>::new(); file.len()];
+    for (index, target) in targets.iter().enumerate() {
+        if let Some(ParentTarget::File(parent)) = target
+            && plan[*parent].kind == DefActionKind::Create
+        {
+            depends_on[index].push(*parent);
+        }
+    }
+    for (index, entry) in file.iter().enumerate() {
+        if plan[index].kind == DefActionKind::Unchanged {
+            continue;
+        }
+        let current = plan[index]
+            .server_id
+            .and_then(|id| server.iter().find(|category| category.id == Some(id)));
+        let desired_parent = if entry.parent.is_some() || plan[index].kind == DefActionKind::Create
+        {
+            targets[index]
+                .map(|target| target_node(target, plan))
+                .transpose()?
+        } else {
+            current
+                .and_then(|category| category.server_parent_id)
+                .map(CategoryNode::Server)
+        };
+        let desired_name = entry.name.to_lowercase();
+        let desired_slug = entry
+            .slug
+            .as_deref()
+            .or_else(|| current.and_then(|category| category.slug.as_deref()))
+            .map(str::to_lowercase);
+
+        for occupied in server {
+            let Some(occupied_id) = occupied.id else {
+                continue;
+            };
+            if plan[index].server_id == Some(occupied_id)
+                || occupied.server_parent_id.map(CategoryNode::Server) != desired_parent
+            {
+                continue;
+            }
+            let occupies_name = occupied.name.to_lowercase() == desired_name;
+            let occupies_slug = desired_slug.as_ref().is_some_and(|slug| {
+                occupied
+                    .slug
+                    .as_ref()
+                    .is_some_and(|occupied| occupied.to_lowercase() == *slug)
+            });
+            if (occupies_name || occupies_slug)
+                && let Some(release) = server_to_file.get(&occupied_id).copied()
+                && !depends_on[index].contains(&release)
+            {
+                depends_on[index].push(release);
+            }
+        }
+    }
+
+    let mut current_parents = HashMap::<CategoryNode, Option<CategoryNode>>::new();
+    for category in server {
+        if let Some(id) = category.id {
+            current_parents.insert(
+                CategoryNode::Server(id),
+                category.server_parent_id.map(CategoryNode::Server),
+            );
+        }
+    }
+    let mut placed = vec![false; file.len()];
+    let mut order = Vec::with_capacity(file.len());
+    while order.len() < file.len() {
         let mut progressed = false;
-        for i in 0..n {
+        for i in 0..file.len() {
             if placed[i] {
                 continue;
             }
-            let ready = match depends_on[i] {
-                Some(j) => placed[j],
-                None => true,
-            };
+            let node = file_node(i, plan)?;
+            let desired_parent =
+                if file[i].parent.is_some() || plan[i].kind == DefActionKind::Create {
+                    targets[i]
+                        .map(|target| target_node(target, plan))
+                        .transpose()?
+                } else {
+                    current_parents.get(&node).copied().flatten()
+                };
+            let mut ancestor = desired_parent;
+            let mut seen = HashSet::new();
+            let mut creates_cycle = false;
+            while let Some(parent) = ancestor {
+                if parent == node {
+                    creates_cycle = true;
+                    break;
+                }
+                if !seen.insert(parent) {
+                    creates_cycle = true;
+                    break;
+                }
+                ancestor = current_parents.get(&parent).copied().flatten();
+            }
+            let ready =
+                !creates_cycle && depends_on[i].iter().all(|dependency| placed[*dependency]);
             if ready {
                 placed[i] = true;
                 order.push(i);
+                if file[i].parent.is_some() || plan[i].kind == DefActionKind::Create {
+                    current_parents.insert(node, desired_parent);
+                }
                 progressed = true;
             }
         }
         if !progressed {
-            let stuck: Vec<&str> = (0..n)
+            let stuck: Vec<&str> = (0..file.len())
                 .filter(|&i| !placed[i])
                 .map(|i| file[i].name.as_str())
                 .collect();
             return Err(anyhow!(
-                "circular parent reference among categories in this file: {}",
+                "circular category dependencies among entries in this file: {}",
                 stuck.join(", ")
             ));
         }
@@ -500,8 +948,7 @@ fn order_for_push(
 /// Build the form params for a whole entry (create or full update).
 fn entry_to_params(
     entry: &CategoryDefEntry,
-    slug_to_id: &BTreeMap<String, u64>,
-    name_to_ids: &BTreeMap<String, Vec<u64>>,
+    parent_id: Option<u64>,
 ) -> Result<Vec<(String, String)>> {
     let mut p: Vec<(String, String)> = vec![("name".to_string(), entry.name.clone())];
     let push_opt = |p: &mut Vec<(String, String)>, key: &str, v: &Option<String>| {
@@ -523,11 +970,14 @@ fn entry_to_params(
     if let Some(v) = entry.position {
         p.push(("position".to_string(), v.to_string()));
     }
-    if let Some(parent) = &entry.parent {
-        let pid = resolve_parent_id(parent, slug_to_id, name_to_ids)?.ok_or_else(|| {
-            anyhow!("parent category '{}' not found on the server by slug or name (create it first, or fix the reference)", parent)
-        })?;
-        p.push(("parent_category_id".to_string(), pid.to_string()));
+    match &entry.parent {
+        Some(Some(_)) => {
+            let parent_id =
+                parent_id.ok_or_else(|| anyhow!("internal: unresolved category parent"))?;
+            p.push(("parent_category_id".to_string(), parent_id.to_string()));
+        }
+        Some(None) => p.push(("parent_category_id".to_string(), String::new())),
+        None => {}
     }
     if let Some(v) = entry.read_restricted {
         p.push(("read_restricted".to_string(), v.to_string()));
@@ -624,29 +1074,27 @@ struct DefAction {
     rename_warning: bool,
 }
 
-/// O(1) lookup indices over a server category list, built once per push
-/// rather than re-scanned linearly for every file entry. Each map keeps the
-/// first server entry for a given key, matching the `Iterator::find` order
-/// the indices replace.
+/// Lookup indices over a server category list. Slugs and names map to every
+/// match because Discourse scopes their uniqueness to the parent category.
 struct ServerIndex<'a> {
     by_id: HashMap<u64, &'a CategoryDefEntry>,
-    by_slug: HashMap<&'a str, &'a CategoryDefEntry>,
-    by_name: HashMap<&'a str, &'a CategoryDefEntry>,
+    by_slug: HashMap<&'a str, Vec<&'a CategoryDefEntry>>,
+    by_name: HashMap<&'a str, Vec<&'a CategoryDefEntry>>,
 }
 
 impl<'a> ServerIndex<'a> {
     fn build(server: &'a [CategoryDefEntry]) -> Self {
         let mut by_id = HashMap::new();
-        let mut by_slug = HashMap::new();
-        let mut by_name = HashMap::new();
+        let mut by_slug = HashMap::<&str, Vec<&CategoryDefEntry>>::new();
+        let mut by_name = HashMap::<&str, Vec<&CategoryDefEntry>>::new();
         for s in server {
             if let Some(id) = s.id {
                 by_id.entry(id).or_insert(s);
             }
             if let Some(slug) = &s.slug {
-                by_slug.entry(slug.as_str()).or_insert(s);
+                by_slug.entry(slug.as_str()).or_default().push(s);
             }
-            by_name.entry(s.name.as_str()).or_insert(s);
+            by_name.entry(s.name.as_str()).or_default().push(s);
         }
         Self {
             by_id,
@@ -656,24 +1104,97 @@ impl<'a> ServerIndex<'a> {
     }
 }
 
-/// Match a file entry to a server entry: by `id`, else `slug`, else `name`.
+fn parent_scope_matches(
+    desired: &CategoryDefEntry,
+    candidate: &CategoryDefEntry,
+    index: &ServerIndex<'_>,
+    file: &[CategoryDefEntry],
+) -> bool {
+    match &desired.parent {
+        None => false,
+        Some(None) => candidate.server_parent_id.is_none(),
+        Some(Some(parent)) => {
+            let Some(parent_id) = candidate.server_parent_id else {
+                return false;
+            };
+            if parent.parse::<u64>() == Ok(parent_id) {
+                return true;
+            }
+            let server_alias_matches = index.by_id.get(&parent_id).is_some_and(|actual| {
+                actual.slug.as_deref() == Some(parent) || actual.name == *parent
+            });
+            server_alias_matches
+                || file.iter().any(|entry| {
+                    entry.id == Some(parent_id)
+                        && (entry.slug.as_deref() == Some(parent) || entry.name == *parent)
+                })
+        }
+    }
+}
+
+fn select_server_match<'a>(
+    desired: &CategoryDefEntry,
+    matches: &[&'a CategoryDefEntry],
+    field: &str,
+    value: &str,
+    index: &ServerIndex<'a>,
+    file: &[CategoryDefEntry],
+) -> Result<Option<&'a CategoryDefEntry>> {
+    if desired.parent.is_none() {
+        return match matches {
+            [server] => Ok(Some(*server)),
+            _ => Err(anyhow!(
+                "category '{}' matches {} server categories by {} '{}'; add its id or parent to select one safely",
+                desired.name,
+                matches.len(),
+                field,
+                value
+            )),
+        };
+    }
+    let scoped: Vec<_> = matches
+        .iter()
+        .copied()
+        .filter(|candidate| parent_scope_matches(desired, candidate, index, file))
+        .collect();
+    if let [server] = scoped.as_slice() {
+        Ok(Some(*server))
+    } else if scoped.is_empty() {
+        Ok(None)
+    } else {
+        Err(anyhow!(
+            "category '{}' matches {} server categories by {} '{}'; add its id to select one safely",
+            desired.name,
+            matches.len(),
+            field,
+            value
+        ))
+    }
+}
+
+/// Match a file entry to a server entry: by `id`, else parent-scoped `slug`,
+/// else parent-scoped `name`.
 fn match_server<'a>(
     e: &CategoryDefEntry,
     index: &ServerIndex<'a>,
-) -> (Option<&'a CategoryDefEntry>, bool) {
+    file: &[CategoryDefEntry],
+) -> Result<(Option<&'a CategoryDefEntry>, bool)> {
     if let Some(id) = e.id {
         // id given but absent -> treat as create, no rename ambiguity.
-        return (index.by_id.get(&id).copied(), false);
+        return Ok((index.by_id.get(&id).copied(), false));
     }
-    if let Some(sl) = &e.slug
-        && let Some(s) = index.by_slug.get(sl.as_str())
+    if let Some(slug) = &e.slug
+        && let Some(matches) = index.by_slug.get(slug.as_str())
+        && let Some(server) = select_server_match(e, matches, "slug", slug, index, file)?
     {
-        return (Some(*s), false);
+        return Ok((Some(server), false));
     }
-    if let Some(s) = index.by_name.get(e.name.as_str()) {
-        return (Some(*s), false);
+    if let Some(matches) = index.by_name.get(e.name.as_str())
+        && let Some(server) = select_server_match(e, matches, "name", &e.name, index, file)?
+    {
+        return Ok((Some(server), false));
     }
-    (None, true)
+    Ok((None, true))
 }
 
 /// Validate every explicitly managed style against the effective state after
@@ -687,7 +1208,7 @@ fn validate_styles(file: &[CategoryDefEntry], server: &[CategoryDefEntry]) -> Re
         if entry.style_type.is_none() && entry.icon.is_none() && entry.emoji.is_none() {
             continue;
         }
-        let current = match_server(entry, &index).0;
+        let current = match_server(entry, &index, file)?.0;
         let style_type = entry
             .style_type
             .as_deref()
@@ -839,11 +1360,25 @@ fn changed_fields(e: &CategoryDefEntry, s: &CategoryDefEntry) -> Vec<&'static st
 }
 
 /// Classify each file entry against the server (upsert; never delete).
-fn plan_push(file: &[CategoryDefEntry], server: &[CategoryDefEntry]) -> Vec<DefAction> {
+fn plan_push(file: &[CategoryDefEntry], server: &[CategoryDefEntry]) -> Result<Vec<DefAction>> {
+    let mut file_ids = HashMap::new();
+    for (index, entry) in file.iter().enumerate() {
+        if let Some(id) = entry.id
+            && let Some(previous) = file_ids.insert(id, index)
+        {
+            return Err(anyhow!(
+                "file entries '{}' and '{}' both declare category id {}; keep only one entry per category",
+                file[previous].name,
+                entry.name,
+                id
+            ));
+        }
+    }
     let index = ServerIndex::build(server);
-    file.iter()
+    let plan: Vec<DefAction> = file
+        .iter()
         .map(|e| {
-            let (matched, rename_warning) = match_server(e, &index);
+            let (matched, rename_warning) = match_server(e, &index, file)?;
             let (kind, server_id, changed_fields) = match matched {
                 Some(s) => {
                     let changed_fields = changed_fields(e, s);
@@ -859,15 +1394,30 @@ fn plan_push(file: &[CategoryDefEntry], server: &[CategoryDefEntry]) -> Vec<DefA
                 }
                 None => (DefActionKind::Create, None, Vec::new()),
             };
-            DefAction {
+            Ok(DefAction {
                 name: e.name.clone(),
                 kind,
                 server_id,
                 changed_fields,
                 rename_warning,
-            }
+            })
         })
-        .collect()
+        .collect::<Result<_>>()?;
+
+    let mut targeted = HashMap::new();
+    for (index, action) in plan.iter().enumerate() {
+        if let Some(id) = action.server_id
+            && let Some(previous) = targeted.insert(id, index)
+        {
+            return Err(anyhow!(
+                "file entries '{}' and '{}' both target server category id {}; keep only one entry per category",
+                file[previous].name,
+                file[index].name,
+                id
+            ));
+        }
+    }
+    Ok(plan)
 }
 
 // ─── Commands: def pull / def push ────────────────────────────────────────────
@@ -926,7 +1476,9 @@ pub fn category_def_pull(
         a.position
             .unwrap_or(i64::MAX)
             .cmp(&b.position.unwrap_or(i64::MAX))
+            .then_with(|| a.parent.cmp(&b.parent))
             .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.id.cmp(&b.id))
     });
 
     let file = CategoriesFile {
@@ -983,16 +1535,35 @@ pub fn category_def_push(
         enrich_custom_fields(&client, &mut defs)?;
     }
     let id_to_slug = id_to_slug_map(&defs);
-    let mut slug_to_id = slug_to_id_map(&defs);
-    let mut name_to_ids = name_to_ids_map(&defs);
     let server_entries: Vec<CategoryDefEntry> =
         defs.iter().map(|d| def_to_entry(d, &id_to_slug)).collect();
 
-    validate_parents(&file.categories, &slug_to_id, &name_to_ids)?;
+    let mut plan = plan_push(&file.categories, &server_entries)?;
     validate_styles(&file.categories, &server_entries)?;
+    let parent_targets = resolve_parent_targets(&file.categories, &server_entries, &plan)?;
+    reconcile_parent_changes(
+        &file.categories,
+        &server_entries,
+        &mut plan,
+        &parent_targets,
+    );
+    validate_hierarchy(&file.categories, &defs, &plan, &parent_targets)?;
+    validate_desired_identities(&file.categories, &server_entries, &plan, &parent_targets)?;
+    let order = order_for_push(&file.categories, &server_entries, &plan, &parent_targets)?;
 
-    let plan = plan_push(&file.categories, &server_entries);
-    let order = order_for_push(&file.categories, &plan, &slug_to_id, &name_to_ids)?;
+    // Parse and validate every entry before the first request can mutate the server.
+    for entry in &file.categories {
+        entry_to_params(
+            entry,
+            entry
+                .parent
+                .as_ref()
+                .and_then(|parent| parent.as_ref().map(|_| 0)),
+        )?;
+        if let Some(custom_fields) = &entry.custom_fields {
+            validate_custom_fields(custom_fields)?;
+        }
+    }
 
     if dry_run {
         println!(
@@ -1032,22 +1603,26 @@ pub fn category_def_push(
         return Ok(());
     }
 
+    let mut created_ids = HashMap::new();
     for &i in &order {
         let entry = &file.categories[i];
         let action = &plan[i];
+        let parent_id = match parent_targets[i] {
+            None => None,
+            Some(ParentTarget::Server(id)) => Some(id),
+            Some(ParentTarget::File(parent)) => plan[parent]
+                .server_id
+                .or_else(|| created_ids.get(&parent).copied())
+                .ok_or_else(|| anyhow!("internal: parent category was not applied first"))
+                .map(Some)?,
+        };
         match action.kind {
             DefActionKind::Create => {
-                if let Some(custom_fields) = &entry.custom_fields {
-                    validate_custom_fields(custom_fields)?;
-                }
-                let params = entry_to_params(entry, &slug_to_id, &name_to_ids)?;
+                let params = entry_to_params(entry, parent_id)?;
                 let id = client
                     .create_category_def(&params)
                     .with_context(|| format!("creating category '{}'", entry.name))?;
-                if let Some(slug) = &entry.slug {
-                    slug_to_id.insert(slug.clone(), id);
-                }
-                name_to_ids.entry(entry.name.clone()).or_default().push(id);
+                created_ids.insert(i, id);
                 if let Some(custom_fields) = &entry.custom_fields {
                     client
                         .update_category_custom_fields(
@@ -1064,19 +1639,12 @@ pub fn category_def_push(
                 let id = action
                     .server_id
                     .ok_or_else(|| anyhow!("internal: update without a server id"))?;
-                if action.changed_fields.contains(&"custom_fields") {
-                    let custom_fields = entry
-                        .custom_fields
-                        .as_ref()
-                        .ok_or_else(|| anyhow!("internal: custom-fields update without a value"))?;
-                    validate_custom_fields(custom_fields)?;
-                }
                 if action
                     .changed_fields
                     .iter()
                     .any(|field| *field != "custom_fields")
                 {
-                    let params = entry_to_params(entry, &slug_to_id, &name_to_ids)?;
+                    let params = entry_to_params(entry, parent_id)?;
                     client
                         .update_category(id, &params)
                         .with_context(|| format!("updating category '{}'", entry.name))?;
@@ -1233,10 +1801,31 @@ fn find_def<'a>(defs: &'a [CategoryDefinition], category: &str) -> Result<&'a Ca
             .find(|d| d.id == Some(id))
             .ok_or_else(|| not_found("category", category));
     }
-    defs.iter()
-        .find(|d| d.slug.as_deref() == Some(category))
-        .or_else(|| defs.iter().find(|d| d.name == category))
-        .ok_or_else(|| not_found("category", category))
+    let slugs: Vec<_> = defs
+        .iter()
+        .filter(|def| def.slug.as_deref() == Some(category))
+        .collect();
+    match slugs.as_slice() {
+        [category] => return Ok(*category),
+        [_, _, ..] => {
+            return Err(anyhow!(
+                "category slug '{}' is ambiguous (matches {} categories); use an id",
+                category,
+                slugs.len()
+            ));
+        }
+        [] => {}
+    }
+    let names: Vec<_> = defs.iter().filter(|def| def.name == category).collect();
+    match names.as_slice() {
+        [category] => Ok(*category),
+        [_, _, ..] => Err(anyhow!(
+            "category name '{}' is ambiguous (matches {} categories); use an id",
+            category,
+            names.len()
+        )),
+        [] => Err(not_found("category", category)),
+    }
 }
 
 fn resolve_entry(
@@ -1339,7 +1928,11 @@ fn entry_field(e: &CategoryDefEntry, field: &str) -> Result<(String, Value)> {
             Some(n) => (n.to_string(), json!(n)),
             None => ("(unset)".to_string(), Value::Null),
         },
-        "parent" => optstr(&e.parent),
+        "parent" => match &e.parent {
+            Some(Some(parent)) => (parent.clone(), json!(parent)),
+            Some(None) => ("(top-level)".to_string(), Value::Null),
+            None => ("(unset)".to_string(), Value::Null),
+        },
         "read_restricted" => optbool(e.read_restricted),
         "description" => optstr(&e.description),
         "topic_template" => optstr(&e.topic_template),
@@ -1402,7 +1995,7 @@ pub fn category_set(
     if field.trim() == "custom_fields" {
         enrich_custom_fields(&client, &mut defs)?;
     }
-    let slug_to_id = slug_to_id_map(&defs);
+    let slug_to_ids = slug_to_ids_map(&defs);
     let name_to_ids = name_to_ids_map(&defs);
     let def = find_def(&defs, category)?;
     let id = def.id.ok_or_else(|| not_found("category", category))?;
@@ -1464,7 +2057,7 @@ pub fn category_set(
             };
             validate_style_state(&def.name, style_type, icon, emoji)?;
         }
-        field_to_set_params(field, value, &slug_to_id, &name_to_ids)?
+        field_to_set_params(field, value, &slug_to_ids, &name_to_ids)?
     };
 
     if dry_run {
@@ -1489,7 +2082,7 @@ pub fn category_set(
 /// Resolve and validate a rename against the server's current category
 /// definitions. Pure (no network): looks up `category` by id/slug/name,
 /// rejects an empty/identical new name, and rejects a new name already used
-/// by a *different* category. Returns `(id, old_name, normalised_new_name)`.
+/// by a sibling category. Returns `(id, old_name, normalised_new_name)`.
 fn plan_rename(
     defs: &[CategoryDefinition],
     category: &str,
@@ -1510,7 +2103,11 @@ fn plan_rename(
             old_name
         ));
     }
-    if defs.iter().any(|d| d.id != Some(id) && d.name == new_norm) {
+    if defs.iter().any(|candidate| {
+        candidate.id != Some(id)
+            && candidate.parent_category_id == def.parent_category_id
+            && candidate.name.to_lowercase() == new_norm.to_lowercase()
+    }) {
         return Err(anyhow!(
             "cannot rename to '{}': a category with that name already exists",
             new_norm
@@ -1711,7 +2308,7 @@ fn list_field_edit_params(
 fn field_to_set_params(
     field: &str,
     value: &str,
-    slug_to_id: &BTreeMap<String, u64>,
+    slug_to_ids: &BTreeMap<String, Vec<u64>>,
     name_to_ids: &BTreeMap<String, Vec<u64>>,
 ) -> Result<Vec<(String, String)>> {
     let one = |k: &str, v: String| vec![(k.to_string(), v)];
@@ -1740,7 +2337,10 @@ fn field_to_set_params(
         }
         "parent" => {
             let parent = value.trim();
-            let pid = resolve_parent_id(parent, slug_to_id, name_to_ids)?.ok_or_else(|| {
+            if parent.is_empty() {
+                return Ok(one("parent_category_id", String::new()));
+            }
+            let pid = resolve_parent_id(parent, slug_to_ids, name_to_ids)?.ok_or_else(|| {
                 anyhow!(
                     "parent category '{}' not found on the server by slug or name",
                     parent
@@ -1807,7 +2407,7 @@ mod tests {
     #[test]
     fn plan_creates_when_absent() {
         let file = vec![entry("New")];
-        let plan = plan_push(&file, &[]);
+        let plan = plan_push(&file, &[]).unwrap();
         assert_eq!(plan[0].kind, DefActionKind::Create);
         // No id and no server match -> rename warning fires.
         assert!(plan[0].rename_warning);
@@ -1820,7 +2420,7 @@ mod tests {
         server.slug = Some("general".to_string());
         let mut file = entry("New Name");
         file.id = Some(7);
-        let plan = plan_push(&[file], &[server]);
+        let plan = plan_push(&[file], &[server]).unwrap();
         assert_eq!(plan[0].kind, DefActionKind::Update);
         assert_eq!(plan[0].server_id, Some(7));
         assert!(!plan[0].rename_warning);
@@ -1836,7 +2436,7 @@ mod tests {
         let mut file = entry("General");
         file.slug = Some("general".to_string());
         file.description = Some("desc".to_string());
-        let plan = plan_push(&[file], &[server]);
+        let plan = plan_push(&[file], &[server]).unwrap();
         assert_eq!(plan[0].kind, DefActionKind::Unchanged);
     }
 
@@ -1847,24 +2447,79 @@ mod tests {
         server.slug = Some("general".to_string());
         let mut file = entry("General");
         file.slug = Some("general".to_string());
-        let plan = plan_push(&[file], &[server]);
+        let plan = plan_push(&[file], &[server]).unwrap();
         assert_eq!(plan[0].kind, DefActionKind::Unchanged);
         assert!(!plan[0].rename_warning);
     }
 
     #[test]
-    fn plan_matches_first_server_entry_on_duplicate_name() {
-        // Two server categories share a name (a data anomaly Discourse
-        // shouldn't normally allow, but the matcher must stay deterministic
-        // rather than erroring or picking arbitrarily).
+    fn plan_rejects_duplicate_server_name_without_an_id() {
         let mut first = entry("Dup");
         first.id = Some(1);
         let mut second = entry("Dup");
         second.id = Some(2);
         let file = entry("Dup");
-        let plan = plan_push(&[file], &[first, second]);
-        assert_eq!(plan[0].server_id, Some(1));
-        assert!(!plan[0].rename_warning);
+        let error = plan_push(&[file], &[first, second]).unwrap_err();
+        assert!(error.to_string().contains("add its id"));
+    }
+
+    #[test]
+    fn plan_disambiguates_duplicate_aliases_by_parent() {
+        let mut first_parent = entry("First Parent");
+        first_parent.id = Some(1);
+        first_parent.slug = Some("first".to_string());
+        let mut second_parent = entry("Second Parent");
+        second_parent.id = Some(2);
+        second_parent.slug = Some("second".to_string());
+        let mut first_child = entry("General");
+        first_child.id = Some(3);
+        first_child.slug = Some("general".to_string());
+        first_child.server_parent_id = Some(1);
+        let mut second_child = entry("General");
+        second_child.id = Some(4);
+        second_child.slug = Some("general".to_string());
+        second_child.server_parent_id = Some(2);
+        let mut desired = entry("General");
+        desired.slug = Some("general".to_string());
+        desired.parent = Some(Some("second".to_string()));
+
+        let plan = plan_push(
+            &[desired],
+            &[first_parent, second_parent, first_child, second_child],
+        )
+        .unwrap();
+        assert_eq!(plan[0].server_id, Some(4));
+    }
+
+    #[test]
+    fn resolved_parent_aliases_are_idempotent() {
+        let mut parent = entry("Parent");
+        parent.id = Some(1);
+        parent.slug = Some("parent".to_string());
+        let mut child = entry("Child");
+        child.id = Some(2);
+        child.slug = Some("child".to_string());
+        child.parent = Some(Some("parent".to_string()));
+        child.server_parent_id = Some(1);
+        let server = vec![parent, child];
+        let mut desired = entry("Child");
+        desired.slug = Some("child".to_string());
+        desired.parent = Some(Some("Parent".to_string()));
+        let file = vec![desired];
+        let mut plan = plan_push(&file, &server).unwrap();
+        let targets = resolve_parent_targets(&file, &server, &plan).unwrap();
+        reconcile_parent_changes(&file, &server, &mut plan, &targets);
+        assert_eq!(plan[0].kind, DefActionKind::Unchanged);
+    }
+
+    #[test]
+    fn plan_rejects_duplicate_explicit_file_ids_even_when_absent_on_server() {
+        let mut first = entry("First");
+        first.id = Some(99);
+        let mut second = entry("Second");
+        second.id = Some(99);
+        let error = plan_push(&[first, second], &[]).unwrap_err();
+        assert!(error.to_string().contains("both declare category id 99"));
     }
 
     #[test]
@@ -1888,7 +2543,7 @@ mod tests {
             Some("Genre, instrument, and location".to_string())
         );
 
-        let params = entry_to_params(&entry, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        let params = entry_to_params(&entry, None).unwrap();
         assert!(params.contains(&(
             "topic_title_placeholder".to_string(),
             "Genre, instrument, and location".to_string()
@@ -1914,6 +2569,15 @@ mod tests {
     }
 
     #[test]
+    fn set_params_empty_parent_moves_to_top_level() {
+        let params = field_to_set_params("parent", "", &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        assert_eq!(
+            params,
+            vec![("parent_category_id".to_string(), String::new())]
+        );
+    }
+
+    #[test]
     fn icon_and_emoji_round_trip_through_entry_and_params() {
         let category: CategoryDefinition = serde_json::from_value(json!({
             "id": 3,
@@ -1929,7 +2593,7 @@ mod tests {
         assert_eq!(entry.icon, Some("star".to_string()));
         assert_eq!(entry.emoji, Some("guitar".to_string()));
 
-        let params = entry_to_params(&entry, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        let params = entry_to_params(&entry, None).unwrap();
         assert!(params.contains(&("style_type".to_string(), "icon".to_string())));
         assert!(params.contains(&("icon".to_string(), "star".to_string())));
         assert!(params.contains(&("emoji".to_string(), "guitar".to_string())));
@@ -2043,7 +2707,7 @@ mod tests {
     fn category_definition_params_normalize_terminal_description_line_endings() {
         let mut category = entry("General");
         category.description = Some("Description\r\n".to_string());
-        let params = entry_to_params(&category, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        let params = entry_to_params(&category, None).unwrap();
         assert!(params.contains(&("description".to_string(), "Description".to_string())));
     }
 
@@ -2141,7 +2805,7 @@ mod tests {
             }])
         );
 
-        let params = entry_to_params(&entry, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        let params = entry_to_params(&entry, None).unwrap();
         assert!(params.contains(&(
             "required_tag_groups[][name]".to_string(),
             "Role".to_string()
@@ -2163,7 +2827,7 @@ mod tests {
         let entry = def_to_entry(&category, &BTreeMap::new());
         assert_eq!(entry.category_types, Some(vec!["support".to_string()]));
 
-        let params = entry_to_params(&entry, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        let params = entry_to_params(&entry, None).unwrap();
         assert!(params.contains(&("category_types[]".to_string(), "support".to_string())));
     }
 
@@ -2476,6 +3140,17 @@ mod tests {
     }
 
     #[test]
+    fn rename_allows_a_name_used_under_another_parent() {
+        let mut source = def(3, "General");
+        source.parent_category_id = Some(1);
+        let mut other = def(7, "Support");
+        other.parent_category_id = Some(2);
+        let (id, _, new) = plan_rename(&[source, other], "3", "Support").unwrap();
+        assert_eq!(id, 3);
+        assert_eq!(new, "Support");
+    }
+
+    #[test]
     fn rename_allows_case_change_only_via_self_match() {
         // Renaming a category to its own current name (post-trim) is still
         // treated as "identical", not as a self-collision error.
@@ -2485,76 +3160,68 @@ mod tests {
     }
 
     #[test]
-    fn entry_to_params_resolves_parent_slug() {
-        let mut slug_to_id = BTreeMap::new();
-        slug_to_id.insert("parent-cat".to_string(), 42u64);
+    fn entry_to_params_uses_pre_resolved_parent_id() {
         let mut e = entry("Child");
-        e.parent = Some("parent-cat".to_string());
-        let params = entry_to_params(&e, &slug_to_id, &BTreeMap::new()).unwrap();
+        e.parent = Some(Some("parent-cat".to_string()));
+        let params = entry_to_params(&e, Some(42)).unwrap();
         assert!(params.contains(&("parent_category_id".to_string(), "42".to_string())));
     }
 
     #[test]
-    fn entry_to_params_resolves_parent_name() {
-        let mut name_to_ids = BTreeMap::new();
-        name_to_ids.insert("Parent Cat".to_string(), vec![42u64]);
+    fn entry_to_params_requires_a_resolved_parent_id() {
         let mut e = entry("Child");
-        e.parent = Some("Parent Cat".to_string());
-        let params = entry_to_params(&e, &BTreeMap::new(), &name_to_ids).unwrap();
-        assert!(params.contains(&("parent_category_id".to_string(), "42".to_string())));
+        e.parent = Some(Some("Parent Cat".to_string()));
+        let error = entry_to_params(&e, None).unwrap_err();
+        assert!(error.to_string().contains("unresolved category parent"));
     }
 
     #[test]
-    fn entry_to_params_prefers_slug_over_name_on_conflict() {
-        let mut slug_to_id = BTreeMap::new();
-        slug_to_id.insert("parent-cat".to_string(), 42u64);
+    fn entry_to_params_clears_an_explicit_null_parent() {
+        let mut category = entry("Child");
+        category.parent = Some(None);
+        let params = entry_to_params(&category, None).unwrap();
+        assert!(params.contains(&("parent_category_id".to_string(), String::new())));
+    }
+
+    #[test]
+    fn parent_deserialization_distinguishes_null_from_omission() {
+        let explicit: CategoryDefEntry =
+            serde_yaml::from_str("name: Child\nparent: null\n").unwrap();
+        let omitted: CategoryDefEntry = serde_yaml::from_str("name: Child\n").unwrap();
+        assert_eq!(explicit.parent, Some(None));
+        assert_eq!(omitted.parent, None);
+    }
+
+    #[test]
+    fn resolve_parent_id_prefers_slug_over_name_on_conflict() {
+        let mut slug_to_ids = BTreeMap::new();
+        slug_to_ids.insert("parent-cat".to_string(), vec![42u64]);
         let mut name_to_ids = BTreeMap::new();
         name_to_ids.insert("parent-cat".to_string(), vec![99u64]);
-        let mut e = entry("Child");
-        e.parent = Some("parent-cat".to_string());
-        let params = entry_to_params(&e, &slug_to_id, &name_to_ids).unwrap();
-        assert!(params.contains(&("parent_category_id".to_string(), "42".to_string())));
+        assert_eq!(
+            resolve_parent_id("parent-cat", &slug_to_ids, &name_to_ids).unwrap(),
+            Some(42)
+        );
     }
 
     #[test]
-    fn entry_to_params_rejects_an_ambiguous_parent_name() {
+    fn resolve_parent_id_rejects_an_ambiguous_parent_name() {
         let mut name_to_ids = BTreeMap::new();
         name_to_ids.insert("Repeated Name".to_string(), vec![42u64, 99u64]);
-        let mut e = entry("Child");
-        e.parent = Some("Repeated Name".to_string());
-        let err = entry_to_params(&e, &BTreeMap::new(), &name_to_ids).unwrap_err();
+        let err = resolve_parent_id("Repeated Name", &BTreeMap::new(), &name_to_ids).unwrap_err();
         assert!(err.to_string().contains("ambiguous"));
-        assert!(err.to_string().contains("use its unique slug"));
+        assert!(err.to_string().contains("unambiguous slug"));
     }
 
     #[test]
-    fn entry_to_params_unknown_parent_errors() {
-        let mut e = entry("Child");
-        e.parent = Some("nope".to_string());
-        let err = entry_to_params(&e, &BTreeMap::new(), &BTreeMap::new()).unwrap_err();
-        assert!(err.to_string().contains("by slug or name"));
-    }
-
-    #[test]
-    fn validate_parents_passes_when_all_resolve() {
-        let mut slug_to_id = BTreeMap::new();
-        slug_to_id.insert("parent-cat".to_string(), 1u64);
-        let mut name_to_ids = BTreeMap::new();
-        name_to_ids.insert("Other Parent".to_string(), vec![2u64]);
+    fn resolve_parent_targets_reports_every_unresolvable_entry() {
         let mut a = entry("Child A");
-        a.parent = Some("parent-cat".to_string());
+        a.parent = Some(Some("nope".to_string()));
         let mut b = entry("Child B");
-        b.parent = Some("Other Parent".to_string());
-        assert!(validate_parents(&[a, b], &slug_to_id, &name_to_ids).is_ok());
-    }
-
-    #[test]
-    fn validate_parents_reports_every_unresolvable_entry_before_any_write() {
-        let mut a = entry("Child A");
-        a.parent = Some("nope".to_string());
-        let mut b = entry("Child B");
-        b.parent = Some("also-nope".to_string());
-        let err = validate_parents(&[a, b], &BTreeMap::new(), &BTreeMap::new()).unwrap_err();
+        b.parent = Some(Some("also-nope".to_string()));
+        let file = vec![a, b];
+        let plan = plan_push(&file, &[]).unwrap();
+        let err = resolve_parent_targets(&file, &[], &plan).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("Child A"));
         assert!(msg.contains("nope"));
@@ -2563,54 +3230,114 @@ mod tests {
     }
 
     #[test]
-    fn validate_parents_ignores_entries_without_a_parent() {
-        let a = entry("Top Level");
-        assert!(validate_parents(&[a], &BTreeMap::new(), &BTreeMap::new()).is_ok());
-    }
-
-    #[test]
-    fn validate_parents_accepts_a_brand_new_parent_defined_in_the_same_file() {
+    fn resolve_parent_targets_accepts_a_brand_new_parent_defined_in_the_same_file() {
         let parent = entry("New Parent");
         let mut child = entry("Child");
-        child.parent = Some("New Parent".to_string());
-        assert!(validate_parents(&[parent, child], &BTreeMap::new(), &BTreeMap::new()).is_ok());
+        child.parent = Some(Some("New Parent".to_string()));
+        let file = vec![parent, child];
+        let plan = plan_push(&file, &[]).unwrap();
+        assert_eq!(
+            resolve_parent_targets(&file, &[], &plan).unwrap(),
+            vec![None, Some(ParentTarget::File(0))]
+        );
     }
 
     #[test]
-    fn validate_parents_still_rejects_a_parent_matching_nothing_anywhere() {
+    fn resolve_parent_targets_rejects_an_ambiguous_server_slug() {
+        let mut first = entry("First Parent");
+        first.id = Some(1);
+        first.slug = Some("shared".to_string());
+        let mut second = entry("Second Parent");
+        second.id = Some(2);
+        second.slug = Some("shared".to_string());
         let mut child = entry("Child");
-        child.parent = Some("Nowhere".to_string());
-        let err = validate_parents(&[child], &BTreeMap::new(), &BTreeMap::new()).unwrap_err();
-        let msg = err.to_string();
-        assert!(msg.contains("Nowhere"));
-        assert!(msg.contains("elsewhere in this file"));
+        child.parent = Some(Some("shared".to_string()));
+        let file = vec![child];
+        let plan = plan_push(&file, &[first.clone(), second.clone()]).unwrap();
+        let error = resolve_parent_targets(&file, &[first, second], &plan).unwrap_err();
+        assert!(error.to_string().contains("ambiguous"));
+        assert!(error.to_string().contains("server categories"));
+    }
+
+    #[test]
+    fn resolve_parent_targets_uses_current_id_to_disambiguate_a_pulled_parent() {
+        let mut root_one = entry("Root One");
+        root_one.id = Some(1);
+        root_one.slug = Some("root-one".to_string());
+        let mut root_two = entry("Root Two");
+        root_two.id = Some(2);
+        root_two.slug = Some("root-two".to_string());
+        let mut section_one = entry("Section");
+        section_one.id = Some(3);
+        section_one.slug = Some("section".to_string());
+        section_one.parent = Some(Some("root-one".to_string()));
+        section_one.server_parent_id = Some(1);
+        let mut section_two = entry("Section");
+        section_two.id = Some(4);
+        section_two.slug = Some("section".to_string());
+        section_two.parent = Some(Some("root-two".to_string()));
+        section_two.server_parent_id = Some(2);
+        let mut child = entry("Child");
+        child.id = Some(5);
+        child.slug = Some("child".to_string());
+        child.parent = Some(Some("section".to_string()));
+        child.server_parent_id = Some(3);
+        let server = vec![root_one, root_two, section_one, section_two, child];
+        let file = server.clone();
+        let plan = plan_push(&file, &server).unwrap();
+        let targets = resolve_parent_targets(&file, &server, &plan).unwrap();
+        assert_eq!(targets[4], Some(ParentTarget::File(2)));
+    }
+
+    #[test]
+    fn resolve_parent_targets_prefers_an_existing_numeric_id_over_aliases() {
+        let mut by_id = entry("ID Parent");
+        by_id.id = Some(42);
+        by_id.slug = Some("id-parent".to_string());
+        let mut by_slug = entry("Slug Parent");
+        by_slug.id = Some(7);
+        by_slug.slug = Some("42".to_string());
+        let mut child = entry("Child");
+        child.parent = Some(Some("42".to_string()));
+        let file = vec![child];
+        let server = vec![by_id, by_slug];
+        let plan = plan_push(&file, &server).unwrap();
+        let targets = resolve_parent_targets(&file, &server, &plan).unwrap();
+        assert_eq!(targets[0], Some(ParentTarget::Server(42)));
     }
 
     #[test]
     fn order_for_push_places_a_same_file_parent_before_its_child() {
         let mut child = entry("Child");
-        child.parent = Some("Parent".to_string());
+        child.parent = Some(Some("Parent".to_string()));
         let parent = entry("Parent");
         // File declares the child first; the parent must still be created first.
         let file = vec![child, parent];
-        let plan = plan_push(&file, &[]);
-        let order = order_for_push(&file, &plan, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        let plan = plan_push(&file, &[]).unwrap();
+        let targets = resolve_parent_targets(&file, &[], &plan).unwrap();
+        let order = order_for_push(&file, &[], &plan, &targets).unwrap();
         assert_eq!(order, vec![1, 0]);
     }
 
     #[test]
-    fn order_for_push_needs_no_edge_when_parent_already_exists_on_server() {
+    fn order_for_push_resolves_a_renamed_parent_by_its_new_slug() {
         let mut server_parent = entry("Existing Parent");
         server_parent.id = Some(9);
-        server_parent.slug = Some("existing-parent".to_string());
+        server_parent.slug = Some("old-parent".to_string());
+        let mut desired_parent = entry("Renamed Parent");
+        desired_parent.id = Some(9);
+        desired_parent.slug = Some("new-parent".to_string());
         let mut child = entry("Child");
-        child.parent = Some("existing-parent".to_string());
-        let file = vec![child];
-        let mut slug_to_id = BTreeMap::new();
-        slug_to_id.insert("existing-parent".to_string(), 9u64);
-        let plan = plan_push(&file, std::slice::from_ref(&server_parent));
-        let order = order_for_push(&file, &plan, &slug_to_id, &BTreeMap::new()).unwrap();
-        assert_eq!(order, vec![0]);
+        child.parent = Some(Some("new-parent".to_string()));
+        let file = vec![child, desired_parent];
+        let plan = plan_push(&file, std::slice::from_ref(&server_parent)).unwrap();
+        let server = vec![server_parent];
+        let targets = resolve_parent_targets(&file, &server, &plan).unwrap();
+        assert_eq!(targets[0], Some(ParentTarget::File(1)));
+        assert_eq!(
+            order_for_push(&file, &server, &plan, &targets).unwrap(),
+            vec![0, 1]
+        );
     }
 
     #[test]
@@ -2618,24 +3345,215 @@ mod tests {
         let a = entry("A");
         let b = entry("B");
         let file = vec![a, b];
-        let plan = plan_push(&file, &[]);
-        let order = order_for_push(&file, &plan, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        let plan = plan_push(&file, &[]).unwrap();
+        let targets = vec![None, None];
+        let order = order_for_push(&file, &[], &plan, &targets).unwrap();
         assert_eq!(order, vec![0, 1]);
     }
 
     #[test]
-    fn order_for_push_detects_a_two_entry_cycle() {
+    fn order_for_push_releases_an_occupied_name_before_claiming_it() {
+        let mut server_a = entry("A");
+        server_a.id = Some(1);
+        let mut server_b = entry("B");
+        server_b.id = Some(2);
+        let server = vec![server_a, server_b];
+        let mut desired_a = entry("B");
+        desired_a.id = Some(1);
+        let mut desired_b = entry("C");
+        desired_b.id = Some(2);
+        let file = vec![desired_a, desired_b];
+        let plan = plan_push(&file, &server).unwrap();
+        let targets = vec![None, None];
+        assert_eq!(
+            order_for_push(&file, &server, &plan, &targets).unwrap(),
+            vec![1, 0]
+        );
+    }
+
+    #[test]
+    fn order_for_push_moves_an_occupant_before_renaming_its_parent() {
+        let mut server_parent = entry("Parent");
+        server_parent.id = Some(1);
+        let mut server_child = entry("Taken");
+        server_child.id = Some(2);
+        let server = vec![server_parent, server_child];
+        let mut desired_parent = entry("Taken");
+        desired_parent.id = Some(1);
+        let mut desired_child = entry("Taken");
+        desired_child.id = Some(2);
+        desired_child.parent = Some(Some("1".to_string()));
+        let file = vec![desired_parent, desired_child];
+        let plan = plan_push(&file, &server).unwrap();
+        let targets = resolve_parent_targets(&file, &server, &plan).unwrap();
+        validate_desired_identities(&file, &server, &plan, &targets).unwrap();
+        assert_eq!(
+            order_for_push(&file, &server, &plan, &targets).unwrap(),
+            vec![1, 0]
+        );
+    }
+
+    #[test]
+    fn order_for_push_detaches_a_parent_before_inverting_the_relationship() {
+        let mut server_a = entry("A");
+        server_a.id = Some(1);
+        server_a.server_parent_id = Some(2);
+        let mut server_b = entry("B");
+        server_b.id = Some(2);
+        let server = vec![server_a, server_b];
+        let mut desired_b = entry("B");
+        desired_b.id = Some(2);
+        desired_b.parent = Some(Some("1".to_string()));
+        let mut desired_a = entry("A");
+        desired_a.id = Some(1);
+        desired_a.parent = Some(None);
+        let file = vec![desired_b, desired_a];
+        let mut plan = plan_push(&file, &server).unwrap();
+        let targets = resolve_parent_targets(&file, &server, &plan).unwrap();
+        reconcile_parent_changes(&file, &server, &mut plan, &targets);
+        validate_hierarchy(&file, &[], &plan, &targets).unwrap();
+        assert_eq!(
+            order_for_push(&file, &server, &plan, &targets).unwrap(),
+            vec![1, 0]
+        );
+    }
+
+    #[test]
+    fn order_for_push_simulates_deeper_hierarchy_moves() {
+        let mut server_a = entry("A");
+        server_a.id = Some(1);
+        let mut server_b = entry("B");
+        server_b.id = Some(2);
+        server_b.server_parent_id = Some(1);
+        let mut server_c = entry("C");
+        server_c.id = Some(3);
+        server_c.server_parent_id = Some(1);
+        let server = vec![server_a, server_b, server_c];
+
+        let mut desired_b = entry("B");
+        desired_b.id = Some(2);
+        desired_b.parent = Some(Some("3".to_string()));
+        let mut desired_a = entry("A");
+        desired_a.id = Some(1);
+        desired_a.parent = Some(Some("2".to_string()));
+        let mut desired_c = entry("C");
+        desired_c.id = Some(3);
+        desired_c.parent = Some(None);
+        let file = vec![desired_b, desired_a, desired_c];
+
+        let mut plan = plan_push(&file, &server).unwrap();
+        let targets = resolve_parent_targets(&file, &server, &plan).unwrap();
+        reconcile_parent_changes(&file, &server, &mut plan, &targets);
+        assert_eq!(
+            order_for_push(&file, &server, &plan, &targets).unwrap(),
+            vec![0, 2, 1]
+        );
+    }
+
+    #[test]
+    fn validate_desired_identities_rejects_duplicates_under_the_same_parent() {
+        let parent = entry("Parent");
+        let mut first = entry("Duplicate");
+        first.parent = Some(Some("Parent".to_string()));
+        let mut second = entry("Duplicate");
+        second.parent = Some(Some("Parent".to_string()));
+        let file = vec![parent, first, second];
+        let plan = plan_push(&file, &[]).unwrap();
+        let targets = resolve_parent_targets(&file, &[], &plan).unwrap();
+        let error = validate_desired_identities(&file, &[], &plan, &targets).unwrap_err();
+        assert!(error.to_string().contains("duplicate name"));
+    }
+
+    #[test]
+    fn validate_desired_identities_includes_untouched_server_categories() {
+        let mut existing = entry("General");
+        existing.id = Some(1);
+        let mut renamed = entry("Other");
+        renamed.id = Some(2);
+        let server = vec![existing, renamed];
+        let mut desired = entry("general");
+        desired.id = Some(2);
+        let file = vec![desired];
+        let plan = plan_push(&file, &server).unwrap();
+        let targets = vec![None];
+        let error = validate_desired_identities(&file, &server, &plan, &targets).unwrap_err();
+        assert!(error.to_string().contains("duplicate name"));
+        assert!(error.to_string().contains("General"));
+    }
+
+    #[test]
+    fn validate_hierarchy_detects_a_two_entry_create_cycle() {
         let mut a = entry("A");
-        a.parent = Some("B".to_string());
+        a.parent = Some(Some("B".to_string()));
         let mut b = entry("B");
-        b.parent = Some("A".to_string());
+        b.parent = Some(Some("A".to_string()));
         let file = vec![a, b];
-        let plan = plan_push(&file, &[]);
-        let err = order_for_push(&file, &plan, &BTreeMap::new(), &BTreeMap::new()).unwrap_err();
+        let plan = plan_push(&file, &[]).unwrap();
+        let targets = resolve_parent_targets(&file, &[], &plan).unwrap();
+        let err = validate_hierarchy(&file, &[], &plan, &targets).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("circular"));
         assert!(msg.contains('A'));
         assert!(msg.contains('B'));
+    }
+
+    #[test]
+    fn validate_hierarchy_detects_a_cycle_through_an_unchanged_server_category() {
+        let mut a = def(1, "A");
+        a.slug = Some("a".to_string());
+        let mut b = def(2, "B");
+        b.slug = Some("b".to_string());
+        b.parent_category_id = Some(1);
+        let defs = vec![a, b];
+        let id_to_slug = id_to_slug_map(&defs);
+        let server: Vec<_> = defs
+            .iter()
+            .map(|def| def_to_entry(def, &id_to_slug))
+            .collect();
+        let mut desired_a = entry("A");
+        desired_a.id = Some(1);
+        desired_a.parent = Some(Some("b".to_string()));
+        let file = vec![desired_a];
+        let plan = plan_push(&file, &server).unwrap();
+        let targets = resolve_parent_targets(&file, &server, &plan).unwrap();
+        let error = validate_hierarchy(&file, &defs, &plan, &targets).unwrap_err();
+        assert!(error.to_string().contains("A, B"));
+    }
+
+    #[test]
+    fn validate_hierarchy_detects_self_parenting() {
+        let mut category = entry("A");
+        category.parent = Some(Some("A".to_string()));
+        let file = vec![category];
+        let plan = plan_push(&file, &[]).unwrap();
+        let targets = resolve_parent_targets(&file, &[], &plan).unwrap();
+        let error = validate_hierarchy(&file, &[], &plan, &targets).unwrap_err();
+        assert!(error.to_string().contains("A"));
+    }
+
+    #[test]
+    fn validate_hierarchy_honours_an_explicit_top_level_move() {
+        let mut a = def(1, "A");
+        a.slug = Some("a".to_string());
+        a.parent_category_id = Some(2);
+        let mut b = def(2, "B");
+        b.slug = Some("b".to_string());
+        let defs = vec![a, b];
+        let id_to_slug = id_to_slug_map(&defs);
+        let server: Vec<_> = defs
+            .iter()
+            .map(|def| def_to_entry(def, &id_to_slug))
+            .collect();
+        let mut desired_a = entry("A");
+        desired_a.id = Some(1);
+        desired_a.parent = Some(None);
+        let mut desired_b = entry("B");
+        desired_b.id = Some(2);
+        desired_b.parent = Some(Some("a".to_string()));
+        let file = vec![desired_a, desired_b];
+        let plan = plan_push(&file, &server).unwrap();
+        let targets = resolve_parent_targets(&file, &server, &plan).unwrap();
+        validate_hierarchy(&file, &defs, &plan, &targets).unwrap();
     }
 
     #[test]

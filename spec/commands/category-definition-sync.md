@@ -165,7 +165,9 @@ convenience face of the same writes `def push` does in bulk.
 accepts it. Field names mirror the Discourse category object (snake_case) so the
 mapping is mechanical; a few are normalised for human editing (see notes).
 Version 2 adds the category-style fields. Push continues to accept version 1
-files when those fields are absent.
+files when those fields are absent. Omitting `parent` leaves the current
+relationship untouched; an explicit `parent: null` moves an existing category
+to the top level.
 
 ```yaml
 version: 2
@@ -180,7 +182,7 @@ categories:
     icon: life-ring             # required when style_type is icon; "" clears
     # emoji: guitar             # required when style_type is emoji; "" clears
     position: 1               # 0-based ordering within the parent (or top level)
-    parent: null               # parent category slug (or name), or null for top-level
+    parent: null               # parent category slug, unambiguous name, or existing ID; null moves to top-level
     read_restricted: false     # false = public; true = access by permission only
 
     description: |             # plain text shown under the category title (supports a subset of markdown)
@@ -264,7 +266,7 @@ Api-Username: pacharanero
 → 200 OK
 {
   "category_list": {
-    "categories": [ { /* one object per category — full field set below */ } ]
+    "categories": [ { /* top-level category; descendants are nested in subcategory_list */ } ]
   }
 }
 ```
@@ -392,12 +394,16 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 
 - [x] `dsc category def pull <discourse> [categories.yaml]` — reads
   `/categories.json?show_permissions=true&include_subcategories=true`, emits the
-  file schema above, definitions only, stable-sorted (position, then name).
+  file schema above, definitions only, flattens nested `subcategory_list`
+  objects, and stable-sorts by position, parent, name, then ID.
 - [x] `dsc category def push <discourse> <categories.yaml>` — upsert only (no
-  prune); creates missing, updates changed by `id`/`slug`/`name`; honours
+  prune); creates missing, updates changed by `id` or parent-scoped slug/name;
+  honours
   `--dry-run` with `+`/`~`/`=` sigils and a loud rename warning for a no-`id`
   no-match entry; idempotent. Maps `permissions` map → `permissions[group]=level`
-  (integer) form params; maps `parent` slug → `parent_category_id`.
+  (integer) form params; maps a parent ID or resolved slug/name to
+  `parent_category_id` and maps explicit null to an empty value that moves the
+  category to the top level.
 - [x] `dsc category set <discourse> <category> <field> <value>` — single
   `PUT /categories/{id}` for the one field (the topic_template + description
   case that prompted this spec); `--dry-run` prints the payload.
@@ -435,33 +441,40 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 - [x] `parent` resolution by name as well as slug; validation that the parent
   exists before push (clear error instead of a 4xx from the API). **Status:
   implemented (unreleased).** `def push` (including `--dry-run`) now
-  validates every file entry's `parent` reference against the server's
-  current categories, by slug first then by name, before any writes happen;
-  an unresolvable reference fails with one error naming every offending
-  entry, rather than a 4xx partway through applying earlier entries.
-  An ambiguous name is rejected with guidance to use the unique slug.
+  validates every file entry's `parent` reference against the desired file
+  entries and the server's current categories, by existing ID, slug, then name,
+  before any writes happen; an unresolvable reference fails with one error
+  naming every offending entry, rather than a 4xx partway through applying
+  earlier entries. Discourse scopes both names and slugs to their parent, so
+  ambiguous references are rejected rather than selecting the first match;
+  an existing parent ID is also accepted when scoped aliases collide.
   `category set parent` resolves the same way. `src/commands/category_def.rs`
-  (`resolve_parent_id`, `validate_parents`); unit-tested.
+  (`resolve_parent_id`, `resolve_parent_targets`); unit-tested.
 - [x] `custom_fields` round-trip. **Status: implemented (unreleased).** Reads each category's complete custom-field map from `/c/{id}/show.json`; applies changes via JSON `PUT /categories/{id}.json`, using nulls to remove keys omitted from a specified file map. `category set` accepts a complete scalar-valued JSON object. Object and array values are rejected because Discourse stringifies them. Verified reversibly on koloki-demo.
 - [x] `topic_title_placeholder` round-trip. **Status: implemented (unreleased).** Reads the category-list response and writes the `topic_title_placeholder` form parameter, exactly mirroring `topic_template`. `category get`/`set`/`show`, `def pull`/`push`, and `category diff` all support the field. Unit-tested (entry round-trip and `set` params); no live test needed - same request shape as `topic_template`.
 - [x] `style_type`/`icon`/`emoji` round-trip. **Status: implemented (unreleased).** `style_type` (`square`/`icon`/`emoji`), `icon` (FontAwesome name), and `emoji` (shortcode) are plain scalar fields on the category object, not asset uploads, so they follow the same read/write path as `topic_title_placeholder`: `def pull`/`push`, `category show`/`get`/`set` all support them. Push and dry-run reject unknown style types or an active icon/emoji style without its companion value. For imperative edits, set the icon/emoji first and then activate its style; change to another style before clearing the active companion. Logo/background image assets remain out of scope pending an asset-upload path.
 - [x] Same-file parent/child creation with cycle detection. **Status:
   implemented (unreleased).** Resolves the Phase 1 "parent-in-same-push
-  limitation" above: `def push` now topologically orders file entries so a
-  brand-new parent (no matching server category, so it will be `Create`d) is
-  pushed before any brand-new child that names it as `parent` by slug or
-  name, letting a full new subtree be declared and pushed in one file rather
-  than requiring the parent first or a second push. A `parent` reference that
-  already resolves against the server needs no reordering, matching the
-  existing per-entry resolution in `entry_to_params`. A circular in-file
-  parent reference (`A`'s parent is `B`, `B`'s parent is `A`) errors up front,
-  before any writes, naming every category stuck in the cycle, rather than
-  looping or leaving some entries permanently unresolvable.
-  `src/commands/category_def.rs` (`resolve_parent_in_file`, `order_for_push`);
-  unit-tested (ordering, an already-on-the-server parent needing no edge,
-  independent entries keeping file order, and cycle detection); no live test
-  needed - the ordering only changes local planning, not the request shapes
-  already covered by Phase 1's live verification.
+  limitation" above: `def push` now resolves each parent to a stable existing
+  category ID or a same-file entry, then topologically orders file entries so
+  every new parent is created before its children and occupied aliases are
+  released before another entry claims them. This lets a full new
+  subtree be declared and pushed in one file rather than requiring the parent
+  first or a second push, and lets children use a parent's new name or slug in
+  the same push. Preflight validates the complete resulting hierarchy,
+  including existing relationships for categories omitted from the file, so
+  self-parenting and cycles involving either new or existing categories error
+  before any writes and name the categories in the cycle. Dry-run and real
+  push consume the same resolved relationship plan.
+  `src/commands/category_def.rs` (`resolve_parent_targets`,
+  `validate_hierarchy`, `validate_desired_identities`, `order_for_push`);
+  unit-tested and mock-tested (create ordering and generated-ID propagation,
+  renamed-parent references, missing and ambiguous parents, self-parenting,
+  new-category cycles, cycles through unchanged server categories, and stable
+  order for independent entries). The definition endpoint's nested
+  `subcategory_list` is flattened before planning so validation covers the
+  complete returned hierarchy; no live test is needed because execution still
+  uses the request shapes already covered by Phase 1's live verification.
 
 ### Phase 3 — nice to have
 
