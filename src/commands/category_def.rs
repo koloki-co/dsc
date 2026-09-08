@@ -370,9 +370,31 @@ fn resolve_parent_id(
     }
 }
 
+/// Resolve a `parent` reference against another entry in the same file (not
+/// the server), trying slug first then name, mirroring `resolve_parent_id`'s
+/// priority. Excludes `self_index` so an entry can never be its own parent.
+/// Used so a brand-new parent and its brand-new child can be declared in one
+/// push file instead of requiring two separate pushes.
+fn resolve_parent_in_file(
+    parent: &str,
+    file: &[CategoryDefEntry],
+    self_index: usize,
+) -> Option<usize> {
+    file.iter()
+        .enumerate()
+        .find(|(i, e)| *i != self_index && e.slug.as_deref() == Some(parent))
+        .or_else(|| {
+            file.iter()
+                .enumerate()
+                .find(|(i, e)| *i != self_index && e.name == parent)
+        })
+        .map(|(i, _)| i)
+}
+
 /// Check every file entry's `parent` reference resolves against the server
-/// *before* any writes happen, so a typo surfaces as one clear error instead
-/// of a mid-push 4xx after earlier entries have already been created/updated.
+/// or another entry in the same file *before* any writes happen, so a typo
+/// surfaces as one clear error instead of a mid-push 4xx after earlier
+/// entries have already been created/updated.
 fn validate_parents(
     file: &[CategoryDefEntry],
     slug_to_id: &BTreeMap<String, u64>,
@@ -380,14 +402,21 @@ fn validate_parents(
 ) -> Result<()> {
     let invalid: Vec<String> = file
         .iter()
-        .filter_map(|entry| {
+        .enumerate()
+        .filter_map(|(i, entry)| {
             let parent = entry.parent.as_ref()?;
             match resolve_parent_id(parent, slug_to_id, name_to_ids) {
                 Ok(Some(_)) => None,
-                Ok(None) => Some(format!(
-                    "'{}' -> parent '{}' was not found by slug or name",
-                    entry.name, parent
-                )),
+                Ok(None) => {
+                    if resolve_parent_in_file(parent, file, i).is_some() {
+                        None
+                    } else {
+                        Some(format!(
+                            "'{}' -> parent '{}' was not found by slug or name, and no category named '{}' is defined elsewhere in this file",
+                            entry.name, parent, parent
+                        ))
+                    }
+                }
                 Err(error) => Some(format!("'{}' -> {error}", entry.name)),
             }
         })
@@ -397,6 +426,75 @@ fn validate_parents(
     } else {
         Err(anyhow!("invalid parent categories: {}", invalid.join(", ")))
     }
+}
+
+/// Order file entries for push so a `Create` entry that is itself referenced
+/// as another entry's `parent` is applied before that entry - letting a
+/// brand-new parent/child pair be declared and pushed together in one file,
+/// which a single static id/slug/name lookup built before any writes cannot
+/// resolve on its own. A parent reference that already resolves on the
+/// server needs no ordering (see `validate_parents`), so only in-file
+/// references to a to-be-created entry become dependency edges here.
+///
+/// Returns indices into `file` in dependency-respecting order. Errors with
+/// the involved category names if the in-file parent references form a
+/// cycle, since no order could ever satisfy it.
+fn order_for_push(
+    file: &[CategoryDefEntry],
+    plan: &[DefAction],
+    slug_to_id: &BTreeMap<String, u64>,
+    name_to_ids: &BTreeMap<String, Vec<u64>>,
+) -> Result<Vec<usize>> {
+    let n = file.len();
+    let mut depends_on: Vec<Option<usize>> = vec![None; n];
+    for (i, entry) in file.iter().enumerate() {
+        let Some(parent) = &entry.parent else {
+            continue;
+        };
+        if resolve_parent_id(parent, slug_to_id, name_to_ids)
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            continue;
+        }
+        if let Some(j) = resolve_parent_in_file(parent, file, i)
+            && plan[j].kind == DefActionKind::Create
+        {
+            depends_on[i] = Some(j);
+        }
+    }
+
+    let mut placed = vec![false; n];
+    let mut order = Vec::with_capacity(n);
+    while order.len() < n {
+        let mut progressed = false;
+        for i in 0..n {
+            if placed[i] {
+                continue;
+            }
+            let ready = match depends_on[i] {
+                Some(j) => placed[j],
+                None => true,
+            };
+            if ready {
+                placed[i] = true;
+                order.push(i);
+                progressed = true;
+            }
+        }
+        if !progressed {
+            let stuck: Vec<&str> = (0..n)
+                .filter(|&i| !placed[i])
+                .map(|i| file[i].name.as_str())
+                .collect();
+            return Err(anyhow!(
+                "circular parent reference among categories in this file: {}",
+                stuck.join(", ")
+            ));
+        }
+    }
+    Ok(order)
 }
 
 /// Build the form params for a whole entry (create or full update).
@@ -885,8 +983,8 @@ pub fn category_def_push(
         enrich_custom_fields(&client, &mut defs)?;
     }
     let id_to_slug = id_to_slug_map(&defs);
-    let slug_to_id = slug_to_id_map(&defs);
-    let name_to_ids = name_to_ids_map(&defs);
+    let mut slug_to_id = slug_to_id_map(&defs);
+    let mut name_to_ids = name_to_ids_map(&defs);
     let server_entries: Vec<CategoryDefEntry> =
         defs.iter().map(|d| def_to_entry(d, &id_to_slug)).collect();
 
@@ -894,6 +992,7 @@ pub fn category_def_push(
     validate_styles(&file.categories, &server_entries)?;
 
     let plan = plan_push(&file.categories, &server_entries);
+    let order = order_for_push(&file.categories, &plan, &slug_to_id, &name_to_ids)?;
 
     if dry_run {
         println!(
@@ -901,7 +1000,8 @@ pub fn category_def_push(
             discourse_name
         );
         let mut changes = 0;
-        for action in &plan {
+        for &i in &order {
+            let action = &plan[i];
             match action.kind {
                 DefActionKind::Create => {
                     println!("  + create: {}", action.name);
@@ -932,7 +1032,9 @@ pub fn category_def_push(
         return Ok(());
     }
 
-    for (entry, action) in file.categories.iter().zip(&plan) {
+    for &i in &order {
+        let entry = &file.categories[i];
+        let action = &plan[i];
         match action.kind {
             DefActionKind::Create => {
                 if let Some(custom_fields) = &entry.custom_fields {
@@ -942,6 +1044,10 @@ pub fn category_def_push(
                 let id = client
                     .create_category_def(&params)
                     .with_context(|| format!("creating category '{}'", entry.name))?;
+                if let Some(slug) = &entry.slug {
+                    slug_to_id.insert(slug.clone(), id);
+                }
+                name_to_ids.entry(entry.name.clone()).or_default().push(id);
                 if let Some(custom_fields) = &entry.custom_fields {
                     client
                         .update_category_custom_fields(
@@ -2460,6 +2566,76 @@ mod tests {
     fn validate_parents_ignores_entries_without_a_parent() {
         let a = entry("Top Level");
         assert!(validate_parents(&[a], &BTreeMap::new(), &BTreeMap::new()).is_ok());
+    }
+
+    #[test]
+    fn validate_parents_accepts_a_brand_new_parent_defined_in_the_same_file() {
+        let parent = entry("New Parent");
+        let mut child = entry("Child");
+        child.parent = Some("New Parent".to_string());
+        assert!(validate_parents(&[parent, child], &BTreeMap::new(), &BTreeMap::new()).is_ok());
+    }
+
+    #[test]
+    fn validate_parents_still_rejects_a_parent_matching_nothing_anywhere() {
+        let mut child = entry("Child");
+        child.parent = Some("Nowhere".to_string());
+        let err = validate_parents(&[child], &BTreeMap::new(), &BTreeMap::new()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Nowhere"));
+        assert!(msg.contains("elsewhere in this file"));
+    }
+
+    #[test]
+    fn order_for_push_places_a_same_file_parent_before_its_child() {
+        let mut child = entry("Child");
+        child.parent = Some("Parent".to_string());
+        let parent = entry("Parent");
+        // File declares the child first; the parent must still be created first.
+        let file = vec![child, parent];
+        let plan = plan_push(&file, &[]);
+        let order = order_for_push(&file, &plan, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        assert_eq!(order, vec![1, 0]);
+    }
+
+    #[test]
+    fn order_for_push_needs_no_edge_when_parent_already_exists_on_server() {
+        let mut server_parent = entry("Existing Parent");
+        server_parent.id = Some(9);
+        server_parent.slug = Some("existing-parent".to_string());
+        let mut child = entry("Child");
+        child.parent = Some("existing-parent".to_string());
+        let file = vec![child];
+        let mut slug_to_id = BTreeMap::new();
+        slug_to_id.insert("existing-parent".to_string(), 9u64);
+        let plan = plan_push(&file, std::slice::from_ref(&server_parent));
+        let order = order_for_push(&file, &plan, &slug_to_id, &BTreeMap::new()).unwrap();
+        assert_eq!(order, vec![0]);
+    }
+
+    #[test]
+    fn order_for_push_leaves_independent_entries_in_file_order() {
+        let a = entry("A");
+        let b = entry("B");
+        let file = vec![a, b];
+        let plan = plan_push(&file, &[]);
+        let order = order_for_push(&file, &plan, &BTreeMap::new(), &BTreeMap::new()).unwrap();
+        assert_eq!(order, vec![0, 1]);
+    }
+
+    #[test]
+    fn order_for_push_detects_a_two_entry_cycle() {
+        let mut a = entry("A");
+        a.parent = Some("B".to_string());
+        let mut b = entry("B");
+        b.parent = Some("A".to_string());
+        let file = vec![a, b];
+        let plan = plan_push(&file, &[]);
+        let err = order_for_push(&file, &plan, &BTreeMap::new(), &BTreeMap::new()).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("circular"));
+        assert!(msg.contains('A'));
+        assert!(msg.contains('B'));
     }
 
     #[test]

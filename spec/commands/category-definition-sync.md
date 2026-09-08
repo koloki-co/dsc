@@ -384,8 +384,8 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 >   `description` makes the round-trip clean.
 > - **Parent-in-same-push limitation.** `parent` is resolved against categories
 >   that already exist on the server; a brand-new parent created in the *same*
->   push isn't yet resolvable. Create the parent first (or run push twice). A
->   two-pass ordering is deferred to Phase 2.
+>   push isn't yet resolvable. Create the parent first (or run push twice).
+>   **Resolved in Phase 2** — see the same-file parent/child creation item below.
 > - **Description terminal newlines are normalised.** YAML literal blocks end in
 >   a newline while Discourse strips it from category descriptions. Normalising
 >   this boundary prevents a perpetual update plan for otherwise identical text.
@@ -445,6 +445,23 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 - [x] `custom_fields` round-trip. **Status: implemented (unreleased).** Reads each category's complete custom-field map from `/c/{id}/show.json`; applies changes via JSON `PUT /categories/{id}.json`, using nulls to remove keys omitted from a specified file map. `category set` accepts a complete scalar-valued JSON object. Object and array values are rejected because Discourse stringifies them. Verified reversibly on koloki-demo.
 - [x] `topic_title_placeholder` round-trip. **Status: implemented (unreleased).** Reads the category-list response and writes the `topic_title_placeholder` form parameter, exactly mirroring `topic_template`. `category get`/`set`/`show`, `def pull`/`push`, and `category diff` all support the field. Unit-tested (entry round-trip and `set` params); no live test needed - same request shape as `topic_template`.
 - [x] `style_type`/`icon`/`emoji` round-trip. **Status: implemented (unreleased).** `style_type` (`square`/`icon`/`emoji`), `icon` (FontAwesome name), and `emoji` (shortcode) are plain scalar fields on the category object, not asset uploads, so they follow the same read/write path as `topic_title_placeholder`: `def pull`/`push`, `category show`/`get`/`set` all support them. Push and dry-run reject unknown style types or an active icon/emoji style without its companion value. For imperative edits, set the icon/emoji first and then activate its style; change to another style before clearing the active companion. Logo/background image assets remain out of scope pending an asset-upload path.
+- [x] Same-file parent/child creation with cycle detection. **Status:
+  implemented (unreleased).** Resolves the Phase 1 "parent-in-same-push
+  limitation" above: `def push` now topologically orders file entries so a
+  brand-new parent (no matching server category, so it will be `Create`d) is
+  pushed before any brand-new child that names it as `parent` by slug or
+  name, letting a full new subtree be declared and pushed in one file rather
+  than requiring the parent first or a second push. A `parent` reference that
+  already resolves against the server needs no reordering, matching the
+  existing per-entry resolution in `entry_to_params`. A circular in-file
+  parent reference (`A`'s parent is `B`, `B`'s parent is `A`) errors up front,
+  before any writes, naming every category stuck in the cycle, rather than
+  looping or leaving some entries permanently unresolvable.
+  `src/commands/category_def.rs` (`resolve_parent_in_file`, `order_for_push`);
+  unit-tested (ordering, an already-on-the-server parent needing no edge,
+  independent entries keeping file order, and cycle detection); no live test
+  needed - the ordering only changes local planning, not the request shapes
+  already covered by Phase 1's live verification.
 
 ### Phase 3 — nice to have
 
