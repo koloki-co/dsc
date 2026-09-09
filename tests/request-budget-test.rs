@@ -113,7 +113,7 @@ fn get_body(path: &str) -> String {
     "{}".to_string()
 }
 
-/// The two older emoji-upload endpoint variants the mock treats as
+/// The current and legacy-JSON emoji-upload endpoints the mock treats as
 /// unsupported, so uploads only succeed against
 /// `/admin/customize/emojis` (no `.json`) - the last one `dsc` probes.
 fn is_unsupported_emoji_endpoint(path: &str) -> bool {
@@ -467,7 +467,7 @@ fn emoji_push_caches_discovered_endpoint_across_a_bulk_upload() {
     let (baseurl, log) = start_mock();
     let (_dir, config) = make_config(&baseurl);
 
-    // The mock 404s the two older emoji-upload endpoint variants, so only
+    // The mock 404s the current and legacy-JSON emoji-upload endpoints, so only
     // /admin/customize/emojis (no .json) succeeds. Two files means the old
     // code would probe both failing endpoints twice (once per file); the
     // fix should probe them only for the first file and go straight to the

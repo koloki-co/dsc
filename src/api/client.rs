@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use super::emoji::EmojiUploadEndpoint;
 use super::models::{AboutResponse, SiteResponse};
 use super::rate_limit::{RETRY_BUFFER, parse_rate_limit_wait, summarize_rate_limit_body};
 use crate::config::DiscourseConfig;
@@ -10,8 +11,8 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{StatusCode, Url, redirect};
-use std::cell::Cell;
 use std::io::Read;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const MAX_RATE_LIMIT_RETRIES: u32 = 5;
@@ -47,12 +48,8 @@ pub struct VersionInfo {
 pub struct DiscourseClient {
     baseurl: String,
     client: Client,
-    /// Index into the fixed emoji-upload endpoint probe order (see
-    /// `api::emoji::upload_emoji`) that last succeeded on this client, so a
-    /// bulk `emoji add <dir>` against an older Discourse doesn't repeat
-    /// known-failing endpoint probes for every file. `None` until an upload
-    /// has discovered a working endpoint.
-    pub(crate) emoji_upload_endpoint: Cell<Option<u8>>,
+    /// Last successful emoji-upload endpoint, shared by client clones.
+    pub(crate) emoji_upload_endpoint: Arc<Mutex<Option<EmojiUploadEndpoint>>>,
 }
 
 impl DiscourseClient {
@@ -90,7 +87,7 @@ impl DiscourseClient {
         Ok(Self {
             baseurl,
             client,
-            emoji_upload_endpoint: Cell::new(None),
+            emoji_upload_endpoint: Arc::new(Mutex::new(None)),
         })
     }
 

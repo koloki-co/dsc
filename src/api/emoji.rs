@@ -7,7 +7,6 @@ use super::error::http_error;
 use super::models::CustomEmoji;
 use anyhow::{Context, Result, anyhow};
 use reqwest::StatusCode;
-use reqwest::blocking::Response;
 use serde_json::Value;
 use std::fs::File;
 use std::path::Path;
@@ -15,17 +14,13 @@ use std::path::Path;
 /// Fixed probe order for the emoji-upload endpoint. Discourse's admin emoji
 /// UI moved from `/admin/customize/emojis` to `/admin/customize/emojis.json`
 /// to (current) `/admin/config/emoji.json` across versions; `dsc` supports
-/// all three by falling back on 404. Represented as `u8` indices so
-/// `DiscourseClient` can cache the discovered endpoint without depending on
-/// an emoji-specific type.
-const EMOJI_ENDPOINT_V2: u8 = 0;
-const EMOJI_ENDPOINT_LEGACY_JSON: u8 = 1;
-const EMOJI_ENDPOINT_LEGACY_PATH: u8 = 2;
-const EMOJI_ENDPOINT_PROBE_ORDER: [u8; 3] = [
-    EMOJI_ENDPOINT_V2,
-    EMOJI_ENDPOINT_LEGACY_JSON,
-    EMOJI_ENDPOINT_LEGACY_PATH,
-];
+/// all three by falling back on 404.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EmojiUploadEndpoint {
+    Current,
+    LegacyJson,
+    LegacyPath,
+}
 
 fn make_emoji_form(
     emoji_path: &Path,
@@ -34,7 +29,7 @@ fn make_emoji_form(
     name_field: &'static str,
 ) -> Result<reqwest::blocking::multipart::Form> {
     // Stream from an open file handle rather than buffering the whole image
-    // with `fs::read`, since this closure is reopened on every 429 retry.
+    // with `fs::read`; every 429 retry opens a fresh handle.
     let file =
         File::open(emoji_path).with_context(|| format!("reading {}", emoji_path.display()))?;
     let len = file
@@ -58,70 +53,56 @@ fn make_emoji_form(
 impl DiscourseClient {
     /// Upload a custom emoji. Retries on 429 via the shared client helper.
     pub fn upload_emoji(&self, emoji_path: &Path, emoji_name: &str) -> Result<()> {
-        let upload_v2_json_path = emoji_admin_path("/admin/config/emoji.json");
-        let upload_json_path = emoji_admin_path("/admin/customize/emojis.json");
-        let upload_path = emoji_admin_path("/admin/customize/emojis");
+        use EmojiUploadEndpoint::{Current, LegacyJson, LegacyPath};
 
-        let request_endpoint = |idx: u8| -> Result<Response> {
-            match idx {
-                EMOJI_ENDPOINT_V2 => self.send_retrying(|| {
-                    Ok(self
-                        .post(&upload_v2_json_path)?
-                        .multipart(make_emoji_form(emoji_path, emoji_name, "file", "name")?))
-                }),
-                EMOJI_ENDPOINT_LEGACY_JSON => self.send_retrying(|| {
-                    Ok(self.post(&upload_json_path)?.multipart(make_emoji_form(
-                        emoji_path,
-                        emoji_name,
-                        "emoji[image]",
-                        "emoji[name]",
-                    )?))
-                }),
-                _ => self.send_retrying(|| {
-                    Ok(self.post(&upload_path)?.multipart(make_emoji_form(
-                        emoji_path,
-                        emoji_name,
-                        "emoji[image]",
-                        "emoji[name]",
-                    )?))
-                }),
-            }
-        };
-
-        // Try the endpoint that last worked on this client first, so a bulk
-        // upload only probes fallbacks while the endpoint is still unknown.
-        let start = self
+        // Hold the lock only for cache access, never during HTTP or retry waits.
+        let cached = *self
             .emoji_upload_endpoint
-            .get()
-            .unwrap_or(EMOJI_ENDPOINT_V2);
-        let mut attempts: Vec<u8> = Vec::with_capacity(EMOJI_ENDPOINT_PROBE_ORDER.len());
-        attempts.push(start);
-        attempts.extend(
-            EMOJI_ENDPOINT_PROBE_ORDER
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let attempts = cached.into_iter().chain(
+            [Current, LegacyJson, LegacyPath]
                 .into_iter()
-                .filter(|&i| i != start),
+                .filter(|endpoint| Some(*endpoint) != cached),
         );
-
-        let mut response = None;
-        let mut iter = attempts.into_iter().peekable();
-        while let Some(idx) = iter.next() {
-            let candidate = request_endpoint(idx)?;
-            let is_last = iter.peek().is_none();
-            if candidate.status() != StatusCode::NOT_FOUND || is_last {
-                if candidate.status() != StatusCode::NOT_FOUND {
-                    self.emoji_upload_endpoint.set(Some(idx));
-                }
-                response = Some(candidate);
-                break;
-            }
-        }
-        let response = response.expect("attempts is non-empty; loop always yields a response");
-        if !response.status().is_success() {
+        for endpoint in attempts {
+            let (path, image_field, name_field) = match endpoint {
+                Current => ("/admin/config/emoji.json", "file", "name"),
+                LegacyJson => (
+                    "/admin/customize/emojis.json",
+                    "emoji[image]",
+                    "emoji[name]",
+                ),
+                LegacyPath => ("/admin/customize/emojis", "emoji[image]", "emoji[name]"),
+            };
+            let path = emoji_admin_path(path);
+            let response = self.send_retrying(|| {
+                Ok(self.post(&path)?.multipart(make_emoji_form(
+                    emoji_path,
+                    emoji_name,
+                    image_field,
+                    name_field,
+                )?))
+            })?;
             let status = response.status();
-            if matches!(
-                status,
-                StatusCode::NOT_FOUND | StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED
-            ) {
+            if status.is_success() {
+                *self
+                    .emoji_upload_endpoint
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner()) = Some(endpoint);
+                return Ok(());
+            }
+            if status == StatusCode::NOT_FOUND {
+                let mut cache = self
+                    .emoji_upload_endpoint
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner());
+                if *cache == Some(endpoint) {
+                    *cache = None;
+                }
+                continue;
+            }
+            if matches!(status, StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED) {
                 return Err(anyhow!(
                     "emoji upload failed with {} (requires an admin API key)",
                     status
@@ -132,7 +113,10 @@ impl DiscourseClient {
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(anyhow!("emoji upload failed with {}: {}", status, text));
         }
-        Ok(())
+        Err(anyhow!(
+            "emoji upload failed with {} (requires an admin API key)",
+            StatusCode::NOT_FOUND
+        ))
     }
 
     /// List custom emojis.
