@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{StatusCode, Url, redirect};
+use std::cell::Cell;
 use std::io::Read;
 use std::time::Duration;
 
@@ -46,6 +47,12 @@ pub struct VersionInfo {
 pub struct DiscourseClient {
     baseurl: String,
     client: Client,
+    /// Index into the fixed emoji-upload endpoint probe order (see
+    /// `api::emoji::upload_emoji`) that last succeeded on this client, so a
+    /// bulk `emoji add <dir>` against an older Discourse doesn't repeat
+    /// known-failing endpoint probes for every file. `None` until an upload
+    /// has discovered a working endpoint.
+    pub(crate) emoji_upload_endpoint: Cell<Option<u8>>,
 }
 
 impl DiscourseClient {
@@ -80,7 +87,11 @@ impl DiscourseClient {
             .build()
             .context("building http client")?;
 
-        Ok(Self { baseurl, client })
+        Ok(Self {
+            baseurl,
+            client,
+            emoji_upload_endpoint: Cell::new(None),
+        })
     }
 
     /// Return the configured base URL.

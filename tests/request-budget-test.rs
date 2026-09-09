@@ -113,6 +113,14 @@ fn get_body(path: &str) -> String {
     "{}".to_string()
 }
 
+/// The two older emoji-upload endpoint variants the mock treats as
+/// unsupported, so uploads only succeed against
+/// `/admin/customize/emojis` (no `.json`) - the last one `dsc` probes.
+fn is_unsupported_emoji_endpoint(path: &str) -> bool {
+    let p = path.split('?').next().unwrap_or(path);
+    p == "/admin/config/emoji.json" || p == "/admin/customize/emojis.json"
+}
+
 fn handle(mut stream: TcpStream, log: &Arc<Mutex<Vec<String>>>) {
     let mut reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
@@ -147,13 +155,22 @@ fn handle(mut stream: TcpStream, log: &Arc<Mutex<Vec<String>>>) {
         .expect("mock log poisoned")
         .push(format!("{method} {path}\n{request_body}"));
 
-    let body = if method == "GET" {
-        get_body(&path)
+    let (status_line, body) = if method == "GET" {
+        ("200 OK", get_body(&path))
+    } else if is_unsupported_emoji_endpoint(&path) {
+        // Simulate an older/newer Discourse missing one emoji-upload
+        // endpoint variant, so tests can prove the P16 endpoint-caching
+        // fallback probes only while the working endpoint is unknown.
+        ("404 Not Found", r#"{"error":"not found"}"#.to_string())
     } else {
-        r#"{"success":"OK","id":999,"topic_id":999}"#.to_string()
+        (
+            "200 OK",
+            r#"{"success":"OK","id":999,"topic_id":999}"#.to_string(),
+        )
     };
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+        status_line,
         body.len(),
         body
     );
@@ -207,6 +224,23 @@ fn count_gets(log: &Arc<Mutex<Vec<String>>>, prefix: &str) -> usize {
         .expect("mock log poisoned")
         .iter()
         .filter(|entry| entry.starts_with("GET ") && entry.contains(prefix))
+        .count()
+}
+
+/// Count POST requests whose path (ignoring query string) exactly matches.
+fn count_posts_exact(log: &Arc<Mutex<Vec<String>>>, exact_path: &str) -> usize {
+    log.lock()
+        .expect("mock log poisoned")
+        .iter()
+        .filter(|entry| {
+            let Some(first_line) = entry.lines().next() else {
+                return false;
+            };
+            let Some(rest) = first_line.strip_prefix("POST ") else {
+                return false;
+            };
+            rest.split('?').next().unwrap_or(rest) == exact_path
+        })
         .count()
 }
 
@@ -423,5 +457,48 @@ fn board_pull_uses_one_show_request_not_n_plus_1() {
     assert_eq!(
         show_gets, 1,
         "expected exactly one board show request, got {show_gets}"
+    );
+}
+
+// ─── P16: emoji upload caches the discovered endpoint per invocation ─────
+
+#[test]
+fn emoji_push_caches_discovered_endpoint_across_a_bulk_upload() {
+    let (baseurl, log) = start_mock();
+    let (_dir, config) = make_config(&baseurl);
+
+    // The mock 404s the two older emoji-upload endpoint variants, so only
+    // /admin/customize/emojis (no .json) succeeds. Two files means the old
+    // code would probe both failing endpoints twice (once per file); the
+    // fix should probe them only for the first file and go straight to the
+    // known-good endpoint for the second.
+    let emoji_dir = TempDir::new().expect("tempdir");
+    std::fs::write(emoji_dir.path().join("first.png"), b"fake-png-bytes-1")
+        .expect("write first emoji file");
+    std::fs::write(emoji_dir.path().join("second.png"), b"fake-png-bytes-2")
+        .expect("write second emoji file");
+
+    let (output, ok) = run_dsc(
+        &["emoji", "push", "mock", emoji_dir.path().to_str().unwrap()],
+        &config,
+    );
+    assert!(ok, "emoji push failed: {output}");
+
+    let v2_posts = count_posts_exact(&log, "/admin/config/emoji.json");
+    assert_eq!(
+        v2_posts, 1,
+        "the 404-ing v2 endpoint should only be probed once (for the first file), but got {v2_posts}"
+    );
+
+    let legacy_json_posts = count_posts_exact(&log, "/admin/customize/emojis.json");
+    assert_eq!(
+        legacy_json_posts, 1,
+        "the 404-ing legacy JSON endpoint should only be probed once (for the first file), but got {legacy_json_posts}"
+    );
+
+    let legacy_path_posts = count_posts_exact(&log, "/admin/customize/emojis");
+    assert_eq!(
+        legacy_path_posts, 2,
+        "the working endpoint should be used for both files, but got {legacy_path_posts}"
     );
 }

@@ -202,6 +202,8 @@ Upload form closures call `fs::read` and create an in-memory multipart part on e
 
 **Recommendation:** Build multipart bodies from streaming file handles reopened per retry. Cache the first successful emoji upload endpoint for the remainder of the invocation and probe fallbacks only while endpoint capability is unknown.
 
+**Addressed 2026-09-09:** `upload_file`, `import_theme_bundle`, and `upload_emoji`'s form-building closures now open the file and wrap it in `Part::reader_with_length` instead of `fs::read` + `Part::bytes`, so each retry streams from a fresh file handle rather than buffering the complete file into memory. `DiscourseClient` gained a `Cell<Option<u8>>` endpoint-cache field (`emoji_upload_endpoint`); `upload_emoji` tries the last-successful endpoint index first and only falls through the fixed v2/legacy-JSON/legacy-path probe order while the working endpoint is still unknown for that client, caching it on the first non-404 response. A request-budget test (`emoji_push_caches_discovered_endpoint_across_a_bulk_upload`) proves a two-file bulk upload against a mock that 404s the two older endpoints probes each of them exactly once, not once per file.
+
 ### P17 - Medium - Version-only metadata stamps always make an unnecessary homepage request
 
 **Evidence:** `src/api/client.rs:191-249`; callers at `src/commands/setting.rs:327` and `src/commands/theme.rs:716`.
@@ -399,7 +401,7 @@ Use delayed fake workers and fake subprocesses to test concurrency deterministic
 
 1. P9 - stream SAR serialization and bound detail-fetch concurrency.
 2. P10 and P15 - index topic lookups and bound category/deleted-topic detail reads.
-3. P11 and P16 - bound and stream image/file transfer, with cached endpoint capability.
+3. ~~P11 and P16 - bound and stream image/file transfer, with cached endpoint capability.~~ (done)
 4. P13 and P14 - page and fold S3 data without whole-bucket materialization.
 5. P20, P22, P23, P25, and P26 - complete lower-priority streaming, durability measurement, indexing, and budget work.
 

@@ -7,63 +7,115 @@ use super::error::http_error;
 use super::models::CustomEmoji;
 use anyhow::{Context, Result, anyhow};
 use reqwest::StatusCode;
+use reqwest::blocking::Response;
 use serde_json::Value;
+use std::fs::File;
 use std::path::Path;
+
+/// Fixed probe order for the emoji-upload endpoint. Discourse's admin emoji
+/// UI moved from `/admin/customize/emojis` to `/admin/customize/emojis.json`
+/// to (current) `/admin/config/emoji.json` across versions; `dsc` supports
+/// all three by falling back on 404. Represented as `u8` indices so
+/// `DiscourseClient` can cache the discovered endpoint without depending on
+/// an emoji-specific type.
+const EMOJI_ENDPOINT_V2: u8 = 0;
+const EMOJI_ENDPOINT_LEGACY_JSON: u8 = 1;
+const EMOJI_ENDPOINT_LEGACY_PATH: u8 = 2;
+const EMOJI_ENDPOINT_PROBE_ORDER: [u8; 3] = [
+    EMOJI_ENDPOINT_V2,
+    EMOJI_ENDPOINT_LEGACY_JSON,
+    EMOJI_ENDPOINT_LEGACY_PATH,
+];
+
+fn make_emoji_form(
+    emoji_path: &Path,
+    emoji_name: &str,
+    image_field: &'static str,
+    name_field: &'static str,
+) -> Result<reqwest::blocking::multipart::Form> {
+    // Stream from an open file handle rather than buffering the whole image
+    // with `fs::read`, since this closure is reopened on every 429 retry.
+    let file =
+        File::open(emoji_path).with_context(|| format!("reading {}", emoji_path.display()))?;
+    let len = file
+        .metadata()
+        .with_context(|| format!("reading metadata for {}", emoji_path.display()))?
+        .len();
+    let filename = emoji_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("emoji.png")
+        .to_string();
+    let part = reqwest::blocking::multipart::Part::reader_with_length(file, len)
+        .file_name(filename)
+        .mime_str("image/png")
+        .context("setting emoji mime")?;
+    Ok(reqwest::blocking::multipart::Form::new()
+        .part(image_field, part)
+        .text(name_field, emoji_name.to_string()))
+}
 
 impl DiscourseClient {
     /// Upload a custom emoji. Retries on 429 via the shared client helper.
     pub fn upload_emoji(&self, emoji_path: &Path, emoji_name: &str) -> Result<()> {
-        let make_form_legacy = || -> Result<reqwest::blocking::multipart::Form> {
-            let file = std::fs::read(emoji_path)
-                .with_context(|| format!("reading {}", emoji_path.display()))?;
-            let part = reqwest::blocking::multipart::Part::bytes(file)
-                .file_name(
-                    emoji_path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("emoji.png")
-                        .to_string(),
-                )
-                .mime_str("image/png")
-                .context("setting emoji mime")?;
-            Ok(reqwest::blocking::multipart::Form::new()
-                .part("emoji[image]", part)
-                .text("emoji[name]", emoji_name.to_string()))
-        };
-
-        let make_form_v2 = || -> Result<reqwest::blocking::multipart::Form> {
-            let file = std::fs::read(emoji_path)
-                .with_context(|| format!("reading {}", emoji_path.display()))?;
-            let part = reqwest::blocking::multipart::Part::bytes(file)
-                .file_name(
-                    emoji_path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("emoji.png")
-                        .to_string(),
-                )
-                .mime_str("image/png")
-                .context("setting emoji mime")?;
-            Ok(reqwest::blocking::multipart::Form::new()
-                .part("file", part)
-                .text("name", emoji_name.to_string()))
-        };
-
         let upload_v2_json_path = emoji_admin_path("/admin/config/emoji.json");
         let upload_json_path = emoji_admin_path("/admin/customize/emojis.json");
         let upload_path = emoji_admin_path("/admin/customize/emojis");
 
-        let mut response =
-            self.send_retrying(|| Ok(self.post(&upload_v2_json_path)?.multipart(make_form_v2()?)))?;
-        if response.status() == StatusCode::NOT_FOUND {
-            response = self.send_retrying(|| {
-                Ok(self.post(&upload_json_path)?.multipart(make_form_legacy()?))
-            })?;
+        let request_endpoint = |idx: u8| -> Result<Response> {
+            match idx {
+                EMOJI_ENDPOINT_V2 => self.send_retrying(|| {
+                    Ok(self
+                        .post(&upload_v2_json_path)?
+                        .multipart(make_emoji_form(emoji_path, emoji_name, "file", "name")?))
+                }),
+                EMOJI_ENDPOINT_LEGACY_JSON => self.send_retrying(|| {
+                    Ok(self.post(&upload_json_path)?.multipart(make_emoji_form(
+                        emoji_path,
+                        emoji_name,
+                        "emoji[image]",
+                        "emoji[name]",
+                    )?))
+                }),
+                _ => self.send_retrying(|| {
+                    Ok(self.post(&upload_path)?.multipart(make_emoji_form(
+                        emoji_path,
+                        emoji_name,
+                        "emoji[image]",
+                        "emoji[name]",
+                    )?))
+                }),
+            }
+        };
+
+        // Try the endpoint that last worked on this client first, so a bulk
+        // upload only probes fallbacks while the endpoint is still unknown.
+        let start = self
+            .emoji_upload_endpoint
+            .get()
+            .unwrap_or(EMOJI_ENDPOINT_V2);
+        let mut attempts: Vec<u8> = Vec::with_capacity(EMOJI_ENDPOINT_PROBE_ORDER.len());
+        attempts.push(start);
+        attempts.extend(
+            EMOJI_ENDPOINT_PROBE_ORDER
+                .into_iter()
+                .filter(|&i| i != start),
+        );
+
+        let mut response = None;
+        let mut iter = attempts.into_iter().peekable();
+        while let Some(idx) = iter.next() {
+            let candidate = request_endpoint(idx)?;
+            let is_last = iter.peek().is_none();
+            if candidate.status() != StatusCode::NOT_FOUND || is_last {
+                if candidate.status() != StatusCode::NOT_FOUND {
+                    self.emoji_upload_endpoint.set(Some(idx));
+                }
+                response = Some(candidate);
+                break;
+            }
         }
-        if response.status() == StatusCode::NOT_FOUND {
-            response =
-                self.send_retrying(|| Ok(self.post(&upload_path)?.multipart(make_form_legacy()?)))?;
-        }
+        let response = response.expect("attempts is non-empty; loop always yields a response");
         if !response.status().is_success() {
             let status = response.status();
             if matches!(
