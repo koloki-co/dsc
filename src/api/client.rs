@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use super::emoji::EmojiUploadEndpoint;
 use super::models::{AboutResponse, SiteResponse};
 use super::rate_limit::{RETRY_BUFFER, parse_rate_limit_wait, summarize_rate_limit_body};
 use crate::config::DiscourseConfig;
@@ -11,6 +12,7 @@ use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{StatusCode, Url, redirect};
 use std::io::Read;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const MAX_RATE_LIMIT_RETRIES: u32 = 5;
@@ -46,6 +48,8 @@ pub struct VersionInfo {
 pub struct DiscourseClient {
     baseurl: String,
     client: Client,
+    /// Last successful emoji-upload endpoint, shared by client clones.
+    pub(crate) emoji_upload_endpoint: Arc<Mutex<Option<EmojiUploadEndpoint>>>,
 }
 
 impl DiscourseClient {
@@ -80,7 +84,11 @@ impl DiscourseClient {
             .build()
             .context("building http client")?;
 
-        Ok(Self { baseurl, client })
+        Ok(Self {
+            baseurl,
+            client,
+            emoji_upload_endpoint: Arc::new(Mutex::new(None)),
+        })
     }
 
     /// Return the configured base URL.

@@ -8,68 +8,101 @@ use super::models::CustomEmoji;
 use anyhow::{Context, Result, anyhow};
 use reqwest::StatusCode;
 use serde_json::Value;
+use std::fs::File;
 use std::path::Path;
+
+/// Fixed probe order for the emoji-upload endpoint. Discourse's admin emoji
+/// UI moved from `/admin/customize/emojis` to `/admin/customize/emojis.json`
+/// to (current) `/admin/config/emoji.json` across versions; `dsc` supports
+/// all three by falling back on 404.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EmojiUploadEndpoint {
+    Current,
+    LegacyJson,
+    LegacyPath,
+}
+
+fn make_emoji_form(
+    emoji_path: &Path,
+    emoji_name: &str,
+    image_field: &'static str,
+    name_field: &'static str,
+) -> Result<reqwest::blocking::multipart::Form> {
+    // Stream from an open file handle rather than buffering the whole image
+    // with `fs::read`; every 429 retry opens a fresh handle.
+    let file =
+        File::open(emoji_path).with_context(|| format!("reading {}", emoji_path.display()))?;
+    let len = file
+        .metadata()
+        .with_context(|| format!("reading metadata for {}", emoji_path.display()))?
+        .len();
+    let filename = emoji_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("emoji.png")
+        .to_string();
+    let part = reqwest::blocking::multipart::Part::reader_with_length(file, len)
+        .file_name(filename)
+        .mime_str("image/png")
+        .context("setting emoji mime")?;
+    Ok(reqwest::blocking::multipart::Form::new()
+        .part(image_field, part)
+        .text(name_field, emoji_name.to_string()))
+}
 
 impl DiscourseClient {
     /// Upload a custom emoji. Retries on 429 via the shared client helper.
     pub fn upload_emoji(&self, emoji_path: &Path, emoji_name: &str) -> Result<()> {
-        let make_form_legacy = || -> Result<reqwest::blocking::multipart::Form> {
-            let file = std::fs::read(emoji_path)
-                .with_context(|| format!("reading {}", emoji_path.display()))?;
-            let part = reqwest::blocking::multipart::Part::bytes(file)
-                .file_name(
-                    emoji_path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("emoji.png")
-                        .to_string(),
-                )
-                .mime_str("image/png")
-                .context("setting emoji mime")?;
-            Ok(reqwest::blocking::multipart::Form::new()
-                .part("emoji[image]", part)
-                .text("emoji[name]", emoji_name.to_string()))
-        };
+        use EmojiUploadEndpoint::{Current, LegacyJson, LegacyPath};
 
-        let make_form_v2 = || -> Result<reqwest::blocking::multipart::Form> {
-            let file = std::fs::read(emoji_path)
-                .with_context(|| format!("reading {}", emoji_path.display()))?;
-            let part = reqwest::blocking::multipart::Part::bytes(file)
-                .file_name(
-                    emoji_path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("emoji.png")
-                        .to_string(),
-                )
-                .mime_str("image/png")
-                .context("setting emoji mime")?;
-            Ok(reqwest::blocking::multipart::Form::new()
-                .part("file", part)
-                .text("name", emoji_name.to_string()))
-        };
-
-        let upload_v2_json_path = emoji_admin_path("/admin/config/emoji.json");
-        let upload_json_path = emoji_admin_path("/admin/customize/emojis.json");
-        let upload_path = emoji_admin_path("/admin/customize/emojis");
-
-        let mut response =
-            self.send_retrying(|| Ok(self.post(&upload_v2_json_path)?.multipart(make_form_v2()?)))?;
-        if response.status() == StatusCode::NOT_FOUND {
-            response = self.send_retrying(|| {
-                Ok(self.post(&upload_json_path)?.multipart(make_form_legacy()?))
+        // Hold the lock only for cache access, never during HTTP or retry waits.
+        let cached = *self
+            .emoji_upload_endpoint
+            .lock()
+            .unwrap_or_else(|err| err.into_inner());
+        let attempts = cached.into_iter().chain(
+            [Current, LegacyJson, LegacyPath]
+                .into_iter()
+                .filter(|endpoint| Some(*endpoint) != cached),
+        );
+        for endpoint in attempts {
+            let (path, image_field, name_field) = match endpoint {
+                Current => ("/admin/config/emoji.json", "file", "name"),
+                LegacyJson => (
+                    "/admin/customize/emojis.json",
+                    "emoji[image]",
+                    "emoji[name]",
+                ),
+                LegacyPath => ("/admin/customize/emojis", "emoji[image]", "emoji[name]"),
+            };
+            let path = emoji_admin_path(path);
+            let response = self.send_retrying(|| {
+                Ok(self.post(&path)?.multipart(make_emoji_form(
+                    emoji_path,
+                    emoji_name,
+                    image_field,
+                    name_field,
+                )?))
             })?;
-        }
-        if response.status() == StatusCode::NOT_FOUND {
-            response =
-                self.send_retrying(|| Ok(self.post(&upload_path)?.multipart(make_form_legacy()?)))?;
-        }
-        if !response.status().is_success() {
             let status = response.status();
-            if matches!(
-                status,
-                StatusCode::NOT_FOUND | StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED
-            ) {
+            if status.is_success() {
+                *self
+                    .emoji_upload_endpoint
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner()) = Some(endpoint);
+                return Ok(());
+            }
+            if status == StatusCode::NOT_FOUND {
+                let mut cache = self
+                    .emoji_upload_endpoint
+                    .lock()
+                    .unwrap_or_else(|err| err.into_inner());
+                if *cache == Some(endpoint) {
+                    *cache = None;
+                }
+                continue;
+            }
+            if matches!(status, StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED) {
                 return Err(anyhow!(
                     "emoji upload failed with {} (requires an admin API key)",
                     status
@@ -80,7 +113,10 @@ impl DiscourseClient {
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
             return Err(anyhow!("emoji upload failed with {}: {}", status, text));
         }
-        Ok(())
+        Err(anyhow!(
+            "emoji upload failed with {} (requires an admin API key)",
+            StatusCode::NOT_FOUND
+        ))
     }
 
     /// List custom emojis.

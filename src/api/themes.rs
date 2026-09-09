@@ -4,6 +4,7 @@
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
+use std::fs::File;
 use std::path::Path;
 
 use super::client::{DiscourseClient, ResponseBody};
@@ -152,14 +153,21 @@ impl DiscourseClient {
     /// via `POST /admin/themes/import.json` with the `bundle` multipart part.
     pub fn import_theme_bundle(&self, file: &Path) -> Result<Value> {
         let make_form = || -> Result<reqwest::blocking::multipart::Form> {
-            let bytes =
-                std::fs::read(file).with_context(|| format!("reading {}", file.display()))?;
+            // Stream from an open file handle rather than buffering the
+            // whole bundle with `fs::read`, since this closure is reopened
+            // on every 429 retry.
+            let handle = File::open(file).with_context(|| format!("reading {}", file.display()))?;
+            let len = handle
+                .metadata()
+                .with_context(|| format!("reading metadata for {}", file.display()))?
+                .len();
             let filename = file
                 .file_name()
                 .and_then(|s| s.to_str())
                 .ok_or_else(|| anyhow!("theme bundle path missing filename: {}", file.display()))?
                 .to_string();
-            let part = reqwest::blocking::multipart::Part::bytes(bytes).file_name(filename);
+            let part = reqwest::blocking::multipart::Part::reader_with_length(handle, len)
+                .file_name(filename);
             Ok(reqwest::blocking::multipart::Form::new().part("bundle", part))
         };
         let response = self.send_retrying(|| {

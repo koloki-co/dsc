@@ -6,6 +6,7 @@ use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
+use std::fs::File;
 use std::path::Path;
 
 /// Distilled fields from `/uploads.json` — the response carries more (id,
@@ -33,14 +34,22 @@ impl DiscourseClient {
     /// `profile_background`, `card_background`, `custom_emoji`.
     pub fn upload_file(&self, file_path: &Path, upload_type: &str) -> Result<UploadInfo> {
         let make_form = || -> Result<reqwest::blocking::multipart::Form> {
-            let bytes = std::fs::read(file_path)
+            // Stream from an open file handle rather than buffering the
+            // whole file with `fs::read`, since this closure is reopened on
+            // every 429 retry.
+            let file = File::open(file_path)
                 .with_context(|| format!("reading {}", file_path.display()))?;
+            let len = file
+                .metadata()
+                .with_context(|| format!("reading metadata for {}", file_path.display()))?
+                .len();
             let filename = file_path
                 .file_name()
                 .and_then(|s| s.to_str())
                 .ok_or_else(|| anyhow!("upload path missing filename: {}", file_path.display()))?
                 .to_string();
-            let part = reqwest::blocking::multipart::Part::bytes(bytes).file_name(filename);
+            let part = reqwest::blocking::multipart::Part::reader_with_length(file, len)
+                .file_name(filename);
             Ok(reqwest::blocking::multipart::Form::new()
                 .part("file", part)
                 .text("type", upload_type.to_string())

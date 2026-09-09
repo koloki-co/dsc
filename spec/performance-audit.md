@@ -202,6 +202,8 @@ Upload form closures call `fs::read` and create an in-memory multipart part on e
 
 **Recommendation:** Build multipart bodies from streaming file handles reopened per retry. Cache the first successful emoji upload endpoint for the remainder of the invocation and probe fallbacks only while endpoint capability is unknown.
 
+**Addressed 2026-09-09:** `upload_file`, `import_theme_bundle`, and `upload_emoji` build multipart parts with `Part::reader_with_length` from a fresh file handle for every attempt. This bounds buffering; retries still reread and retransmit the file, and callers must keep the source file unchanged during an upload. `DiscourseClient` retains `Send + Sync` with a mutex-protected, typed emoji endpoint cache shared across client clones; no lock is held during HTTP requests or retry waits. Only a successful (2xx) upload establishes the cached endpoint. A cached 404 invalidates it and resumes the current/legacy-JSON/legacy-path probe order without retrying that endpoint in the same call. Other errors stop immediately without changing the cache or trying fallbacks. The bulk-upload request-budget test proves unsupported current and legacy-JSON endpoints are probed only once. Offline wire-level tests in `tests/multipart-upload-test.rs` verify complete binary file parts and form fields on initial attempts, 429 retries, and emoji fallbacks; success caching across clones; no caching or fallback on 401/403/422/500; and cached-404 invalidation even when rediscovery fails.
+
 ### P17 - Medium - Version-only metadata stamps always make an unnecessary homepage request
 
 **Evidence:** `src/api/client.rs:191-249`; callers at `src/commands/setting.rs:327` and `src/commands/theme.rs:716`.
@@ -399,7 +401,7 @@ Use delayed fake workers and fake subprocesses to test concurrency deterministic
 
 1. P9 - stream SAR serialization and bound detail-fetch concurrency.
 2. P10 and P15 - index topic lookups and bound category/deleted-topic detail reads.
-3. P11 and P16 - bound and stream image/file transfer, with cached endpoint capability.
+3. ~~P11 and P16 - bound and stream image/file transfer, with cached endpoint capability.~~ (done)
 4. P13 and P14 - page and fold S3 data without whole-bucket materialization.
 5. P20, P22, P23, P25, and P26 - complete lower-priority streaming, durability measurement, indexing, and budget work.
 
