@@ -26,6 +26,8 @@ Output never includes API keys or other secret credential values in any format. 
 - `--open` (or `-o`) — open each listed Discourse base URL in a browser tab/window.
 - `--verbose` (or `-v`) — include empty results and verbose listing details.
 
+`--open` launches an opener for each selected URL without waiting for earlier openers to exit. Success means the openers were launched, not that the pages loaded: missing executables and other launch failures are reported, but later opener failures cannot be reported. Openers run noninteractively with stdin, stdout, and stderr disconnected from `dsc`, so they cannot prompt or hold output pipes open. `DSC_BROWSER_OPENER` overrides the platform opener. For a single forum with inherited stdio and a checked opener exit status, use [`dsc open`](open.md).
+
 ## Examples
 
 ```bash

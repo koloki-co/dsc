@@ -326,20 +326,52 @@ pub fn fetch_fullname_from_url(baseurl: &str) -> Option<String> {
     }
 }
 
-/// Launch a browser opener for `url` without waiting for it to exit.
-///
-/// Normal platform openers (`open`/`xdg-open`/`cmd /C start`) detach and
-/// exit quickly, but a custom `DSC_BROWSER_OPENER` is not guaranteed to.
-/// Waiting for exit would serialize `list --open` across every configured
-/// forum behind the slowest (or a hung) opener, so this only surfaces an
-/// immediate launch failure (missing binary, exec permission) and otherwise
-/// lets the opener run independently.
+/// Open `url` with inherited stdio, checking the opener's exit status.
 pub fn open_url(url: &str) -> Result<()> {
+    let status = browser_command(url)?
+        .status()
+        .context("failed to launch browser opener")?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!("browser opener exited with status {}", status))
+    }
+}
+
+/// Launch `url` noninteractively, reporting launch errors but not late failures.
+/// A background waiter reaps the opener without blocking library callers.
+pub fn open_url_detached(url: &str) -> Result<()> {
+    let mut cmd = browser_command(url)?;
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // Create the waiter before the child, so thread exhaustion cannot leave
+    // an opener running without anyone responsible for reaping it.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("browser-opener".into())
+        .spawn(move || match cmd.spawn() {
+            Ok(mut child) => {
+                let _ = tx.send(Ok(()));
+                let _ = child.wait();
+            }
+            Err(error) => {
+                let _ = tx.send(Err(error));
+            }
+        })
+        .context("failed to start browser opener waiter")?;
+    rx.recv()
+        .context("browser opener waiter stopped before launch")?
+        .context("failed to launch browser opener")
+}
+
+fn browser_command(url: &str) -> Result<Command> {
     if url.trim().is_empty() {
         return Err(anyhow!("cannot open empty base URL"));
     }
 
-    let mut cmd = if let Ok(opener) = std::env::var("DSC_BROWSER_OPENER") {
+    let cmd = if let Ok(opener) = std::env::var("DSC_BROWSER_OPENER") {
         let mut cmd = Command::new(opener);
         cmd.arg(url);
         cmd
@@ -357,17 +389,7 @@ pub fn open_url(url: &str) -> Result<()> {
         cmd
     };
 
-    // Detach the opener's stdio: `dsc`'s own stdout/stderr may be a pipe
-    // (e.g. captured by a caller, or `list -f urls | xargs`), and an
-    // inherited pipe fd stays open in the opener's process group after
-    // `dsc` exits, which would keep that reader blocked until the opener
-    // itself exits - defeating the point of not waiting for it here.
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-
-    cmd.spawn().context("failed to launch browser opener")?;
-    Ok(())
+    Ok(cmd)
 }
 
 /// Parse one-email-per-line input. Ignores blank lines, `#` comments

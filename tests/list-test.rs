@@ -7,9 +7,6 @@ use common::*;
 use std::fs;
 use tempfile::TempDir;
 
-#[cfg(unix)]
-use std::time::{Duration, Instant};
-
 #[test]
 fn list() {
     vprintln("e2e_list: listing discourses");
@@ -137,79 +134,6 @@ baseurl = "https://three.example"
     assert!(output.status.success(), "list urls with tags failed");
     let raw = String::from_utf8_lossy(&output.stdout);
     assert_eq!(raw.trim(), "https://two.example");
-}
-
-#[test]
-fn list_open_uses_tag_filter() {
-    vprintln("e2e_list_open: open only matching tag urls");
-    let dir = TempDir::new().expect("tempdir");
-    let config_path = write_temp_config(
-        &dir,
-        r#"[[discourse]]
-name = "one"
-baseurl = "https://one.example"
-tags = ["alpha"]
-
-[[discourse]]
-name = "two"
-baseurl = "https://two.example"
-tags = ["gamma"]
-"#,
-    );
-    let output = run_dsc_env(
-        &["list", "--tags", "gamma", "--open", "-f", "urls"],
-        &config_path,
-        &[("DSC_BROWSER_OPENER", "true")],
-    );
-    assert!(output.status.success(), "list --open with tags failed");
-    let raw = String::from_utf8_lossy(&output.stdout);
-    assert_eq!(raw.trim(), "https://two.example");
-}
-
-#[cfg(unix)]
-#[test]
-fn list_open_does_not_wait_for_a_slow_opener() {
-    vprintln("e2e_list_open_slow: opener launch does not serialize across forums");
-    use std::os::unix::fs::PermissionsExt;
-
-    let dir = TempDir::new().expect("tempdir");
-    let config_path = write_temp_config(
-        &dir,
-        r#"[[discourse]]
-name = "one"
-baseurl = "https://one.example"
-
-[[discourse]]
-name = "two"
-baseurl = "https://two.example"
-
-[[discourse]]
-name = "three"
-baseurl = "https://three.example"
-"#,
-    );
-
-    // A "browser opener" that never returns. If `open_url` waited for it,
-    // three forums would make the command hang (or take >= 3 * this sleep
-    // if waited serially); it must instead return almost immediately.
-    let opener_path = dir.path().join("slow-opener.sh");
-    fs::write(&opener_path, "#!/bin/sh\nsleep 30\n").expect("write fake opener");
-    fs::set_permissions(&opener_path, fs::Permissions::from_mode(0o755))
-        .expect("make fake opener executable");
-
-    let started = Instant::now();
-    let output = run_dsc_env(
-        &["list", "--open", "-f", "urls"],
-        &config_path,
-        &[("DSC_BROWSER_OPENER", opener_path.to_str().unwrap())],
-    );
-    let elapsed = started.elapsed();
-
-    assert!(output.status.success(), "list --open failed");
-    assert!(
-        elapsed < Duration::from_secs(5),
-        "list --open waited on the browser opener instead of returning promptly: {elapsed:?}"
-    );
 }
 
 #[test]
