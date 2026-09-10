@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::cli::OutputFormat;
-use crate::commands::common::{fetch_fullnames, open_url, parse_tags};
+use crate::commands::common::{fetch_fullnames, open_url_detached, parse_tags};
 use crate::config::{Config, DiscourseConfig, save_config};
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -222,7 +222,7 @@ pub fn list_discourses(
 
 fn open_discourse_urls(discourses: &[&DiscourseConfig]) -> Result<()> {
     for discourse in discourses {
-        open_url(&discourse.baseurl)
+        open_url_detached(&discourse.baseurl)
             .with_context(|| format!("opening browser for '{}'", discourse.baseurl))?;
     }
     Ok(())

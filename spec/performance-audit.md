@@ -340,6 +340,10 @@ Each URL launches an opener with `Command::status()` and waits for it to exit be
 
 **Recommendation:** Spawn normal openers without serial waiting, or add a bounded opener mode that collects exit statuses. Preserve useful errors for immediate launch failures.
 
+**Addressed 2026-09-10 (PR #137):** only `list --open` uses `open_url_detached` in `src/commands/common.rs`. It waits for each launch result, not opener exit, so a slow or hung custom `DSC_BROWSER_OPENER` cannot delay later URLs. Immediate launch failures (missing binary, exec permission) remain errors; success is launch-only and later opener failures cannot be reported. Its stdin/stdout/stderr use `Stdio::null()`: fleet openers are noninteractive and cannot retain `dsc`'s output pipe handles. A background waiter reaps each child for long-lived library callers; the waiter is created before spawning the opener, so thread creation failure returns an error without leaving a child behind. Standalone `dsc open` retains inherited stdio and checked exit status through `open_url`; both helpers share command construction.
+
+Offline Unix tests in `tests/browser-opener-test.rs` record exact URL arguments for full-fleet and tag-filtered launches, enforce a real timeout covering both CLI exit and pipe EOF, and verify missing executables, launch-only success despite a nonzero opener exit, and standalone nonzero exit with inherited stdio. A readiness handshake ensures scripts are read before temporary-file cleanup; fixture-scoped process groups terminate slow children on success or failure. A Linux subprocess test keeps the library host alive and checks that a terminated opener disappears from `/proc`, proving reaping rather than leaving a zombie.
+
 ### P30 - Medium - Bulk import and config tidy discover site titles serially
 
 **Evidence:** `src/commands/import.rs:29-90`; `src/commands/list.rs:72-102`; `src/commands/common.rs:99-121`; `src/api/client.rs:156-189`.

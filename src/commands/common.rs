@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt::Display;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 /// Absolute, non-overridable ceiling on fleet parallelism. Every command
@@ -326,12 +326,52 @@ pub fn fetch_fullname_from_url(baseurl: &str) -> Option<String> {
     }
 }
 
+/// Open `url` with inherited stdio, checking the opener's exit status.
 pub fn open_url(url: &str) -> Result<()> {
+    let status = browser_command(url)?
+        .status()
+        .context("failed to launch browser opener")?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!("browser opener exited with status {}", status))
+    }
+}
+
+/// Launch `url` noninteractively, reporting launch errors but not late failures.
+/// A background waiter reaps the opener without blocking library callers.
+pub fn open_url_detached(url: &str) -> Result<()> {
+    let mut cmd = browser_command(url)?;
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // Create the waiter before the child, so thread exhaustion cannot leave
+    // an opener running without anyone responsible for reaping it.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("browser-opener".into())
+        .spawn(move || match cmd.spawn() {
+            Ok(mut child) => {
+                let _ = tx.send(Ok(()));
+                let _ = child.wait();
+            }
+            Err(error) => {
+                let _ = tx.send(Err(error));
+            }
+        })
+        .context("failed to start browser opener waiter")?;
+    rx.recv()
+        .context("browser opener waiter stopped before launch")?
+        .context("failed to launch browser opener")
+}
+
+fn browser_command(url: &str) -> Result<Command> {
     if url.trim().is_empty() {
         return Err(anyhow!("cannot open empty base URL"));
     }
 
-    let mut cmd = if let Ok(opener) = std::env::var("DSC_BROWSER_OPENER") {
+    let cmd = if let Ok(opener) = std::env::var("DSC_BROWSER_OPENER") {
         let mut cmd = Command::new(opener);
         cmd.arg(url);
         cmd
@@ -349,12 +389,7 @@ pub fn open_url(url: &str) -> Result<()> {
         cmd
     };
 
-    let status = cmd.status().context("failed to launch browser opener")?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!("browser opener exited with status {}", status))
-    }
+    Ok(cmd)
 }
 
 /// Parse one-email-per-line input. Ignores blank lines, `#` comments
