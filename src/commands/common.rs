@@ -10,7 +10,7 @@ use serde::Serialize;
 use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::fmt::Display;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 /// Absolute, non-overridable ceiling on fleet parallelism. Every command
@@ -326,6 +326,14 @@ pub fn fetch_fullname_from_url(baseurl: &str) -> Option<String> {
     }
 }
 
+/// Launch a browser opener for `url` without waiting for it to exit.
+///
+/// Normal platform openers (`open`/`xdg-open`/`cmd /C start`) detach and
+/// exit quickly, but a custom `DSC_BROWSER_OPENER` is not guaranteed to.
+/// Waiting for exit would serialize `list --open` across every configured
+/// forum behind the slowest (or a hung) opener, so this only surfaces an
+/// immediate launch failure (missing binary, exec permission) and otherwise
+/// lets the opener run independently.
 pub fn open_url(url: &str) -> Result<()> {
     if url.trim().is_empty() {
         return Err(anyhow!("cannot open empty base URL"));
@@ -349,12 +357,17 @@ pub fn open_url(url: &str) -> Result<()> {
         cmd
     };
 
-    let status = cmd.status().context("failed to launch browser opener")?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(anyhow!("browser opener exited with status {}", status))
-    }
+    // Detach the opener's stdio: `dsc`'s own stdout/stderr may be a pipe
+    // (e.g. captured by a caller, or `list -f urls | xargs`), and an
+    // inherited pipe fd stays open in the opener's process group after
+    // `dsc` exits, which would keep that reader blocked until the opener
+    // itself exits - defeating the point of not waiting for it here.
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    cmd.spawn().context("failed to launch browser opener")?;
+    Ok(())
 }
 
 /// Parse one-email-per-line input. Ignores blank lines, `#` comments

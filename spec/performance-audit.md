@@ -340,6 +340,8 @@ Each URL launches an opener with `Command::status()` and waits for it to exit be
 
 **Recommendation:** Spawn normal openers without serial waiting, or add a bounded opener mode that collects exit statuses. Preserve useful errors for immediate launch failures.
 
+**Addressed 2026-09-10:** `open_url` in `src/commands/common.rs` now `spawn()`s the opener instead of `status()`-waiting for it, so `list --open` launches every forum's opener without blocking on any of them (including a hung custom `DSC_BROWSER_OPENER`), while still surfacing an immediate launch failure (missing binary, exec permission) as an error. The opener's stdin/stdout/stderr are redirected to `Stdio::null()` rather than inherited, since an inherited pipe fd would otherwise stay open in the opener's process after `dsc` exits and hang any reader of `dsc`'s own output (a capturing caller, or `list -f urls | xargs`) until the opener itself exited. A regression test (`list_open_does_not_wait_for_a_slow_opener` in `tests/list-test.rs`) uses a fake opener that sleeps for 30s and asserts the command returns in under 5s.
+
 ### P30 - Medium - Bulk import and config tidy discover site titles serially
 
 **Evidence:** `src/commands/import.rs:29-90`; `src/commands/list.rs:72-102`; `src/commands/common.rs:99-121`; `src/api/client.rs:156-189`.
