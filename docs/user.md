@@ -159,6 +159,7 @@ Put either in `crontab -e` or a systemd timer and the archive maintains itself.
 - `--since` accepts a relative duration (`7d`, `24h`, `30m`, `1w`, `90s`) or an ISO-8601 date/timestamp. Omit to paginate everything available.
 - `--types` is a comma-separated list. Default `topics,replies`. Recognised names: `topics`, `replies`, `mentions`, `quotes`, `likes`, `edits`, `responses`.
 - `--limit` caps the number of items, independently of `--since`.
+- Without `--limit`, at most 100,000 matching items are allowed, including when `--since` is supplied. Finding another matching item fails with an error and no partial output. Narrow `--since` or set an explicit `--limit` (which may exceed 100,000) for larger histories. Exactly 100,000 items are allowed if the history or date window ends there; `--limit 0` returns an empty result without fetching.
 - `--format markdown` (default) prints `- [Title](URL) — date` lines; `text` is a wider one-row-per-item human view; `json`, `yaml`, `csv` are structured.
 
 ### Scope

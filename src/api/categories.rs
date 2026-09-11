@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::{DiscourseClient, ResponseBody, json_page_path};
+use super::client::{DiscourseClient, MAX_PAGINATION_PAGES, ResponseBody, json_page_path};
 use super::error::http_error;
 use super::models::{
     CategoriesResponse, CategoryDefinition, CategoryDefinitionResponse,
@@ -32,7 +32,7 @@ impl DiscourseClient {
     pub fn fetch_category(&self, category_id: u64) -> Result<CategoryResponse> {
         let path = format!("/c/{}.json", category_id);
         let mut body = self.fetch_category_page(&path, category_id)?;
-        let mut seen_paths = HashSet::new();
+        let mut seen_paths = HashSet::from([path]);
         let mut seen_topics: HashSet<u64> = body
             .topic_list
             .topics
@@ -40,12 +40,19 @@ impl DiscourseClient {
             .map(|topic| topic.id)
             .collect();
         let mut next = body.topic_list.more_topics_url.take();
+        let mut pages = 1;
 
         while let Some(raw_path) = next {
-            if !seen_paths.insert(raw_path.clone()) {
+            let path = json_page_path(&raw_path)?;
+            if !seen_paths.insert(path.clone()) {
                 return Err(anyhow!("category pagination loop detected: {}", raw_path));
             }
-            let path = json_page_path(&raw_path)?;
+            pages += 1;
+            if pages > MAX_PAGINATION_PAGES {
+                return Err(anyhow!(
+                    "category pagination exceeded {MAX_PAGINATION_PAGES} pages"
+                ));
+            }
             let mut page = self.fetch_category_page(&path, category_id)?;
             for topic in page.topic_list.topics.drain(..) {
                 if seen_topics.insert(topic.id) {

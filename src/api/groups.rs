@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::{DiscourseClient, ResponseBody};
+use super::client::{DiscourseClient, MAX_PAGINATION_PAGES, ResponseBody};
 use super::error::http_error;
 use super::models::{
     GroupDetail, GroupDetailResponse, GroupMember, GroupMembersResponse, GroupSummary,
@@ -403,11 +403,18 @@ impl DiscourseClient {
         let mut out = Vec::new();
         let mut seen = HashSet::new();
         let mut next_path = Some(path.to_string());
+        let mut pages = 0;
 
         while let Some(path) = next_path.take() {
             let path = self.normalize_groups_path(&path);
             if !seen.insert(path.clone()) {
                 return Err(anyhow!("groups request loop detected at {}", path));
+            }
+            pages += 1;
+            if pages > MAX_PAGINATION_PAGES {
+                return Err(anyhow!(
+                    "groups pagination exceeded {MAX_PAGINATION_PAGES} pages"
+                ));
             }
             let response = self.get(&path)?;
             let status = response.status();
@@ -425,6 +432,7 @@ impl DiscourseClient {
             }
             let value: Value = serde_json::from_str(&text).context("parsing groups json")?;
             let page_groups = extract_groups_from_value(&value)?;
+            // Discourse emits load_more_groups even on the terminal empty page.
             if page_groups.is_empty() {
                 break;
             }

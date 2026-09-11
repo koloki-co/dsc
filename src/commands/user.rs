@@ -552,16 +552,19 @@ pub fn user_activity(
         None => None,
     };
 
+    // A date cutoff does not bound item count. Only an explicit --limit
+    // replaces this safety budget, including when --since is supplied.
+    const MAX_UNBOUNDED_ACTIVITY_ITEMS: usize = 100_000;
+
     let mut collected: Vec<UserAction> = Vec::new();
     let mut offset: u32 = 0;
-    let page_hint: u32 = 30; // Discourse returns ~10-30 depending on version
-    let max = limit.unwrap_or(u32::MAX);
-    loop {
+    let max = limit.unwrap_or(u32::MAX) as usize;
+    while collected.len() < max {
         let page = client.fetch_user_actions(username, &filter_types, offset)?;
         if page.is_empty() {
             break;
         }
-        let page_len = page.len() as u32;
+        let page_len = u32::try_from(page.len()).context("activity page length overflow")?;
 
         let mut past_cutoff = false;
         for action in page {
@@ -572,16 +575,25 @@ pub fn user_activity(
                 past_cutoff = true;
                 continue;
             }
+            // Probe beyond an exact-budget result before declaring overflow:
+            // the next page may be empty or entirely older than the cutoff.
+            if limit.is_none() && collected.len() == MAX_UNBOUNDED_ACTIVITY_ITEMS {
+                return Err(anyhow!(
+                    "activity history exceeded {MAX_UNBOUNDED_ACTIVITY_ITEMS} items; pass --limit to set an explicit item bound or narrow --since"
+                ));
+            }
             collected.push(action);
-            if collected.len() as u32 >= max {
+            if collected.len() >= max {
                 break;
             }
         }
 
-        if past_cutoff || collected.len() as u32 >= max {
+        if past_cutoff || collected.len() >= max {
             break;
         }
-        offset = offset.saturating_add(page_len.max(page_hint));
+        offset = offset
+            .checked_add(page_len)
+            .context("activity pagination offset overflow")?;
     }
 
     render_activity(&collected, &normalize_baseurl(&discourse.baseurl), format)
