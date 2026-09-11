@@ -432,6 +432,7 @@ impl DiscourseClient {
             }
             let value: Value = serde_json::from_str(&text).context("parsing groups json")?;
             let page_groups = extract_groups_from_value(&value)?;
+            // Discourse emits load_more_groups even on the terminal empty page.
             if page_groups.is_empty() {
                 break;
             }

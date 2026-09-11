@@ -32,7 +32,7 @@ impl DiscourseClient {
     pub fn fetch_category(&self, category_id: u64) -> Result<CategoryResponse> {
         let path = format!("/c/{}.json", category_id);
         let mut body = self.fetch_category_page(&path, category_id)?;
-        let mut seen_paths = HashSet::new();
+        let mut seen_paths = HashSet::from([path]);
         let mut seen_topics: HashSet<u64> = body
             .topic_list
             .topics
@@ -43,7 +43,8 @@ impl DiscourseClient {
         let mut pages = 1;
 
         while let Some(raw_path) = next {
-            if !seen_paths.insert(raw_path.clone()) {
+            let path = json_page_path(&raw_path)?;
+            if !seen_paths.insert(path.clone()) {
                 return Err(anyhow!("category pagination loop detected: {}", raw_path));
             }
             pages += 1;
@@ -52,7 +53,6 @@ impl DiscourseClient {
                     "category pagination exceeded {MAX_PAGINATION_PAGES} pages"
                 ));
             }
-            let path = json_page_path(&raw_path)?;
             let mut page = self.fetch_category_page(&path, category_id)?;
             for topic in page.topic_list.topics.drain(..) {
                 if seen_topics.insert(topic.id) {

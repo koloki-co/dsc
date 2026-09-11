@@ -255,7 +255,8 @@ impl DiscourseClient {
         let mut pages = 0;
 
         while let Some(raw_path) = next {
-            if !seen_paths.insert(raw_path.clone()) {
+            let path = json_page_path(&raw_path)?;
+            if !seen_paths.insert(path.clone()) {
                 return Err(anyhow!(
                     "deleted-topic pagination loop detected: {raw_path}"
                 ));
@@ -266,7 +267,6 @@ impl DiscourseClient {
                     "deleted-topic pagination exceeded {MAX_PAGINATION_PAGES} pages"
                 ));
             }
-            let path = json_page_path(&raw_path)?;
             let response = self.get(&path)?;
             let status = response.status();
             let text = response
@@ -599,6 +599,7 @@ impl DiscourseClient {
         let mut next = Some(path);
         let mut pages = 0;
         while let Some(path) = next {
+            let path = json_page_path(&path)?;
             if !seen_paths.insert(path.clone()) {
                 return Err(anyhow!(
                     "private-message pagination loop detected: {}",
@@ -611,7 +612,6 @@ impl DiscourseClient {
                     "private-message pagination exceeded {MAX_PAGINATION_PAGES} pages"
                 ));
             }
-            let path = json_page_path(&path)?;
             let response = self.get(&path)?;
             let status = response.status();
             let text = response.text_capped().context("reading PM list response")?;
