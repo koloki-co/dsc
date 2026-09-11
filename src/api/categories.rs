@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::{DiscourseClient, ResponseBody, json_page_path};
+use super::client::{DiscourseClient, MAX_PAGINATION_PAGES, ResponseBody, json_page_path};
 use super::error::http_error;
 use super::models::{
     CategoriesResponse, CategoryDefinition, CategoryDefinitionResponse,
@@ -40,10 +40,17 @@ impl DiscourseClient {
             .map(|topic| topic.id)
             .collect();
         let mut next = body.topic_list.more_topics_url.take();
+        let mut pages = 1;
 
         while let Some(raw_path) = next {
             if !seen_paths.insert(raw_path.clone()) {
                 return Err(anyhow!("category pagination loop detected: {}", raw_path));
+            }
+            pages += 1;
+            if pages > MAX_PAGINATION_PAGES {
+                return Err(anyhow!(
+                    "category pagination exceeded {MAX_PAGINATION_PAGES} pages"
+                ));
             }
             let path = json_page_path(&raw_path)?;
             let mut page = self.fetch_category_page(&path, category_id)?;

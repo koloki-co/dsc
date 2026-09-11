@@ -552,6 +552,12 @@ pub fn user_activity(
         None => None,
     };
 
+    // Applies only to an unbounded fetch (no --limit): caps runtime/memory
+    // against a highly active long-lived user, matching sar.rs's identical
+    // MAX_ITEMS cap on the same endpoint. An explicit --limit is the user's
+    // own bound and is never overridden by this budget.
+    const MAX_UNBOUNDED_ACTIVITY_ITEMS: u32 = 100_000;
+
     let mut collected: Vec<UserAction> = Vec::new();
     let mut offset: u32 = 0;
     let page_hint: u32 = 30; // Discourse returns ~10-30 depending on version
@@ -580,6 +586,11 @@ pub fn user_activity(
 
         if past_cutoff || collected.len() as u32 >= max {
             break;
+        }
+        if limit.is_none() && collected.len() as u32 >= MAX_UNBOUNDED_ACTIVITY_ITEMS {
+            return Err(anyhow!(
+                "activity history exceeded {MAX_UNBOUNDED_ACTIVITY_ITEMS} items; pass --limit or --since to bound the request"
+            ));
         }
         offset = offset.saturating_add(page_len.max(page_hint));
     }

@@ -29,6 +29,15 @@ const MAX_BODY_BYTES: u64 = 64 * 1024 * 1024;
 /// Cap on redirect hops within the forum's own host.
 const MAX_REDIRECTS: usize = 5;
 
+/// Cap on pages followed for a "list everything" pagination loop (category
+/// topics, deleted topics, private messages, group fallback listing).
+///
+/// Cycle detection alone only rejects an exact repeated continuation path; a
+/// server that returns indefinitely many unique paths would otherwise page
+/// forever. Matches the cap already used independently by the Data Explorer
+/// and webhook pagination loops.
+pub(super) const MAX_PAGINATION_PAGES: usize = 1_000;
+
 /// Cap on connection establishment; a dead/unreachable host should fail fast
 /// rather than hang the CLI indefinitely.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
