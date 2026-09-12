@@ -695,7 +695,11 @@ fn list_s3_bucket(
 ) -> Result<S3BucketSummary> {
     let mut token: Option<String> = None;
     let mut seen_tokens = HashSet::new();
-    let mut objects = Vec::new();
+    let mut summary = S3BucketSummary {
+        latest_archive: None,
+        total_size_bytes: 0,
+        object_count: 0,
+    };
     loop {
         let args = list_s3_args(bucket, region, endpoint, token.as_deref());
         let page = aws_json(
@@ -703,7 +707,7 @@ fn list_s3_bucket(
             access_key_id,
             secret_access_key,
         )?;
-        objects.extend(parse_s3_objects(&page)?);
+        fold_s3_page(parse_s3_objects(&page)?, &mut summary);
         if !page
             .get("IsTruncated")
             .and_then(Value::as_bool)
@@ -722,17 +726,28 @@ fn list_s3_bucket(
         }
         token = Some(next);
     }
-    let total_size_bytes = objects.iter().map(|object| object.size_bytes).sum();
-    let latest_archive = objects
-        .iter()
-        .filter(|object| is_backup_archive(&object.key))
-        .max_by_key(|object| object.modified_at)
-        .cloned();
-    Ok(S3BucketSummary {
-        latest_archive,
-        total_size_bytes,
-        object_count: objects.len() as u64,
-    })
+    Ok(summary)
+}
+
+/// Fold one page of S3 objects into the running summary and discard the page,
+/// rather than materializing the whole bucket inventory before aggregating
+/// (P13). Tie-breaking on `latest_archive` matches the previous
+/// `max_by_key`-over-the-full-list behavior: among equal `modified_at`
+/// values, the one encountered last (i.e. later in listing order) wins.
+fn fold_s3_page(page: Vec<S3Object>, summary: &mut S3BucketSummary) {
+    for object in page {
+        summary.total_size_bytes += object.size_bytes;
+        summary.object_count += 1;
+        if is_backup_archive(&object.key) {
+            let replace = match &summary.latest_archive {
+                Some(current) => object.modified_at >= current.modified_at,
+                None => true,
+            };
+            if replace {
+                summary.latest_archive = Some(object);
+            }
+        }
+    }
 }
 
 fn list_s3_args(
@@ -748,6 +763,11 @@ fn list_s3_args(
         bucket.to_string(),
         "--region".to_string(),
         region.to_string(),
+        // Without this, the AWS CLI auto-paginates internally and returns
+        // the bucket's entire inventory merged into one response before our
+        // continuation-token loop ever runs a second iteration - defeating
+        // the per-page fold below (P13).
+        "--no-paginate".to_string(),
     ];
     if let Some(endpoint) = endpoint {
         args.push("--endpoint-url".to_string());
@@ -1369,6 +1389,7 @@ mod tests {
             args.windows(2)
                 .any(|args| args == ["--continuation-token", "next"])
         );
+        assert!(args.iter().any(|arg| arg == "--no-paginate"));
     }
 
     #[test]
@@ -1383,6 +1404,89 @@ mod tests {
     fn rejects_s3_endpoints_with_embedded_credentials() {
         let error = validate_s3_endpoint("https://user:secret@example.com").unwrap_err();
         assert!(error.to_string().contains("without credentials"));
+    }
+
+    #[test]
+    fn fold_s3_page_accumulates_across_pages() {
+        let mut summary = S3BucketSummary {
+            latest_archive: None,
+            total_size_bytes: 0,
+            object_count: 0,
+        };
+        fold_s3_page(
+            vec![
+                S3Object {
+                    key: "a.tar.gz".to_string(),
+                    modified_at: "2026-07-01T00:00:00Z".parse().unwrap(),
+                    size_bytes: 10,
+                },
+                S3Object {
+                    key: "notes.txt".to_string(),
+                    modified_at: "2026-07-02T00:00:00Z".parse().unwrap(),
+                    size_bytes: 5,
+                },
+            ],
+            &mut summary,
+        );
+        fold_s3_page(
+            vec![S3Object {
+                key: "b.tar.gz".to_string(),
+                modified_at: "2026-07-03T00:00:00Z".parse().unwrap(),
+                size_bytes: 20,
+            }],
+            &mut summary,
+        );
+        assert_eq!(summary.object_count, 3);
+        assert_eq!(summary.total_size_bytes, 35);
+        assert_eq!(summary.latest_archive.unwrap().key, "b.tar.gz");
+    }
+
+    #[test]
+    fn fold_s3_page_breaks_modified_at_ties_by_last_seen() {
+        // Matches the old max_by_key-over-the-full-list behavior: among
+        // equally-maximum elements, the last one encountered wins.
+        let mut summary = S3BucketSummary {
+            latest_archive: None,
+            total_size_bytes: 0,
+            object_count: 0,
+        };
+        let tie = "2026-07-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        fold_s3_page(
+            vec![
+                S3Object {
+                    key: "first.tar.gz".to_string(),
+                    modified_at: tie,
+                    size_bytes: 1,
+                },
+                S3Object {
+                    key: "second.tar.gz".to_string(),
+                    modified_at: tie,
+                    size_bytes: 1,
+                },
+            ],
+            &mut summary,
+        );
+        assert_eq!(summary.latest_archive.unwrap().key, "second.tar.gz");
+    }
+
+    #[test]
+    fn fold_s3_page_ignores_non_archives_for_latest_but_counts_size() {
+        let mut summary = S3BucketSummary {
+            latest_archive: None,
+            total_size_bytes: 0,
+            object_count: 0,
+        };
+        fold_s3_page(
+            vec![S3Object {
+                key: "readme.txt".to_string(),
+                modified_at: "2026-07-01T00:00:00Z".parse().unwrap(),
+                size_bytes: 42,
+            }],
+            &mut summary,
+        );
+        assert!(summary.latest_archive.is_none());
+        assert_eq!(summary.total_size_bytes, 42);
+        assert_eq!(summary.object_count, 1);
     }
 
     #[test]

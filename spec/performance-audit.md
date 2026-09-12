@@ -170,6 +170,8 @@ After serial forum configuration discovery, each distinct S3 bucket is scanned s
 
 **Recommendation:** Use explicit one-service-page AWS calls, fold count/bytes/newest archive as each page arrives, and discard the page immediately. Scan independent buckets through a bounded pool and preserve bucket deduplication, which is already implemented correctly.
 
+**Addressed 2026-09-12 (partial):** `list_s3_args` now passes `--no-paginate`, so each `aws s3api list-objects-v2` call returns one service page instead of the AWS CLI auto-paginating internally and merging the bucket's entire inventory into a single response first. `list_s3_bucket` folds count/bytes/newest-archive into a running `S3BucketSummary` per page via a new `fold_s3_page` helper and discards the page's objects immediately, replacing the prior `Vec<S3Object>` that retained every object for separate sum/count/`max_by_key` passes after collection; tie-breaking on `latest_archive` preserves the previous "last-seen-wins" semantics. Independent buckets are still scanned serially - the bounded-pool half of this recommendation is not addressed here and remains open (see roadmap R52).
+
 ### P14 - Medium - S3 setup polling repeatedly performs a full recursive listing
 
 **Evidence:** `src/commands/backup_s3.rs:240-271`.
