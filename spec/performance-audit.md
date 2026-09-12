@@ -168,7 +168,11 @@ After serial forum configuration discovery, each distinct S3 bucket is scanned s
 
 **Impact:** Runtime is additive across buckets, and large buckets can occupy hundreds of megabytes across AWS CLI output, Rust stdout bytes, the JSON DOM, and the copied object vector. No rows are emitted until all scans finish.
 
-**Recommendation:** Use explicit one-service-page AWS calls, fold count/bytes/newest archive as each page arrives, and discard the page immediately. Scan independent buckets through a bounded pool and preserve bucket deduplication, which is already implemented correctly.
+**Recommendation:** Use explicit one-service-page AWS calls, fold count/bytes/newest archive as each page arrives, and discard the page immediately. Scan independent buckets through a bounded pool. The current endpoint-aware implementation scans per forum; any future deduplication must respect endpoint and credential boundaries rather than sharing results solely by bucket name.
+
+**Addressed 2026-09-12 (partial):** `list_s3_args` now passes `--no-paginate`, so each `aws s3api list-objects-v2` call returns one service page instead of the AWS CLI auto-paginating internally and merging the bucket's entire inventory into a single response first. `list_s3_bucket` folds count/bytes/newest-archive into a running `S3BucketSummary` per page via a new `fold_s3_page` helper and discards the page's objects immediately, replacing the prior `Vec<S3Object>` that retained every object for separate sum/count/`max_by_key` passes after collection; tie-breaking on `latest_archive` preserves the previous "last-seen-wins" semantics. Independent buckets are still scanned serially - the bounded-pool half of this recommendation is not addressed here and remains open (see roadmap R52).
+
+**PR #139 review fixes:** the scan now rejects a missing/non-boolean `IsTruncated` instead of silently publishing a partial summary, and caps each scan at 1,000 service pages so unique-token streams cannot run indefinitely or grow token history without bound. Offline tests exercise the actual scan loop and argument construction, cross-page aggregation/ties, empty intermediate pages, later-page failures, malformed pagination, repeated tokens, and completion exactly at the budget. Per-page subprocess output remains buffered without a byte cap or overall deadline; these are not solved by paging. See [backup-health](commands/backup-health.md) for the contract.
 
 ### P14 - Medium - S3 setup polling repeatedly performs a full recursive listing
 

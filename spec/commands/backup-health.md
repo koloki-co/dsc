@@ -54,15 +54,19 @@ Example JSON row:
 
 ## Data source and semantics
 
-The health command uses the AWS CLI and adds no Rust AWS SDK dependency. It obtains bucket, region, optional custom endpoint, backup frequency, static access key, static secret, and IAM-profile selection from the Discourse admin site settings. Static secrets remain process-local, are passed only through the child environment, and are skipped by every serializer. IAM-profile forums use the ambient AWS credential chain. It invokes one paginated read command per selected forum:
+The health command uses the AWS CLI and adds no Rust AWS SDK dependency. It obtains bucket, region, optional custom endpoint, backup frequency, static access key, static secret, and IAM-profile selection from the Discourse admin site settings. Static secrets remain process-local, are passed only through the child environment, and are skipped by every serializer. IAM-profile forums use the ambient AWS credential chain. It scans each selected forum serially, invoking one read command per service page:
 
 ```bash
-aws s3api list-objects-v2 --bucket <bucket> --region <region> --output json
+aws s3api list-objects-v2 --bucket <bucket> --region <region> --no-paginate --output json
 # Custom providers additionally receive:
 aws s3api list-objects-v2 ... --endpoint-url <s3_endpoint> --output json
 ```
 
-For buckets with more than 1,000 objects, `dsc` follows `NextContinuationToken` until `IsTruncated` is false. It sums `Contents[].Size` across every returned object, picks the newest `LastModified` backup archive, and records the total object count. It must inspect object keys rather than assume a flat bucket because Discourse commonly writes under `backups/default/`.
+`--no-paginate` disables AWS CLI auto-pagination: each service page contains at most 1,000 objects. `dsc` passes each opaque `NextContinuationToken` unchanged as `--continuation-token` until the boolean `IsTruncated` is false, including through empty intermediate pages. These are service tokens, not the CLI's `NextToken`/`--starting-token` pair; do not combine this loop with `--max-items` or `--page-size`. Reference: [AWS CLI list-objects-v2](https://docs.aws.amazon.com/cli/latest/reference/s3api/list-objects-v2.html).
+
+The scan folds `Contents[].Size`, object count, and newest `LastModified` backup archive into a running summary and discards each page before fetching another. Equal timestamps retain the last archive encountered in listing order, even across pages. It must inspect object keys rather than assume a flat bucket because Discourse commonly writes under `backups/default/`.
+
+Each scan permits at most 1,000 service pages (up to one million objects for full pages); completion on the last allowed page succeeds. A still-truncated final page, repeated token, missing/invalid completion flag or continuation token, malformed object, or failed AWS invocation fails the entire scan. The forum receives `inaccessible` and the command exits non-zero, without publishing partial totals or a partial newest archive. The page budget also bounds retained continuation-token history. AWS subprocess output is still buffered per page, not byte-capped against a nonconforming provider, and there is no overall subprocess deadline. Shared buckets are currently scanned per forum with that forum's credentials, not deduplicated.
 
 An object qualifies as a backup archive only when its basename matches Discourse backup formats (`.tar.gz` or `.tar`) and is not an unrelated report, manifest, or S3 service artifact. The total bucket size intentionally includes every object, not only backup archives: stray uploads and abandoned artifacts are the storage-growth problem this command should surface.
 
@@ -78,8 +82,8 @@ The standard per-forum backup credentials already grant `s3:ListBucket` on the b
 - `stale` - latest archive exists and exceeds the effective site-frequency threshold.
 - `disabled` - `backup_frequency=0`; any existing archive is reported but is not classified stale.
 - `ok` - latest archive is within threshold.
-- `inaccessible` - the S3 provider denies or fails the bucket request; stderr is summarized without exposing credentials.
-- `unknown` - site-setting lookup or timestamp parsing failed.
+- `inaccessible` - the S3 provider denies or fails the bucket request, or listing validation/pagination fails (including object timestamp parsing); no partial summary is published.
+- `unknown` - site-setting lookup failed.
 
 ## Reference: API calls observed in the field
 
@@ -131,7 +135,7 @@ Representative S3 response:
 
 - [x] Add `dsc backup health` for all configured forums, one forum, and `--tags` selection.
 - [x] Resolve S3 location, bucket, and region from Discourse settings; report non-S3 and incomplete configurations explicitly.
-- [x] Preflight the ambient AWS CLI once and paginate `s3api list-objects-v2` safely for every unique bucket.
+- [x] Paginate `s3api list-objects-v2` per forum using its endpoint and credentials, without an AWS-only preflight.
 - [x] Report newest archive name, actual S3 modification timestamp, elapsed days, newest archive bytes, total bucket bytes, and object count.
 - [x] Add `--max-age` with non-zero aggregate exit status for stale/missing/inaccessible/misconfigured results.
 - [x] Implement text, JSON, YAML, and CSV output with stable machine fields and no credential output.
@@ -139,6 +143,7 @@ Representative S3 response:
 - [x] Read `backup_frequency` and never classify an archive stale before the configured schedule has elapsed.
 - [x] Stream and flush text/CSV rows as bucket reads complete while retaining buffered JSON/YAML documents.
 - [x] Support S3-compatible `s3_endpoint` settings and process-local static credentials; verified read-only against DigitalOcean Spaces.
+- [x] R52/P13: fold service pages with a finite page budget and offline loop tests for token forwarding, totals, cross-page timestamp ties, empty pages, later-page failures, and the exact budget boundary.
 
 ### Phase 2 - iteration ergonomics
 

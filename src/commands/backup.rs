@@ -686,6 +686,8 @@ fn effective_stale_after_days(frequency: u64, max_age: Option<u64>) -> Option<u6
     (frequency > 0).then(|| max_age.unwrap_or(frequency).max(frequency))
 }
 
+const MAX_S3_PAGES: usize = 1_000;
+
 fn list_s3_bucket(
     bucket: &str,
     region: &str,
@@ -693,23 +695,38 @@ fn list_s3_bucket(
     access_key_id: Option<&str>,
     secret_access_key: Option<&str>,
 ) -> Result<S3BucketSummary> {
-    let mut token: Option<String> = None;
-    let mut seen_tokens = HashSet::new();
-    let mut objects = Vec::new();
-    loop {
-        let args = list_s3_args(bucket, region, endpoint, token.as_deref());
-        let page = aws_json(
+    scan_s3_bucket(bucket, region, endpoint, |args| {
+        aws_json(
             &args.iter().map(String::as_str).collect::<Vec<_>>(),
             access_key_id,
             secret_access_key,
-        )?;
-        objects.extend(parse_s3_objects(&page)?);
+        )
+    })
+}
+
+fn scan_s3_bucket(
+    bucket: &str,
+    region: &str,
+    endpoint: Option<&str>,
+    mut fetch_page: impl FnMut(&[String]) -> Result<Value>,
+) -> Result<S3BucketSummary> {
+    let mut token: Option<String> = None;
+    let mut seen_tokens = HashSet::new();
+    let mut summary = S3BucketSummary {
+        latest_archive: None,
+        total_size_bytes: 0,
+        object_count: 0,
+    };
+    for _ in 0..MAX_S3_PAGES {
+        let args = list_s3_args(bucket, region, endpoint, token.as_deref());
+        let page = fetch_page(&args)?;
+        fold_s3_page(parse_s3_objects(&page)?, &mut summary);
         if !page
             .get("IsTruncated")
             .and_then(Value::as_bool)
-            .unwrap_or(false)
+            .ok_or_else(|| anyhow!("S3 response missing boolean IsTruncated"))?
         {
-            break;
+            return Ok(summary);
         }
         let next = page
             .get("NextContinuationToken")
@@ -722,17 +739,30 @@ fn list_s3_bucket(
         }
         token = Some(next);
     }
-    let total_size_bytes = objects.iter().map(|object| object.size_bytes).sum();
-    let latest_archive = objects
-        .iter()
-        .filter(|object| is_backup_archive(&object.key))
-        .max_by_key(|object| object.modified_at)
-        .cloned();
-    Ok(S3BucketSummary {
-        latest_archive,
-        total_size_bytes,
-        object_count: objects.len() as u64,
-    })
+    Err(anyhow!(
+        "S3 pagination exceeded {MAX_S3_PAGES} pages for bucket {bucket}"
+    ))
+}
+
+/// Fold one page of S3 objects into the running summary and discard the page,
+/// rather than materializing the whole bucket inventory before aggregating
+/// (P13). Tie-breaking on `latest_archive` matches the previous
+/// `max_by_key`-over-the-full-list behavior: among equal `modified_at`
+/// values, the one encountered last (i.e. later in listing order) wins.
+fn fold_s3_page(page: Vec<S3Object>, summary: &mut S3BucketSummary) {
+    for object in page {
+        summary.total_size_bytes += object.size_bytes;
+        summary.object_count += 1;
+        if is_backup_archive(&object.key) {
+            let replace = match &summary.latest_archive {
+                Some(current) => object.modified_at >= current.modified_at,
+                None => true,
+            };
+            if replace {
+                summary.latest_archive = Some(object);
+            }
+        }
+    }
 }
 
 fn list_s3_args(
@@ -748,6 +778,8 @@ fn list_s3_args(
         bucket.to_string(),
         "--region".to_string(),
         region.to_string(),
+        // Use service tokens, not the AWS CLI's auto-pagination/NextToken.
+        "--no-paginate".to_string(),
     ];
     if let Some(endpoint) = endpoint {
         args.push("--endpoint-url".to_string());
@@ -1369,6 +1401,7 @@ mod tests {
             args.windows(2)
                 .any(|args| args == ["--continuation-token", "next"])
         );
+        assert!(args.iter().any(|arg| arg == "--no-paginate"));
     }
 
     #[test]
@@ -1383,6 +1416,217 @@ mod tests {
     fn rejects_s3_endpoints_with_embedded_credentials() {
         let error = validate_s3_endpoint("https://user:secret@example.com").unwrap_err();
         assert!(error.to_string().contains("without credentials"));
+    }
+
+    #[test]
+    fn s3_scan_follows_service_tokens_and_folds_all_pages() {
+        let tokens = [None, Some("opaque+/= token"), Some("last")];
+        let pages = [
+            json!({
+                "IsTruncated": true, "NextContinuationToken": tokens[1],
+                "Contents": [
+                    {"Key": "backups/first.tar.gz", "LastModified": "2026-07-03T00:00:00Z", "Size": 10},
+                    {"Key": "notes.txt", "LastModified": "2026-07-04T00:00:00Z", "Size": 5}
+                ]
+            }),
+            // Empty intermediate pages must not terminate a truncated listing.
+            json!({"IsTruncated": true, "NextContinuationToken": tokens[2]}),
+            json!({
+                "IsTruncated": false,
+                "Contents": [
+                    {"Key": "backups/tied.tar", "LastModified": "2026-07-03T02:00:00+02:00", "Size": 20},
+                    {"Key": "backups/older.tar.gz", "LastModified": "2026-07-01T00:00:00Z", "Size": 7},
+                    {"Key": "backups/tied.tar.sha256", "LastModified": "2026-07-05T00:00:00Z", "Size": 2}
+                ]
+            }),
+        ];
+        let mut calls = 0;
+        let summary = scan_s3_bucket("bucket", "region", Some("https://s3.example"), |args| {
+            let mut expected = vec![
+                "s3api",
+                "list-objects-v2",
+                "--bucket",
+                "bucket",
+                "--region",
+                "region",
+                "--no-paginate",
+                "--endpoint-url",
+                "https://s3.example",
+            ];
+            if let Some(token) = tokens[calls] {
+                expected.extend(["--continuation-token", token]);
+            }
+            assert_eq!(args, expected);
+            let page = pages[calls].clone();
+            calls += 1;
+            Ok(page)
+        })
+        .unwrap();
+        assert_eq!(calls, 3);
+        assert_eq!(summary.object_count, 5);
+        assert_eq!(summary.total_size_bytes, 44);
+        let latest = summary.latest_archive.unwrap();
+        assert_eq!(latest.key, "backups/tied.tar");
+        assert_eq!(latest.size_bytes, 20);
+        assert_eq!(
+            latest.modified_at,
+            "2026-07-03T00:00:00Z".parse::<DateTime<Utc>>().unwrap()
+        );
+    }
+
+    #[test]
+    fn s3_scan_rejects_failed_or_invalid_later_pages_without_a_summary() {
+        for (page, expected) in [
+            (Err(anyhow!("aws failed")), "aws failed"),
+            (Err(anyhow!("parsing aws output")), "parsing aws output"),
+            (Ok(json!({})), "IsTruncated"),
+            (Ok(json!({"IsTruncated": "false"})), "IsTruncated"),
+            (Ok(json!({"IsTruncated": true})), "NextContinuationToken"),
+            (
+                Ok(json!({"IsTruncated": true, "NextContinuationToken": ""})),
+                "NextContinuationToken",
+            ),
+            (
+                Ok(json!({"IsTruncated": true, "NextContinuationToken": 123})),
+                "NextContinuationToken",
+            ),
+            (
+                Ok(json!({"IsTruncated": true, "NextContinuationToken": "next"})),
+                "loop detected",
+            ),
+            (
+                Ok(json!({"IsTruncated": false, "Contents": {}})),
+                "Contents",
+            ),
+            (
+                Ok(json!({"IsTruncated": false, "Contents": [{"Key": "bad.tar"}]})),
+                "LastModified",
+            ),
+        ] {
+            let mut pages = vec![
+                Ok(json!({
+                    "IsTruncated": true, "NextContinuationToken": "next",
+                    "Contents": [{"Key": "good.tar", "LastModified": "2026-07-03T00:00:00Z", "Size": 10}]
+                })),
+                page,
+            ].into_iter();
+            let error =
+                scan_s3_bucket("bucket", "region", None, |_| pages.next().unwrap()).unwrap_err();
+            assert!(error.to_string().contains(expected), "{error}");
+            assert!(pages.next().is_none());
+        }
+    }
+
+    #[test]
+    fn s3_scan_bounds_unique_tokens_and_accepts_completion_at_the_limit() {
+        for completes in [false, true] {
+            let mut calls = 0;
+            let result = scan_s3_bucket("bucket", "region", None, |_| {
+                calls += 1;
+                assert!(calls <= MAX_S3_PAGES);
+                Ok(json!({
+                    "IsTruncated": !(completes && calls == MAX_S3_PAGES),
+                    "NextContinuationToken": calls.to_string()
+                }))
+            });
+            assert_eq!(calls, MAX_S3_PAGES);
+            if completes {
+                let summary = result.unwrap();
+                assert_eq!(summary.object_count, 0);
+                assert_eq!(summary.total_size_bytes, 0);
+                assert!(summary.latest_archive.is_none());
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("exceeded 1000 pages for bucket bucket")
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fold_s3_page_accumulates_across_pages() {
+        let mut summary = S3BucketSummary {
+            latest_archive: None,
+            total_size_bytes: 0,
+            object_count: 0,
+        };
+        fold_s3_page(
+            vec![
+                S3Object {
+                    key: "a.tar.gz".to_string(),
+                    modified_at: "2026-07-01T00:00:00Z".parse().unwrap(),
+                    size_bytes: 10,
+                },
+                S3Object {
+                    key: "notes.txt".to_string(),
+                    modified_at: "2026-07-02T00:00:00Z".parse().unwrap(),
+                    size_bytes: 5,
+                },
+            ],
+            &mut summary,
+        );
+        fold_s3_page(
+            vec![S3Object {
+                key: "b.tar.gz".to_string(),
+                modified_at: "2026-07-03T00:00:00Z".parse().unwrap(),
+                size_bytes: 20,
+            }],
+            &mut summary,
+        );
+        assert_eq!(summary.object_count, 3);
+        assert_eq!(summary.total_size_bytes, 35);
+        assert_eq!(summary.latest_archive.unwrap().key, "b.tar.gz");
+    }
+
+    #[test]
+    fn fold_s3_page_breaks_modified_at_ties_by_last_seen() {
+        // Matches the old max_by_key-over-the-full-list behavior: among
+        // equally-maximum elements, the last one encountered wins.
+        let mut summary = S3BucketSummary {
+            latest_archive: None,
+            total_size_bytes: 0,
+            object_count: 0,
+        };
+        let tie = "2026-07-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        fold_s3_page(
+            vec![
+                S3Object {
+                    key: "first.tar.gz".to_string(),
+                    modified_at: tie,
+                    size_bytes: 1,
+                },
+                S3Object {
+                    key: "second.tar.gz".to_string(),
+                    modified_at: tie,
+                    size_bytes: 1,
+                },
+            ],
+            &mut summary,
+        );
+        assert_eq!(summary.latest_archive.unwrap().key, "second.tar.gz");
+    }
+
+    #[test]
+    fn fold_s3_page_ignores_non_archives_for_latest_but_counts_size() {
+        let mut summary = S3BucketSummary {
+            latest_archive: None,
+            total_size_bytes: 0,
+            object_count: 0,
+        };
+        fold_s3_page(
+            vec![S3Object {
+                key: "readme.txt".to_string(),
+                modified_at: "2026-07-01T00:00:00Z".parse().unwrap(),
+                size_bytes: 42,
+            }],
+            &mut summary,
+        );
+        assert!(summary.latest_archive.is_none());
+        assert_eq!(summary.total_size_bytes, 42);
+        assert_eq!(summary.object_count, 1);
     }
 
     #[test]
