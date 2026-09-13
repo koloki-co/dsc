@@ -11,6 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -703,13 +704,21 @@ fn list_s3_bucket(
     access_key_id: Option<&str>,
     secret_access_key: Option<&str>,
 ) -> Result<S3BucketSummary> {
-    scan_s3_bucket(bucket, region, endpoint, S3_SCAN_DEADLINE, |args| {
-        aws_json(
-            &args.iter().map(String::as_str).collect::<Vec<_>>(),
-            access_key_id,
-            secret_access_key,
-        )
-    })
+    scan_s3_bucket(
+        bucket,
+        region,
+        endpoint,
+        S3_SCAN_DEADLINE,
+        |args, remaining| {
+            run_aws_json(
+                &args.iter().map(String::as_str).collect::<Vec<_>>(),
+                access_key_id,
+                secret_access_key,
+                MAX_S3_PAGE_BYTES,
+                remaining.min(AWS_CALL_TIMEOUT),
+            )
+        },
+    )
 }
 
 fn scan_s3_bucket(
@@ -717,9 +726,27 @@ fn scan_s3_bucket(
     region: &str,
     endpoint: Option<&str>,
     deadline: Duration,
-    mut fetch_page: impl FnMut(&[String]) -> Result<Value>,
+    fetch_page: impl FnMut(&[String], Duration) -> Result<Value>,
 ) -> Result<S3BucketSummary> {
     let start = Instant::now();
+    scan_s3_bucket_with_clock(
+        bucket,
+        region,
+        endpoint,
+        deadline,
+        || start.elapsed(),
+        fetch_page,
+    )
+}
+
+fn scan_s3_bucket_with_clock(
+    bucket: &str,
+    region: &str,
+    endpoint: Option<&str>,
+    deadline: Duration,
+    mut elapsed: impl FnMut() -> Duration,
+    mut fetch_page: impl FnMut(&[String], Duration) -> Result<Value>,
+) -> Result<S3BucketSummary> {
     let mut token: Option<String> = None;
     let mut seen_tokens = HashSet::new();
     let mut summary = S3BucketSummary {
@@ -728,14 +755,20 @@ fn scan_s3_bucket(
         object_count: 0,
     };
     for _ in 0..MAX_S3_PAGES {
-        if start.elapsed() > deadline {
+        let remaining = deadline.saturating_sub(elapsed());
+        if remaining.is_zero() {
             return Err(anyhow!(
                 "S3 scan for bucket {bucket} exceeded its {deadline:?} deadline"
             ));
         }
         let args = list_s3_args(bucket, region, endpoint, token.as_deref());
-        let page = fetch_page(&args)?;
+        let page = fetch_page(&args, remaining)?;
         fold_s3_page(parse_s3_objects(&page)?, &mut summary);
+        if elapsed() >= deadline {
+            return Err(anyhow!(
+                "S3 scan for bucket {bucket} exceeded its {deadline:?} deadline"
+            ));
+        }
         if !page
             .get("IsTruncated")
             .and_then(Value::as_bool)
@@ -749,7 +782,8 @@ fn scan_s3_bucket(
             .filter(|token| !token.is_empty())
             .ok_or_else(|| anyhow!("S3 response is truncated without NextContinuationToken"))?
             .to_string();
-        if !seen_tokens.insert(next.clone()) {
+        // Retain fixed-size fingerprints, not up to a full page per token.
+        if !seen_tokens.insert(Sha256::digest(next.as_bytes())) {
             return Err(anyhow!("S3 pagination loop detected for bucket {bucket}"));
         }
         token = Some(next);
@@ -813,27 +847,10 @@ fn list_s3_args(
 /// rather than real AWS traffic (P13).
 const MAX_S3_PAGE_BYTES: usize = 64 * 1024 * 1024;
 
-/// Bytes captured from `aws` stderr for error diagnostics.
-const MAX_AWS_STDERR_BYTES: usize = 4096;
-
 /// Wall-clock budget for a single `aws` invocation (one service page).
 /// Bounds the previously-unbounded subprocess wait so a hung CLI or
 /// unresponsive endpoint cannot block a scan indefinitely (P13).
 const AWS_CALL_TIMEOUT: Duration = Duration::from_secs(60);
-
-fn aws_json(
-    args: &[&str],
-    access_key_id: Option<&str>,
-    secret_access_key: Option<&str>,
-) -> Result<Value> {
-    run_aws_json(
-        args,
-        access_key_id,
-        secret_access_key,
-        MAX_S3_PAGE_BYTES,
-        AWS_CALL_TIMEOUT,
-    )
-}
 
 /// Runs `aws <args> --output json` and parses its stdout, with an explicit
 /// byte cap on stdout and a wall-clock timeout on the whole invocation.
@@ -848,6 +865,8 @@ fn run_aws_json(
     stdout_cap: usize,
     call_timeout: Duration,
 ) -> Result<Value> {
+    let start = Instant::now();
+    anyhow::ensure!(!call_timeout.is_zero(), "aws call budget is exhausted");
     let mut command = Command::new("aws");
     command.args(args).args(["--output", "json"]);
     if let (Some(access_key_id), Some(secret_access_key)) = (access_key_id, secret_access_key) {
@@ -863,56 +882,171 @@ fn run_aws_json(
         .spawn()
         .context("running `aws` - install the AWS CLI and authenticate its credential chain")?;
 
-    let stdout = child.stdout.take().context("missing aws stdout")?;
-    let stderr = child.stderr.take().context("missing aws stderr")?;
-
-    let stdout_handle = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stdout.take(stdout_cap as u64 + 1).read_to_end(&mut buf);
-        buf
-    });
-    let stderr_handle = thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = stderr
-            .take((MAX_AWS_STDERR_BYTES + 1) as u64)
-            .read_to_end(&mut buf);
-        String::from_utf8_lossy(&buf).trim().to_string()
-    });
-
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().context("polling `aws`")? {
-            break status;
+    let result = (|| {
+        let mut stdout = child.stdout.take().context("missing aws stdout")?;
+        let mut stderr = child.stderr.take().context("missing aws stderr")?;
+        let mut stdout_buf = Vec::new();
+        let (mut stdout_eof, mut stderr_eof) = (false, false);
+        let mut status = None;
+        loop {
+            let remaining = call_timeout.saturating_sub(start.elapsed());
+            anyhow::ensure!(
+                !remaining.is_zero(),
+                "aws did not complete within {call_timeout:?}"
+            );
+            // Read at most one chunk per pipe per turn, so neither a noisy
+            // stream nor inherited descendant pipes can bypass the deadline.
+            let mut chunk = [0; 8192];
+            let mut progressed = false;
+            if !stdout_eof
+                && let Some(n) = read_aws_pipe(&mut stdout, &mut chunk)
+                    .map_err(|error| aws_pipe_read_error("stdout", error))?
+            {
+                stdout_eof = n == 0;
+                anyhow::ensure!(
+                    n <= stdout_cap.saturating_sub(stdout_buf.len()),
+                    "aws produced more than {stdout_cap} bytes of output; refusing to buffer an oversized page"
+                );
+                stdout_buf.extend_from_slice(&chunk[..n]);
+                progressed = n > 0;
+            }
+            if !stderr_eof
+                && let Some(n) = read_aws_pipe(&mut stderr, &mut chunk)
+                    .map_err(|error| aws_pipe_read_error("stderr", error))?
+            {
+                stderr_eof = n == 0;
+                progressed |= n > 0;
+                // Drain without retaining: provider/CLI diagnostics can echo
+                // credentials, endpoint userinfo, or opaque pagination tokens.
+            }
+            if status.is_none() {
+                status = child.try_wait().context("polling `aws`")?;
+            }
+            if let Some(status) = status {
+                anyhow::ensure!(
+                    status.success(),
+                    "aws failed ({status}); stderr omitted because it may contain credentials"
+                );
+            }
+            if status.is_some() && stdout_eof && stderr_eof {
+                let page = serde_json::from_slice(&stdout_buf).context("parsing `aws` output")?;
+                anyhow::ensure!(
+                    start.elapsed() < call_timeout,
+                    "aws did not complete within {call_timeout:?}"
+                );
+                return Ok(page);
+            }
+            if !progressed {
+                thread::sleep(Duration::from_millis(20).min(remaining));
+            }
         }
-        if start.elapsed() > call_timeout {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout_handle.join();
-            let _ = stderr_handle.join();
-            return Err(anyhow!(
-                "aws {} did not complete within {call_timeout:?} and was killed",
-                args.join(" ")
-            ));
-        }
-        thread::sleep(Duration::from_millis(20));
+    })();
+    // Pipes have already been dropped. Never join a blocking reader: a
+    // descendant may retain a pipe even after the direct child is reaped.
+    if let Err(error) = result {
+        let cleanup = (|| -> Result<()> {
+            // kill is a no-op for an already reaped child. If it fails,
+            // check for an exit race, but never block in wait on a live child.
+            if let Err(error) = child.kill()
+                && child
+                    .try_wait()
+                    .context("polling aws during cleanup")?
+                    .is_none()
+            {
+                return Err(error).context("killing aws");
+            }
+            child.wait().context("reaping aws")?;
+            Ok(())
+        })();
+        return Err(match cleanup {
+            Ok(()) => error,
+            Err(cleanup) => {
+                let message = format!("{error}; aws cleanup failed: {cleanup:#}");
+                error.context(message)
+            }
+        });
+    }
+    result
+}
+
+fn aws_pipe_read_error(stream: &str, error: io::Error) -> anyhow::Error {
+    // Health rows display only the outer message. Include the pipe I/O cause,
+    // never subprocess output or an arbitrary command error chain.
+    let message = format!("reading aws {stream}: {error}");
+    anyhow::Error::new(error).context(message)
+}
+
+/// Read only currently available bytes; `None` means the pipe is not ready.
+#[cfg(unix)]
+fn read_aws_pipe(
+    pipe: &mut (impl Read + std::os::fd::AsRawFd),
+    buf: &mut [u8],
+) -> io::Result<Option<usize>> {
+    let mut fd = libc::pollfd {
+        fd: pipe.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
     };
-
-    let stdout_buf = stdout_handle.join().unwrap_or_default();
-    let stderr_text = stderr_handle.join().unwrap_or_default();
-
-    if stdout_buf.len() > stdout_cap {
-        return Err(anyhow!(
-            "aws {} produced more than {stdout_cap} bytes of output; refusing to buffer an oversized page",
-            args.join(" ")
-        ));
+    // SAFETY: fd points to one valid pollfd; poll does not take ownership.
+    let ready = unsafe { libc::poll(&mut fd, 1, 0) };
+    if ready < 0 {
+        let error = io::Error::last_os_error();
+        return if error.kind() == io::ErrorKind::Interrupted {
+            Ok(None)
+        } else {
+            Err(error)
+        };
     }
-
-    if !status.success() {
-        return Err(anyhow!("aws {} failed: {}", args.join(" "), stderr_text));
+    if ready == 0 {
+        return Ok(None);
     }
+    match pipe.read(buf) {
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => Ok(None),
+        result => result.map(Some),
+    }
+}
 
-    serde_json::from_slice(&stdout_buf)
-        .with_context(|| format!("parsing `aws {}` output", args.join(" ")))
+#[cfg(windows)]
+fn read_aws_pipe(
+    pipe: &mut (impl Read + std::os::windows::io::AsRawHandle),
+    buf: &mut [u8],
+) -> io::Result<Option<usize>> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn PeekNamedPipe(
+            handle: *mut std::ffi::c_void,
+            buffer: *mut std::ffi::c_void,
+            size: u32,
+            read: *mut u32,
+            available: *mut u32,
+            left: *mut u32,
+        ) -> i32;
+    }
+    let mut available = 0;
+    // SAFETY: the borrowed child pipe handle is live; only available is written.
+    let ok = unsafe {
+        PeekNamedPipe(
+            pipe.as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut available,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        let error = io::Error::last_os_error();
+        return if error.raw_os_error() == Some(109) {
+            Ok(Some(0))
+        } else {
+            Err(error)
+        };
+    }
+    let len = buf.len().min(available as usize);
+    if len == 0 {
+        return Ok(None);
+    }
+    pipe.read(&mut buf[..len]).map(Some)
 }
 
 fn parse_s3_objects(page: &Value) -> Result<Vec<S3Object>> {
@@ -1542,7 +1676,7 @@ mod tests {
             "region",
             Some("https://s3.example"),
             Duration::from_secs(60),
-            |args| {
+            |args, _| {
                 let mut expected = vec![
                     "s3api",
                     "list-objects-v2",
@@ -1612,10 +1746,11 @@ mod tests {
                 })),
                 page,
             ].into_iter();
-            let error = scan_s3_bucket("bucket", "region", None, Duration::from_secs(60), |_| {
-                pages.next().unwrap()
-            })
-            .unwrap_err();
+            let error =
+                scan_s3_bucket("bucket", "region", None, Duration::from_secs(60), |_, _| {
+                    pages.next().unwrap()
+                })
+                .unwrap_err();
             assert!(error.to_string().contains(expected), "{error}");
             assert!(pages.next().is_none());
         }
@@ -1625,14 +1760,15 @@ mod tests {
     fn s3_scan_bounds_unique_tokens_and_accepts_completion_at_the_limit() {
         for completes in [false, true] {
             let mut calls = 0;
-            let result = scan_s3_bucket("bucket", "region", None, Duration::from_secs(60), |_| {
-                calls += 1;
-                assert!(calls <= MAX_S3_PAGES);
-                Ok(json!({
-                    "IsTruncated": !(completes && calls == MAX_S3_PAGES),
-                    "NextContinuationToken": calls.to_string()
-                }))
-            });
+            let result =
+                scan_s3_bucket("bucket", "region", None, Duration::from_secs(60), |_, _| {
+                    calls += 1;
+                    assert!(calls <= MAX_S3_PAGES);
+                    Ok(json!({
+                        "IsTruncated": !(completes && calls == MAX_S3_PAGES),
+                        "NextContinuationToken": calls.to_string()
+                    }))
+                });
             assert_eq!(calls, MAX_S3_PAGES);
             if completes {
                 let summary = result.unwrap();
@@ -1653,23 +1789,244 @@ mod tests {
     #[test]
     fn s3_scan_aborts_once_the_overall_deadline_elapses() {
         let mut calls = 0;
-        let start = Instant::now();
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
         let deadline = Duration::from_millis(30);
-        let result = scan_s3_bucket("bucket", "region", None, deadline, |_| {
-            calls += 1;
-            std::thread::sleep(Duration::from_millis(15));
-            Ok(json!({
-                "IsTruncated": true,
-                "NextContinuationToken": calls.to_string()
-            }))
-        });
+        let result = scan_s3_bucket_with_clock(
+            "bucket",
+            "region",
+            None,
+            deadline,
+            || elapsed.get(),
+            |_, _| {
+                calls += 1;
+                elapsed.set(elapsed.get() + Duration::from_millis(15));
+                Ok(json!({
+                    "IsTruncated": true,
+                    "NextContinuationToken": calls.to_string()
+                }))
+            },
+        );
         let error = result.unwrap_err();
         assert!(error.to_string().contains("exceeded its"), "{error}");
         assert!(error.to_string().contains("deadline"), "{error}");
-        // The deadline is checked once per page, so a couple of slow pages
-        // run before it trips; the scan must not run away to MAX_S3_PAGES.
-        assert!(calls < MAX_S3_PAGES);
-        assert!(start.elapsed() < Duration::from_secs(5));
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn s3_scan_checks_final_page_and_preserves_fetch_errors() {
+        for fails in [false, true] {
+            let budget = Duration::from_millis(20);
+            let elapsed = std::cell::Cell::new(Duration::ZERO);
+            let error = scan_s3_bucket_with_clock(
+                "bucket",
+                "region",
+                None,
+                budget,
+                || elapsed.get(),
+                |_, remaining| {
+                    assert_eq!(remaining, budget);
+                    elapsed.set(budget);
+                    if fails {
+                        anyhow::bail!("original fetch failure");
+                    }
+                    Ok(json!({"IsTruncated": false}))
+                },
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains(if fails {
+                    "original fetch failure"
+                } else {
+                    "deadline"
+                }),
+                "{error}"
+            );
+        }
+        let error = scan_s3_bucket("bucket", "region", None, Duration::ZERO, |_, _| {
+            panic!("an exhausted budget must not fetch")
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("deadline"));
+    }
+
+    #[test]
+    fn s3_scan_passes_a_decreasing_budget() {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let mut calls = 0;
+        scan_s3_bucket_with_clock(
+            "bucket",
+            "region",
+            None,
+            Duration::from_secs(5),
+            || elapsed.get(),
+            |_, remaining| {
+                assert_eq!(remaining, Duration::from_secs(5 - calls));
+                calls += 1;
+                elapsed.set(Duration::from_secs(calls));
+                Ok(json!({"IsTruncated": calls == 1, "NextContinuationToken": "next"}))
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn aws_json_drains_noisy_streams_and_accepts_exact_cap() {
+        use crate::commands::ssh::fixture_tests::FakeAwsPath;
+        let _fake_aws = FakeAwsPath::install();
+        for mode in ["--fake-stderr", "--fake-both"] {
+            let page =
+                run_aws_json(&[mode], None, None, 2 * 1024 * 1024, Duration::from_secs(5)).unwrap();
+            assert_eq!(page["IsTruncated"], false);
+        }
+        let len = b"{\"IsTruncated\": false, \"Contents\": []}\n".len();
+        assert!(run_aws_json(&[], None, None, len, Duration::from_secs(5)).is_ok());
+        assert!(run_aws_json(&[], None, None, usize::MAX, Duration::MAX).is_ok());
+        assert!(
+            run_aws_json(&[], None, None, len - 1, Duration::from_secs(5))
+                .unwrap_err()
+                .to_string()
+                .contains("more than")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn aws_json_bounds_inherited_pipes_and_reaps_the_child() {
+        use crate::commands::ssh::fixture_tests::FakeAwsPath;
+        let _fake_aws = FakeAwsPath::install();
+        for mode in [
+            "--fake-descendant-exit",
+            "--fake-descendant-failure",
+            "--fake-descendant-hang",
+            "--fake-close-pipes",
+            "--fake-stderr-hang",
+            "--fake-overflow-hang",
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let pid_file = dir.path().join("pid");
+            let start = Instant::now();
+            let error = run_aws_json(
+                &[&format!("--fake-pid-file={}", pid_file.display()), mode],
+                None,
+                None,
+                100,
+                if mode == "--fake-overflow-hang" {
+                    Duration::from_secs(10)
+                } else {
+                    Duration::from_secs(1)
+                },
+            )
+            .unwrap_err();
+            let elapsed = start.elapsed();
+            // Clean up the fixture's deliberately inherited writer; dsc only
+            // owns the direct child and must not wait for descendants' EOF.
+            if let Ok(pid) = std::fs::read_to_string(dir.path().join("pid.descendant")) {
+                let pid: i32 = pid.trim().parse().unwrap();
+                // SAFETY: this PID belongs to this fixture's sleep process.
+                unsafe {
+                    libc::kill(pid, libc::SIGKILL);
+                }
+            }
+            let pid: i32 = std::fs::read_to_string(pid_file)
+                .unwrap()
+                .trim()
+                .parse()
+                .unwrap();
+            // SAFETY: waitpid writes to a valid status and targets our child.
+            let mut status = 0;
+            assert_eq!(
+                unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
+                -1
+            );
+            assert_eq!(
+                io::Error::last_os_error().raw_os_error(),
+                Some(libc::ECHILD)
+            );
+            assert!(elapsed < Duration::from_secs(5), "{mode}: {elapsed:?}");
+            assert!(
+                error
+                    .to_string()
+                    .contains(if mode == "--fake-overflow-hang" {
+                        "more than"
+                    } else if mode == "--fake-descendant-failure" {
+                        "23"
+                    } else {
+                        "did not complete"
+                    }),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn aws_pipe_preserves_read_errors_in_health_detail() {
+        use std::os::fd::{AsRawFd, RawFd};
+        struct FailingReader(std::io::PipeReader);
+        impl AsRawFd for FailingReader {
+            fn as_raw_fd(&self) -> RawFd {
+                self.0.as_raw_fd()
+            }
+        }
+        impl Read for FailingReader {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::other("injected pipe failure"))
+            }
+        }
+        let (reader, mut writer) = std::io::pipe().unwrap();
+        writer.write_all(b"ready").unwrap();
+        let mut reader = FailingReader(reader);
+        for stream in ["stdout", "stderr"] {
+            let error = read_aws_pipe(&mut reader, &mut [0; 8])
+                .map_err(|error| aws_pipe_read_error(stream, error))
+                .unwrap_err();
+            let mut row = health_test_row(7);
+            apply_inaccessible_health(&mut row, &error);
+            assert_eq!(row.status, BackupHealthStatus::Inaccessible);
+            assert_eq!(
+                row.detail.as_deref(),
+                Some(format!("reading aws {stream}: injected pipe failure").as_str())
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn aws_json_errors_keep_status_without_echoing_secrets() {
+        use crate::commands::ssh::fixture_tests::FakeAwsPath;
+        let _fake_aws = FakeAwsPath::install();
+        for (mode, expected) in [
+            ("--fake-failure", "23"),
+            ("--fake-invalid-json", "parsing `aws` output"),
+            ("--fake-overflow-hang", "more than"),
+        ] {
+            let error = run_aws_json(
+                &[mode, "https://user:password@example.test", "token-secret"],
+                Some("access-secret"),
+                Some("credential-secret"),
+                100,
+                Duration::from_secs(5),
+            )
+            .unwrap_err();
+            let text = format!("{error:#}");
+            assert!(text.contains(expected), "{text}");
+            for secret in [
+                "password",
+                "token-secret",
+                "access-secret",
+                "credential-secret",
+            ] {
+                assert!(!text.contains(secret), "{text}");
+            }
+        }
+        assert!(
+            run_aws_json(&[], None, None, usize::MAX, Duration::ZERO)
+                .unwrap_err()
+                .to_string()
+                .contains("budget")
+        );
     }
 
     // Real-subprocess coverage for `run_aws_json`'s spawn/pipe/kill handling,
@@ -1707,7 +2064,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("did not complete"), "{error}");
-        assert!(error.to_string().contains("killed"), "{error}");
         assert!(start.elapsed() < Duration::from_secs(5));
     }
 
