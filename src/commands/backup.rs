@@ -12,9 +12,11 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -688,6 +690,12 @@ fn effective_stale_after_days(frequency: u64, max_age: Option<u64>) -> Option<u6
 
 const MAX_S3_PAGES: usize = 1_000;
 
+/// Overall wall-clock budget for scanning one bucket across all of its
+/// pages. Bounds total command runtime even when no single page hangs
+/// (each page still completes within [`AWS_CALL_TIMEOUT`]) but a bucket
+/// with many pages or a slow endpoint would otherwise run unbounded.
+const S3_SCAN_DEADLINE: Duration = Duration::from_secs(15 * 60);
+
 fn list_s3_bucket(
     bucket: &str,
     region: &str,
@@ -695,7 +703,7 @@ fn list_s3_bucket(
     access_key_id: Option<&str>,
     secret_access_key: Option<&str>,
 ) -> Result<S3BucketSummary> {
-    scan_s3_bucket(bucket, region, endpoint, |args| {
+    scan_s3_bucket(bucket, region, endpoint, S3_SCAN_DEADLINE, |args| {
         aws_json(
             &args.iter().map(String::as_str).collect::<Vec<_>>(),
             access_key_id,
@@ -708,8 +716,10 @@ fn scan_s3_bucket(
     bucket: &str,
     region: &str,
     endpoint: Option<&str>,
+    deadline: Duration,
     mut fetch_page: impl FnMut(&[String]) -> Result<Value>,
 ) -> Result<S3BucketSummary> {
+    let start = Instant::now();
     let mut token: Option<String> = None;
     let mut seen_tokens = HashSet::new();
     let mut summary = S3BucketSummary {
@@ -718,6 +728,11 @@ fn scan_s3_bucket(
         object_count: 0,
     };
     for _ in 0..MAX_S3_PAGES {
+        if start.elapsed() > deadline {
+            return Err(anyhow!(
+                "S3 scan for bucket {bucket} exceeded its {deadline:?} deadline"
+            ));
+        }
         let args = list_s3_args(bucket, region, endpoint, token.as_deref());
         let page = fetch_page(&args)?;
         fold_s3_page(parse_s3_objects(&page)?, &mut summary);
@@ -792,10 +807,46 @@ fn list_s3_args(
     args
 }
 
+/// Per-page byte cap on `aws` stdout. A service page is at most 1,000
+/// objects, so ordinary output is a small fraction of this; the cap exists
+/// to bound memory against a misbehaving or hostile S3-compatible endpoint
+/// rather than real AWS traffic (P13).
+const MAX_S3_PAGE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Bytes captured from `aws` stderr for error diagnostics.
+const MAX_AWS_STDERR_BYTES: usize = 4096;
+
+/// Wall-clock budget for a single `aws` invocation (one service page).
+/// Bounds the previously-unbounded subprocess wait so a hung CLI or
+/// unresponsive endpoint cannot block a scan indefinitely (P13).
+const AWS_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+
 fn aws_json(
     args: &[&str],
     access_key_id: Option<&str>,
     secret_access_key: Option<&str>,
+) -> Result<Value> {
+    run_aws_json(
+        args,
+        access_key_id,
+        secret_access_key,
+        MAX_S3_PAGE_BYTES,
+        AWS_CALL_TIMEOUT,
+    )
+}
+
+/// Runs `aws <args> --output json` and parses its stdout, with an explicit
+/// byte cap on stdout and a wall-clock timeout on the whole invocation.
+/// Parameterised (see `tests/fixtures/fake-aws`) so tests can exercise both
+/// against a real spawned process without waiting on production-sized
+/// values. Previously used `Command::output()`, which buffers stdout
+/// without bound and blocks on `wait()` without a deadline (P13).
+fn run_aws_json(
+    args: &[&str],
+    access_key_id: Option<&str>,
+    secret_access_key: Option<&str>,
+    stdout_cap: usize,
+    call_timeout: Duration,
 ) -> Result<Value> {
     let mut command = Command::new("aws");
     command.args(args).args(["--output", "json"]);
@@ -805,17 +856,62 @@ fn aws_json(
             .env("AWS_SECRET_ACCESS_KEY", secret_access_key)
             .env_remove("AWS_SESSION_TOKEN");
     }
-    let output = command
-        .output()
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .context("running `aws` - install the AWS CLI and authenticate its credential chain")?;
-    if !output.status.success() {
+
+    let stdout = child.stdout.take().context("missing aws stdout")?;
+    let stderr = child.stderr.take().context("missing aws stderr")?;
+
+    let stdout_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.take(stdout_cap as u64 + 1).read_to_end(&mut buf);
+        buf
+    });
+    let stderr_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stderr
+            .take((MAX_AWS_STDERR_BYTES + 1) as u64)
+            .read_to_end(&mut buf);
+        String::from_utf8_lossy(&buf).trim().to_string()
+    });
+
+    let start = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait().context("polling `aws`")? {
+            break status;
+        }
+        if start.elapsed() > call_timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_handle.join();
+            let _ = stderr_handle.join();
+            return Err(anyhow!(
+                "aws {} did not complete within {call_timeout:?} and was killed",
+                args.join(" ")
+            ));
+        }
+        thread::sleep(Duration::from_millis(20));
+    };
+
+    let stdout_buf = stdout_handle.join().unwrap_or_default();
+    let stderr_text = stderr_handle.join().unwrap_or_default();
+
+    if stdout_buf.len() > stdout_cap {
         return Err(anyhow!(
-            "aws {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
+            "aws {} produced more than {stdout_cap} bytes of output; refusing to buffer an oversized page",
+            args.join(" ")
         ));
     }
-    serde_json::from_slice(&output.stdout)
+
+    if !status.success() {
+        return Err(anyhow!("aws {} failed: {}", args.join(" "), stderr_text));
+    }
+
+    serde_json::from_slice(&stdout_buf)
         .with_context(|| format!("parsing `aws {}` output", args.join(" ")))
 }
 
@@ -1441,26 +1537,32 @@ mod tests {
             }),
         ];
         let mut calls = 0;
-        let summary = scan_s3_bucket("bucket", "region", Some("https://s3.example"), |args| {
-            let mut expected = vec![
-                "s3api",
-                "list-objects-v2",
-                "--bucket",
-                "bucket",
-                "--region",
-                "region",
-                "--no-paginate",
-                "--endpoint-url",
-                "https://s3.example",
-            ];
-            if let Some(token) = tokens[calls] {
-                expected.extend(["--continuation-token", token]);
-            }
-            assert_eq!(args, expected);
-            let page = pages[calls].clone();
-            calls += 1;
-            Ok(page)
-        })
+        let summary = scan_s3_bucket(
+            "bucket",
+            "region",
+            Some("https://s3.example"),
+            Duration::from_secs(60),
+            |args| {
+                let mut expected = vec![
+                    "s3api",
+                    "list-objects-v2",
+                    "--bucket",
+                    "bucket",
+                    "--region",
+                    "region",
+                    "--no-paginate",
+                    "--endpoint-url",
+                    "https://s3.example",
+                ];
+                if let Some(token) = tokens[calls] {
+                    expected.extend(["--continuation-token", token]);
+                }
+                assert_eq!(args, expected);
+                let page = pages[calls].clone();
+                calls += 1;
+                Ok(page)
+            },
+        )
         .unwrap();
         assert_eq!(calls, 3);
         assert_eq!(summary.object_count, 5);
@@ -1510,8 +1612,10 @@ mod tests {
                 })),
                 page,
             ].into_iter();
-            let error =
-                scan_s3_bucket("bucket", "region", None, |_| pages.next().unwrap()).unwrap_err();
+            let error = scan_s3_bucket("bucket", "region", None, Duration::from_secs(60), |_| {
+                pages.next().unwrap()
+            })
+            .unwrap_err();
             assert!(error.to_string().contains(expected), "{error}");
             assert!(pages.next().is_none());
         }
@@ -1521,7 +1625,7 @@ mod tests {
     fn s3_scan_bounds_unique_tokens_and_accepts_completion_at_the_limit() {
         for completes in [false, true] {
             let mut calls = 0;
-            let result = scan_s3_bucket("bucket", "region", None, |_| {
+            let result = scan_s3_bucket("bucket", "region", None, Duration::from_secs(60), |_| {
                 calls += 1;
                 assert!(calls <= MAX_S3_PAGES);
                 Ok(json!({
@@ -1544,6 +1648,77 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn s3_scan_aborts_once_the_overall_deadline_elapses() {
+        let mut calls = 0;
+        let start = Instant::now();
+        let deadline = Duration::from_millis(30);
+        let result = scan_s3_bucket("bucket", "region", None, deadline, |_| {
+            calls += 1;
+            std::thread::sleep(Duration::from_millis(15));
+            Ok(json!({
+                "IsTruncated": true,
+                "NextContinuationToken": calls.to_string()
+            }))
+        });
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("exceeded its"), "{error}");
+        assert!(error.to_string().contains("deadline"), "{error}");
+        // The deadline is checked once per page, so a couple of slow pages
+        // run before it trips; the scan must not run away to MAX_S3_PAGES.
+        assert!(calls < MAX_S3_PAGES);
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    // Real-subprocess coverage for `run_aws_json`'s spawn/pipe/kill handling,
+    // via the `fake-aws` fixture (see its header comment) rather than an
+    // injected closure - `scan_s3_bucket`'s own tests above already cover
+    // page-folding/pagination against injected pages.
+    #[test]
+    #[cfg(unix)]
+    fn aws_json_rejects_output_larger_than_the_byte_cap() {
+        use crate::commands::ssh::fixture_tests::FakeAwsPath;
+        let _fake_aws = FakeAwsPath::install();
+        let error = run_aws_json(
+            &["--fake-huge-bytes=1000"],
+            None,
+            None,
+            100,
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("more than 100 bytes"), "{error}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn aws_json_kills_a_call_that_exceeds_its_timeout() {
+        use crate::commands::ssh::fixture_tests::FakeAwsPath;
+        let _fake_aws = FakeAwsPath::install();
+        let start = Instant::now();
+        let error = run_aws_json(
+            &["--fake-hang"],
+            None,
+            None,
+            MAX_S3_PAGE_BYTES,
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("did not complete"), "{error}");
+        assert!(error.to_string().contains("killed"), "{error}");
+        assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn aws_json_parses_a_real_subprocess_response() {
+        use crate::commands::ssh::fixture_tests::FakeAwsPath;
+        let _fake_aws = FakeAwsPath::install();
+        let page =
+            run_aws_json(&[], None, None, MAX_S3_PAGE_BYTES, Duration::from_secs(5)).unwrap();
+        assert_eq!(page["IsTruncated"], false);
     }
 
     #[test]

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+#
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Fake `aws` for isolated dsc test fixtures exercising `aws_json`'s
+# subprocess handling (byte cap, per-call timeout) in src/commands/backup.rs
+# against a real spawned process rather than an injected closure. `dsc`
+# only ever invokes `aws <args...> --output json`; this stand-in reacts to
+# two synthetic flags a test passes as part of `args` (never sent by `dsc`
+# itself, which only ever builds real `s3api`/`s3` arguments) and otherwise
+# ignores its arguments, so it exercises real spawn/pipe/kill behaviour
+# without AWS credentials, a network connection, or a real bucket.
+#
+# - `--fake-hang`: never produce output and never exit on its own, so the
+#   caller's per-call timeout must kill it.
+# - `--fake-huge-bytes=<n>`: write <n> bytes of filler to stdout, so the
+#   caller's byte cap must reject the oversized page.
+# - otherwise: emit one minimal, non-truncated empty page.
+set -euo pipefail
+
+for arg in "$@"; do
+    case "$arg" in
+        --fake-hang)
+            exec sleep 3600
+            ;;
+        --fake-huge-bytes=*)
+            exec head -c "${arg#--fake-huge-bytes=}" /dev/zero
+            ;;
+    esac
+done
+
+echo '{"IsTruncated": false, "Contents": []}'
