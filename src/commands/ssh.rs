@@ -554,11 +554,18 @@ pub(crate) mod fixture_tests {
     // `PATH` is process-wide, and `cargo test` runs a binary's tests on
     // multiple threads by default - so every test that installs the fake
     // `ssh` (in this module or borrowed by another command's tests, e.g.
-    // `commands::file`) must hold this lock for the duration of its SSH
-    // calls, or two tests could race and see each other's PATH.
+    // `commands::file`, `commands::backup`) must hold this lock for the
+    // duration of its calls, or two tests could race and see each other's
+    // PATH.
     static PATH_ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    pub(crate) struct FakeSshPath {
+    /// Prepends a directory containing one fixture, symlinked under `name`,
+    /// to `PATH` for the guard's lifetime - so `Command::new(name)` resolves
+    /// to the fixture instead of (or absence of) a real binary. Shared by
+    /// [`FakeSshPath`] and [`FakeAwsPath`] so both go through one process-wide
+    /// `PATH_ENV_LOCK`; installing either while the other is held would
+    /// otherwise let concurrent tests observe a torn `PATH`.
+    pub(crate) struct FakePathGuard {
         original: Option<String>,
         // Held only so the symlink directory outlives the PATH override;
         // never read directly.
@@ -566,19 +573,13 @@ pub(crate) mod fixture_tests {
         _guard: std::sync::MutexGuard<'static, ()>,
     }
 
-    impl FakeSshPath {
-        pub(crate) fn install() -> Self {
+    impl FakePathGuard {
+        fn install(fixture: &str, name: &str) -> Self {
             let guard = PATH_ENV_LOCK
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
-            let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-ssh");
-            // `Command::new("ssh")` resolves the literal name `ssh` on PATH,
-            // so the fixture (named `fake-ssh` to avoid a file literally
-            // called `ssh` in the repo) is symlinked under that name into a
-            // scratch directory that is prepended to PATH just for this
-            // guard's lifetime.
-            let bin_dir = tempfile::tempdir().expect("create fake-ssh PATH dir");
-            symlink(fixture, bin_dir.path().join("ssh")).expect("symlink fake-ssh as ssh");
+            let bin_dir = tempfile::tempdir().expect("create fake PATH dir");
+            symlink(fixture, bin_dir.path().join(name)).expect("symlink fixture binary");
 
             let original = std::env::var("PATH").ok();
             let new_path = match &original {
@@ -596,7 +597,7 @@ pub(crate) mod fixture_tests {
         }
     }
 
-    impl Drop for FakeSshPath {
+    impl Drop for FakePathGuard {
         fn drop(&mut self) {
             // SAFETY: see `install` - still under `PATH_ENV_LOCK`.
             unsafe {
@@ -604,6 +605,38 @@ pub(crate) mod fixture_tests {
                     Some(value) => std::env::set_var("PATH", value),
                     None => std::env::remove_var("PATH"),
                 }
+            }
+        }
+    }
+
+    pub(crate) struct FakeSshPath {
+        _guard: FakePathGuard,
+    }
+
+    impl FakeSshPath {
+        pub(crate) fn install() -> Self {
+            // `Command::new("ssh")` resolves the literal name `ssh` on PATH,
+            // so the fixture (named `fake-ssh` to avoid a file literally
+            // called `ssh` in the repo) is symlinked under that name.
+            let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-ssh");
+            Self {
+                _guard: FakePathGuard::install(fixture, "ssh"),
+            }
+        }
+    }
+
+    /// Same mechanism as [`FakeSshPath`], for tests exercising
+    /// `commands::backup`'s `aws` subprocess handling against a real
+    /// spawned process (see `tests/fixtures/fake-aws`).
+    pub(crate) struct FakeAwsPath {
+        _guard: FakePathGuard,
+    }
+
+    impl FakeAwsPath {
+        pub(crate) fn install() -> Self {
+            let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/fake-aws");
+            Self {
+                _guard: FakePathGuard::install(fixture, "aws"),
             }
         }
     }

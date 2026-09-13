@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#
+# SPDX-FileCopyrightText: 2026 Marcus Baw and Koloki Ltd
+#
+# SPDX-License-Identifier: GPL-2.0-or-later
+#
+# Fake `aws` for isolated dsc test fixtures exercising `aws_json`'s
+# subprocess handling (byte cap, per-call timeout) in src/commands/backup.rs
+# against a real spawned process rather than an injected closure. `dsc`
+# only ever invokes `aws <args...> --output json`; this stand-in reacts to
+# synthetic flags a test passes as part of `args` (never sent by `dsc`
+# itself, which only ever builds real `s3api`/`s3` arguments) and otherwise
+# ignores its arguments, so it exercises real spawn/pipe/kill behaviour
+# without AWS credentials, a network connection, or a real bucket.
+#
+# - `--fake-hang`: never produce output and never exit on its own, so the
+#   caller's per-call timeout must kill it.
+# - `--fake-huge-bytes=<n>`: write <n> bytes of filler to stdout, so the
+#   caller's byte cap must reject the oversized page.
+# - otherwise: emit one minimal, non-truncated empty page.
+set -euo pipefail
+
+pid_file=''
+for arg in "$@"; do
+    case "$arg" in
+        --fake-pid-file=*)
+            pid_file="${arg#--fake-pid-file=}"
+            printf '%s\n' "$$" > "$pid_file"
+            ;;
+        --fake-stderr)
+            head -c 1048576 /dev/zero >&2
+            ;;
+        --fake-stderr-hang)
+            while :; do printf '%8192s' ' ' >&2; done
+            ;;
+        --fake-both)
+            head -c 1048576 /dev/zero >&2 &
+            printf '%1048576s' ' '
+            wait
+            ;;
+        --fake-failure)
+            printf '%s\n' "${AWS_SECRET_ACCESS_KEY:-secret} https://user:password@example.test token-secret" >&2
+            exit 23
+            ;;
+        --fake-invalid-json)
+            printf '{'
+            exit 0
+            ;;
+        --fake-descendant-*)
+            sleep 30 &
+            printf '%s\n' "$!" > "${pid_file}.descendant"
+            if [[ "$arg" == --fake-descendant-exit ]]; then exit 0; fi
+            if [[ "$arg" == --fake-descendant-failure ]]; then exit 23; fi
+            wait
+            ;;
+        --fake-overflow-hang)
+            printf '%1000s' ' '
+            exec sleep 30
+            ;;
+        --fake-close-pipes)
+            exec 1>&- 2>&-
+            exec sleep 30
+            ;;
+        --fake-hang)
+            exec sleep 3600
+            ;;
+        --fake-huge-bytes=*)
+            exec head -c "${arg#--fake-huge-bytes=}" /dev/zero
+            ;;
+    esac
+done
+
+echo '{"IsTruncated": false, "Contents": []}'
