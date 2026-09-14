@@ -2221,8 +2221,8 @@ mod tests {
             })
             .collect();
 
-        let results: Arc<Mutex<Vec<(usize, Result<S3BucketSummary>)>>> =
-            Arc::new(Mutex::new(Vec::new()));
+        type ScanResults = Arc<Mutex<Vec<(usize, Result<S3BucketSummary>)>>>;
+        let results: ScanResults = Arc::new(Mutex::new(Vec::new()));
         let collected = Arc::clone(&results);
         // Width 2 over 6 jobs forces every worker to pick up more than one
         // job from the shared queue, exercising real re-dispatch rather
