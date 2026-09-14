@@ -17,11 +17,21 @@
 #   caller's per-call timeout must kill it.
 # - `--fake-huge-bytes=<n>`: write <n> bytes of filler to stdout, so the
 #   caller's byte cap must reject the oversized page.
-# - otherwise: emit one minimal, non-truncated empty page.
+# - otherwise: emit one minimal, non-truncated page. When a real `--bucket
+#   <name>` argument is present, the single object's key echoes that name
+#   (`backups/default/<name>.tar.gz`) so a test driving concurrent scans of
+#   distinct buckets through the real `aws` process can tell which bucket's
+#   scan produced which result, rather than every bucket looking identical.
 set -euo pipefail
 
 pid_file=''
+bucket=''
+prev=''
 for arg in "$@"; do
+    if [[ "$prev" == --bucket ]]; then
+        bucket="$arg"
+    fi
+    prev="$arg"
     case "$arg" in
         --fake-pid-file=*)
             pid_file="${arg#--fake-pid-file=}"
@@ -70,4 +80,8 @@ for arg in "$@"; do
     esac
 done
 
-echo '{"IsTruncated": false, "Contents": []}'
+if [[ -n "$bucket" ]]; then
+    printf '{"IsTruncated": false, "Contents": [{"Key": "backups/default/%s.tar.gz", "LastModified": "2026-01-01T00:00:00Z", "Size": 1}]}\n' "$bucket"
+else
+    echo '{"IsTruncated": false, "Contents": []}'
+fi

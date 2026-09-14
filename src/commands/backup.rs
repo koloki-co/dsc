@@ -4,7 +4,9 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::OutputFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse, selected_discourses};
+use crate::commands::common::{
+    ensure_api_credentials, fleet_worker_count, select_discourse, selected_discourses,
+};
 use crate::config::{Config, DiscourseConfig};
 use crate::utils::create_atomic_output;
 use anyhow::{Context, Result, anyhow};
@@ -12,10 +14,12 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -476,33 +480,51 @@ pub fn backup_health(
     }
 
     let now = Utc::now();
-    for row in &mut rows {
+
+    // Rows whose status is already resolved (not_s3, misconfigured, or a
+    // configuration-phase error) need no S3 call; stream them immediately.
+    // Rows still `unknown` need an independent bucket scan, which is where
+    // the actual network/subprocess latency lives, so those are collected
+    // and scanned through a bounded pool (P13) rather than one at a time.
+    let mut pending_indices = Vec::new();
+    for (idx, row) in rows.iter().enumerate() {
         if matches!(row.status, BackupHealthStatus::Unknown) && row.detail.is_none() {
-            let bucket = row.bucket.as_deref().expect("validated bucket");
-            let region = row.region.as_deref().expect("validated region");
-            match list_s3_bucket(
-                bucket,
-                region,
-                row.endpoint.as_deref(),
-                row.access_key_id.as_deref(),
-                row.secret_access_key.as_deref(),
-            ) {
-                Ok(summary) => apply_health_summary(row, &summary, now),
-                Err(error) => apply_inaccessible_health(row, &error),
-            }
+            pending_indices.push(idx);
+        } else if stream {
+            stream_backup_health_row(row, &format, forum_width, &mut csv_writer)?;
         }
-        if stream {
-            match format {
-                OutputFormat::Text => {
-                    print_backup_health_text_row(row, forum_width);
-                    io::stdout().flush()?;
+    }
+
+    if !pending_indices.is_empty() {
+        let jobs: Vec<S3ScanJob> = pending_indices
+            .into_iter()
+            .map(|idx| {
+                let row = &rows[idx];
+                S3ScanJob {
+                    idx,
+                    bucket: row.bucket.clone().expect("validated bucket"),
+                    region: row.region.clone().expect("validated region"),
+                    endpoint: row.endpoint.clone(),
+                    access_key_id: row.access_key_id.clone(),
+                    secret_access_key: row.secret_access_key.clone(),
                 }
-                OutputFormat::Csv => {
-                    write_backup_health_csv_row(csv_writer.as_mut().expect("CSV writer"), row)?;
-                    csv_writer.as_mut().expect("CSV writer").flush()?;
-                }
-                _ => unreachable!(),
+            })
+            .collect();
+        let workers = fleet_worker_count(None, jobs.len(), 4, false);
+
+        let mut stream_error: Option<anyhow::Error> = None;
+        scan_s3_jobs(jobs, workers, |idx, result| {
+            apply_scan_result(&mut rows[idx], result, now);
+            if stream
+                && stream_error.is_none()
+                && let Err(error) =
+                    stream_backup_health_row(&rows[idx], &format, forum_width, &mut csv_writer)
+            {
+                stream_error = Some(error);
             }
+        });
+        if let Some(error) = stream_error {
+            return Err(error);
         }
     }
 
@@ -719,6 +741,106 @@ fn list_s3_bucket(
             )
         },
     )
+}
+
+/// One bucket scan queued for the bounded concurrent pool in `backup_health`
+/// (P13). Owns its inputs so worker threads need no borrow of `rows`; `idx`
+/// carries the originating row's position for applying the result back.
+struct S3ScanJob {
+    idx: usize,
+    bucket: String,
+    region: String,
+    endpoint: Option<String>,
+    access_key_id: Option<String>,
+    secret_access_key: Option<String>,
+}
+
+fn scan_s3_job(job: &S3ScanJob) -> Result<S3BucketSummary> {
+    list_s3_bucket(
+        &job.bucket,
+        &job.region,
+        job.endpoint.as_deref(),
+        job.access_key_id.as_deref(),
+        job.secret_access_key.as_deref(),
+    )
+}
+
+/// Scan independent S3 buckets through a bounded worker pool (P13): each
+/// bucket scan is its own `aws` subprocess chain, so buckets have no shared
+/// state and can run concurrently. Workers pull from a shared queue and
+/// report results through a channel; `on_done` runs on the calling thread
+/// for each result as it completes (fastest-first, like `common::run_fleet`),
+/// so a caller can stream output without waiting for the slowest bucket.
+/// Falls back to a plain sequential loop when there is nothing to
+/// parallelize.
+fn scan_s3_jobs<G>(jobs: Vec<S3ScanJob>, workers: usize, mut on_done: G)
+where
+    G: FnMut(usize, Result<S3BucketSummary>),
+{
+    if workers <= 1 || jobs.len() <= 1 {
+        for job in jobs {
+            let result = scan_s3_job(&job);
+            on_done(job.idx, result);
+        }
+        return;
+    }
+
+    let queue: Arc<Mutex<VecDeque<S3ScanJob>>> = Arc::new(Mutex::new(jobs.into()));
+    let (tx, rx) = mpsc::channel::<(usize, Result<S3BucketSummary>)>();
+
+    thread::scope(|scope| {
+        for _ in 0..workers {
+            let queue = Arc::clone(&queue);
+            let tx = tx.clone();
+            scope.spawn(move || {
+                loop {
+                    let job = queue.lock().unwrap().pop_front();
+                    let Some(job) = job else { break };
+                    let result = scan_s3_job(&job);
+                    if tx.send((job.idx, result)).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(tx);
+
+        for (idx, result) in rx {
+            on_done(idx, result);
+        }
+    });
+}
+
+fn apply_scan_result(
+    row: &mut BackupHealthRow,
+    result: Result<S3BucketSummary>,
+    now: DateTime<Utc>,
+) {
+    match result {
+        Ok(summary) => apply_health_summary(row, &summary, now),
+        Err(error) => apply_inaccessible_health(row, &error),
+    }
+}
+
+fn stream_backup_health_row(
+    row: &BackupHealthRow,
+    format: &OutputFormat,
+    forum_width: usize,
+    csv_writer: &mut Option<csv::Writer<io::Stdout>>,
+) -> Result<()> {
+    match format {
+        OutputFormat::Text => {
+            print_backup_health_text_row(row, forum_width);
+            io::stdout().flush()?;
+        }
+        OutputFormat::Csv => {
+            let writer = csv_writer.as_mut().expect("CSV writer");
+            write_backup_health_csv_row(writer, row)?;
+            writer.flush()?;
+        }
+        _ => unreachable!(),
+    }
+    Ok(())
 }
 
 fn scan_s3_bucket(
@@ -2075,6 +2197,52 @@ mod tests {
         let page =
             run_aws_json(&[], None, None, MAX_S3_PAGE_BYTES, Duration::from_secs(5)).unwrap();
         assert_eq!(page["IsTruncated"], false);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn scan_s3_jobs_runs_independent_buckets_concurrently_without_cross_wiring() {
+        // Real subprocess coverage for the P13 bounded pool: distinct
+        // buckets scanned by different worker threads must not have their
+        // results swapped or dropped. `fake-aws` echoes the `--bucket` name
+        // it was called with back into the object key, so each job's result
+        // can be checked against the specific bucket it was asked to scan.
+        use crate::commands::ssh::fixture_tests::FakeAwsPath;
+        let _fake_aws = FakeAwsPath::install();
+
+        let jobs: Vec<S3ScanJob> = (0..6)
+            .map(|i| S3ScanJob {
+                idx: i,
+                bucket: format!("bucket-{i}"),
+                region: "eu-west-2".to_string(),
+                endpoint: None,
+                access_key_id: None,
+                secret_access_key: None,
+            })
+            .collect();
+
+        let results: Arc<Mutex<Vec<(usize, Result<S3BucketSummary>)>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let collected = Arc::clone(&results);
+        // Width 2 over 6 jobs forces every worker to pick up more than one
+        // job from the shared queue, exercising real re-dispatch rather
+        // than one job per thread.
+        scan_s3_jobs(jobs, 2, move |idx, result| {
+            collected.lock().unwrap().push((idx, result));
+        });
+
+        let mut results = Arc::try_unwrap(results).unwrap().into_inner().unwrap();
+        assert_eq!(results.len(), 6, "every job must report exactly once");
+        results.sort_by_key(|(idx, _)| *idx);
+        for (idx, result) in results {
+            let summary = result.unwrap_or_else(|e| panic!("job {idx} failed: {e}"));
+            let latest = summary.latest_archive.expect("fake-aws returns one object");
+            assert_eq!(
+                latest.key,
+                format!("backups/default/bucket-{idx}.tar.gz"),
+                "job {idx} must observe its own bucket's data, not another job's"
+            );
+        }
     }
 
     #[test]
