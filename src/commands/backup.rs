@@ -711,7 +711,11 @@ fn effective_stale_after_days(frequency: u64, max_age: Option<u64>) -> Option<u6
     (frequency > 0).then(|| max_age.unwrap_or(frequency).max(frequency))
 }
 
-const MAX_S3_PAGES: usize = 1_000;
+/// Upper bound on `list-objects-v2` service pages per scan: full pages hold
+/// 1,000 objects, so this permits up to one million objects while a
+/// unique-token stream that never truncates to false cannot run forever
+/// (P13). Also used by `setup-s3`'s verification page walk (P14).
+pub(crate) const MAX_S3_PAGES: usize = 1_000;
 
 /// Overall wall-clock budget for scanning one bucket across all of its
 /// pages. Bounds total command runtime even when no single page hangs
@@ -936,7 +940,11 @@ fn fold_s3_page(page: Vec<S3Object>, summary: &mut S3BucketSummary) {
     }
 }
 
-fn list_s3_args(
+/// One `list-objects-v2` call's arguments: bucket, region, optional custom
+/// endpoint, and one service continuation token. Shared with `setup-s3`'s
+/// verification poll (P14), which is AWS-only and so always passes no
+/// endpoint.
+pub(crate) fn list_s3_args(
     bucket: &str,
     region: &str,
     endpoint: Option<&str>,
@@ -1208,7 +1216,10 @@ fn parse_s3_objects(page: &Value) -> Result<Vec<S3Object>> {
         .collect()
 }
 
-fn is_backup_archive(key: &str) -> bool {
+/// Discourse backup archives are `.tar.gz` (or legacy `.tar`); the basename
+/// is checked so a `backups/default/` prefix never hides a match. Shared
+/// with `setup-s3`'s verification poll (P14).
+pub(crate) fn is_backup_archive(key: &str) -> bool {
     let basename = key.rsplit('/').next().unwrap_or(key);
     basename.ends_with(".tar.gz") || basename.ends_with(".tar")
 }

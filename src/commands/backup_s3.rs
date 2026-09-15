@@ -3,10 +3,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::api::DiscourseClient;
-use crate::commands::backup::{AWS_CALL_TIMEOUT, MAX_S3_PAGE_BYTES, run_aws_json};
+use crate::commands::backup::{
+    AWS_CALL_TIMEOUT, MAX_S3_PAGE_BYTES, MAX_S3_PAGES, is_backup_archive, list_s3_args,
+    run_aws_json,
+};
 use crate::commands::common::{ensure_api_credentials, select_discourse, selected_discourses};
 use crate::config::Config;
 use anyhow::{Context, Result, anyhow, bail};
+use chrono::{DateTime, SubsecRound, Utc};
 use serde_json::{Value, json};
 use std::process::Command;
 use std::thread::sleep;
@@ -368,15 +372,23 @@ pub fn setup_s3(
     }
     println!("Triggering a test backup and waiting for it to land in the bucket...");
     client.create_backup()?;
-    if wait_for_backup_object(&names.bucket, region)? {
+    // Record the trigger time so the verification poll only accepts an
+    // archive newer than this moment as proof the new backup landed (P14);
+    // a bucket holding pre-existing archives (the `--reuse-user` case) must
+    // not otherwise be mistaken for success. Truncating to whole seconds
+    // keeps the comparison robust against sub-second clock skew between
+    // Discourse's clock and the S3 upload stamping.
+    let triggered_at = Utc::now().trunc_subsecs(0);
+    if wait_for_backup_object(&names.bucket, region, triggered_at)? {
         println!(
             "✓ Test backup landed in s3://{}/ - setup verified.",
             names.bucket
         );
     } else {
         println!(
-            "Backup triggered, but nothing visible in s3://{}/ yet. Discourse backups run \
-             asynchronously - re-check with `aws s3 ls s3://{}/ --recursive` shortly.",
+            "Backup triggered, but nothing newer than {triggered_at} appeared in \
+             s3://{}/ within the poll window. Discourse backups run asynchronously - \
+             re-check with `aws s3 ls s3://{}/` shortly.",
             names.bucket, names.bucket
         );
     }
@@ -439,20 +451,36 @@ pub fn setup_s3_all(
     Ok(())
 }
 
-/// Poll for a backup object (`.tar.gz`) for up to ~3 minutes (P14).
-/// Previously ran `aws s3 ls --recursive`, which lists and buffers the
-/// entire bucket on every ten-second attempt via unbounded
-/// `Command::output()` - the wall-clock deadline was only checked between
-/// whole-bucket listings, so one hung `aws` process could exceed it
-/// indefinitely, and nothing was printed while waiting. Now each attempt
-/// walks bounded `list-objects-v2` pages and stops at the first archive
-/// found, so a bucket already holding earlier backups (the common case for
-/// `--reuse-user` re-runs) resolves from its first, oldest page rather than
-/// re-listing the whole bucket every attempt.
-fn wait_for_backup_object(bucket: &str, region: &str) -> Result<bool> {
-    let start = Instant::now();
+/// Poll for a backup object for up to ~3 minutes (P14). Previously ran
+/// `aws s3 ls --recursive`, which lists and buffers the entire bucket on
+/// every ten-second attempt via unbounded `Command::output()` - the
+/// wall-clock deadline was only checked between whole-bucket listings, so
+/// one hung `aws` process could exceed it indefinitely, and nothing was
+/// printed while waiting. Now each attempt walks bounded `list-objects-v2`
+/// pages whose total elapsed time cannot exceed the poll budget, and stops
+/// at the first archive *newer than the trigger time* (P14's
+/// recommendation): pre-existing archives are skipped so a bucket already
+/// holding older backups (the common `--reuse-user` re-run case) cannot be
+/// mistaken for proof the newly triggered one landed.
+///
+/// The bound applies across the whole poll, not per poll attempt: the
+/// budget handed to each page walk is the outer deadline minus elapsed
+/// time, so retries cannot extend total runtime, and a page's own
+/// subprocess call is separately capped by `run_aws_json`'s timeout. The
+/// sleep is clamped to the remaining budget so the loop cannot oversleep
+/// past the deadline, and a final elapsed check prevents a deadline-adjacent
+/// sleep loop from starting one more attempt.
+fn wait_for_backup_object(bucket: &str, region: &str, triggered_at: DateTime<Utc>) -> Result<bool> {
+    const POLL_INTERVAL: Duration = Duration::from_secs(10);
     let deadline = Duration::from_secs(180);
+    let start = Instant::now();
     let mut attempt = 0u32;
+    // A transient failure (throttling, IAM propagation delay) is not fatal
+    // to the poll - retry within the outer deadline, matching the previous
+    // implementation's tolerance of a non-zero `aws` exit. If every attempt
+    // fails, the last error is kept so the final message can say why
+    // instead of a bare "nothing visible".
+    let mut last_error: Option<anyhow::Error> = None;
     while start.elapsed() < deadline {
         attempt += 1;
         println!(
@@ -460,46 +488,57 @@ fn wait_for_backup_object(bucket: &str, region: &str) -> Result<bool> {
             start.elapsed().as_secs()
         );
         let remaining = deadline.saturating_sub(start.elapsed());
-        // A transient failure (throttling, IAM propagation delay) is not
-        // fatal to the poll - retry within the outer deadline, matching the
-        // previous implementation's tolerance of a non-zero `aws` exit.
-        if s3_has_backup_archive(bucket, region, remaining).unwrap_or(false) {
-            return Ok(true);
+        if remaining.is_zero() {
+            break;
         }
-        sleep(Duration::from_secs(10).min(deadline.saturating_sub(start.elapsed())));
+        match s3_newest_backup_after(bucket, region, triggered_at, remaining) {
+            Ok(true) => return Ok(true),
+            Ok(false) => {}
+            Err(error) => last_error = Some(error),
+        }
+        let sleep_for = POLL_INTERVAL.min(deadline.saturating_sub(start.elapsed()));
+        if sleep_for.is_zero() {
+            break;
+        }
+        sleep(sleep_for);
+    }
+    if let Some(error) = last_error {
+        bail!(
+            "backup did not appear in s3://{bucket}/ within the poll window; \
+             last listing error: {error:#}"
+        );
     }
     Ok(false)
 }
 
 /// Walk `list-objects-v2` pages for `bucket`, bounded by `budget`, returning
-/// as soon as a `.tar.gz` key is seen instead of folding the whole bucket
-/// (P14). Each page is its own byte-capped, timed `aws` call
-/// (`run_aws_json`); a page cap guards against a pathological continuation
-/// loop the way `backup`'s `MAX_S3_PAGES` does for the full-inventory scan.
-fn s3_has_backup_archive(bucket: &str, region: &str, budget: Duration) -> Result<bool> {
-    const MAX_VERIFY_PAGES: usize = 1_000;
+/// as soon as a backup archive with `LastModified` strictly after
+/// `triggered_at` is seen (P14). Each page is its own byte-capped, timed
+/// `aws` call via `run_aws_json`, sharing `backup`'s argument construction,
+/// page parsing, and page-cap constant rather than duplicating them.
+/// `MAX_S3_PAGES` (1,000) guards against a pathological continuation loop
+/// the way `backup`'s full-inventory scan does; here it is also the
+/// practical upper bound on objects seen, since the walk stops at the
+/// first page containing a new archive. Subprocess/parse failures surface
+/// as errors the poll tolerates as transient; a missing or non-boolean
+/// `IsTruncated`, a truncated page without a token, or a malformed
+/// `LastModified` on an archive key each end the walk as "no match seen"
+/// or an error, but the poll's final message always preserves the last
+/// error if every attempt failed.
+fn s3_newest_backup_after(
+    bucket: &str,
+    region: &str,
+    triggered_at: DateTime<Utc>,
+    budget: Duration,
+) -> Result<bool> {
     let start = Instant::now();
     let mut token: Option<String> = None;
-    for _ in 0..MAX_VERIFY_PAGES {
+    for _ in 0..MAX_S3_PAGES {
         let remaining = budget.saturating_sub(start.elapsed());
         if remaining.is_zero() {
             return Ok(false);
         }
-        let mut args = vec![
-            "s3api".to_string(),
-            "list-objects-v2".to_string(),
-            "--bucket".to_string(),
-            bucket.to_string(),
-            "--region".to_string(),
-            region.to_string(),
-            // Use service continuation tokens, not the CLI's own
-            // auto-pagination, so each page is its own bounded call.
-            "--no-paginate".to_string(),
-        ];
-        if let Some(token) = &token {
-            args.push("--continuation-token".to_string());
-            args.push(token.clone());
-        }
+        let args = list_s3_args(bucket, region, None, token.as_deref());
         let page = run_aws_json(
             &args.iter().map(String::as_str).collect::<Vec<_>>(),
             None,
@@ -507,7 +546,7 @@ fn s3_has_backup_archive(bucket: &str, region: &str, budget: Duration) -> Result
             MAX_S3_PAGE_BYTES,
             remaining.min(AWS_CALL_TIMEOUT),
         )?;
-        if page_has_backup_archive(&page) {
+        if page_newest_backup_after(&page, triggered_at)? {
             return Ok(true);
         }
         if !page
@@ -528,14 +567,34 @@ fn s3_has_backup_archive(bucket: &str, region: &str, budget: Duration) -> Result
     Ok(false)
 }
 
-/// True if a `list-objects-v2` JSON page lists a `.tar.gz` object.
-fn page_has_backup_archive(page: &Value) -> bool {
-    page.get("Contents")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|object| object.get("Key").and_then(Value::as_str))
-        .any(|key| key.ends_with(".tar.gz"))
+/// True if a `list-objects-v2` JSON page contains a backup archive with a
+/// `LastModified` strictly after `triggered_at` (P14). Keys are matched on
+/// the basename, exactly as `backup health` classifies archives, so a
+/// `backups/default/` prefix and non-archive objects (reports, manifests)
+/// are ignored. Missing/malformed `LastModified` on an archive key is an
+/// error rather than a silently skipped object.
+fn page_newest_backup_after(page: &Value, triggered_at: DateTime<Utc>) -> Result<bool> {
+    let Some(contents) = page.get("Contents").and_then(Value::as_array) else {
+        return Ok(false);
+    };
+    for object in contents {
+        let Some(key) = object.get("Key").and_then(Value::as_str) else {
+            continue;
+        };
+        if !is_backup_archive(key) {
+            continue;
+        }
+        let modified_at = object
+            .get("LastModified")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("S3 object '{key}' missing LastModified"))?
+            .parse::<DateTime<Utc>>()
+            .with_context(|| format!("parsing S3 LastModified for {key}"))?;
+        if modified_at > triggered_at {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn print_plan(
@@ -686,52 +745,108 @@ mod tests {
     }
 
     #[test]
-    fn page_has_backup_archive_finds_a_tar_gz_key() {
+    fn page_newest_backup_after_matches_new_archives_on_the_basename() {
+        let before = "2026-09-15T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        // A pre-existing archive (at or before the trigger time) is never a
+        // match; the basename is checked so non-archive keys are ignored.
         let page = json!({
             "IsTruncated": false,
-            "Contents": [{"Key": "backups/default/checksums.sha256", "Size": 1}],
+            "Contents": [
+                {"Key": "backups/default/old.tar.gz", "LastModified": "2026-09-15T00:00:00Z", "Size": 1},
+                {"Key": "backups/default/older.tar", "LastModified": "2026-09-14T00:00:00Z", "Size": 1},
+                {"Key": "reports/checksums.sha256", "LastModified": "2026-09-16T00:00:00Z", "Size": 1},
+            ],
         });
-        assert!(!page_has_backup_archive(&page));
+        assert!(!page_newest_backup_after(&page, before).unwrap());
 
+        // Strictly-after matches a second later; the trigger time itself
+        // does not.
         let page = json!({
             "IsTruncated": false,
-            "Contents": [{"Key": "backups/default/2026-09-15.tar.gz", "Size": 1}],
+            "Contents": [{"Key": "backups/default/new.tar.gz", "LastModified": "2026-09-15T00:00:01Z", "Size": 1}],
         });
-        assert!(page_has_backup_archive(&page));
+        assert!(page_newest_backup_after(&page, before).unwrap());
+
+        // A future-dated non-archive key does not match, and a
+        // timezone-offset timestamp parses to the same instant as its Z form
+        // (02:00+02:00 is 00:00:01Z's neighbour: 02:00:01+02:00 = 00:00:01Z,
+        // strictly after the trigger).
+        let page = json!({
+            "IsTruncated": false,
+            "Contents": [{"Key": "backups/default/offset.tar.gz", "LastModified": "2026-09-15T02:00:01+02:00", "Size": 1}],
+        });
+        assert!(page_newest_backup_after(&page, before).unwrap());
+        let page = json!({
+            "IsTruncated": false,
+            "Contents": [{"Key": "backups/default/equal-offset.tar.gz", "LastModified": "2026-09-15T02:00:00+02:00", "Size": 1}],
+        });
+        assert!(!page_newest_backup_after(&page, before).unwrap());
     }
 
     #[test]
-    fn page_has_backup_archive_handles_an_empty_page() {
+    fn page_newest_backup_after_handles_an_empty_page() {
+        let before = "2026-09-15T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
         let page = json!({"IsTruncated": false, "Contents": []});
-        assert!(!page_has_backup_archive(&page));
-        assert!(!page_has_backup_archive(&json!({})));
+        assert!(!page_newest_backup_after(&page, before).unwrap());
+        assert!(!page_newest_backup_after(&json!({}), before).unwrap());
+        // A non-array Contents is treated as no contents, not an error, so
+        // an empty bucket page cannot fail the poll.
+        assert!(!page_newest_backup_after(&json!({"Contents": null}), before).unwrap());
     }
 
-    // Real-subprocess coverage for `s3_has_backup_archive`'s use of
+    #[test]
+    fn page_newest_backup_after_rejects_an_archive_with_malformed_timestamp() {
+        let before = "2026-09-15T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let page = json!({
+            "IsTruncated": false,
+            "Contents": [
+                {"Key": "backups/default/other.tar.gz", "LastModified": "not-a-time", "Size": 1},
+            ],
+        });
+        let error = page_newest_backup_after(&page, before).unwrap_err();
+        assert!(error.to_string().contains("LastModified"), "{error}");
+
+        let page = json!({
+            "IsTruncated": false,
+            "Contents": [{"Key": "backups/default/no-time.tar.gz", "Size": 1}],
+        });
+        let error = page_newest_backup_after(&page, before).unwrap_err();
+        assert!(
+            error.to_string().contains("missing LastModified"),
+            "{error}"
+        );
+    }
+
+    // Real-subprocess coverage for `s3_newest_backup_after`'s use of
     // `backup::run_aws_json` (see `tests/fixtures/fake-aws`'s header
     // comment): when given a real `--bucket <name>`, the fixture echoes it
-    // into a single non-truncated page's object key.
+    // into a single non-truncated page's object key. The fixture's fixed
+    // `2026-01-01` LastModified only matches a trigger time before it.
     #[test]
     #[cfg(unix)]
-    fn s3_has_backup_archive_finds_an_existing_archive() {
+    fn s3_newest_backup_after_finds_an_archive_newer_than_the_trigger() {
         use crate::commands::ssh::fixture_tests::FakeAwsPath;
         let _fake_aws = FakeAwsPath::install();
-        let found = s3_has_backup_archive("some-bucket", "eu-west-2", Duration::from_secs(5))
-            .expect("fake-aws succeeds");
+        let before = "2025-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let found =
+            s3_newest_backup_after("some-bucket", "eu-west-2", before, Duration::from_secs(5))
+                .expect("fake-aws succeeds");
         assert!(
             found,
-            "fake-aws always echoes a .tar.gz key for a real bucket name"
+            "fake-aws echoes a 2026 archive for a real bucket name"
         );
     }
 
     #[test]
     #[cfg(unix)]
-    fn s3_has_backup_archive_reports_no_match_for_an_empty_bucket() {
+    fn s3_newest_backup_after_skips_archives_older_than_the_trigger() {
         use crate::commands::ssh::fixture_tests::FakeAwsPath;
         let _fake_aws = FakeAwsPath::install();
-        // fake-aws treats an empty --bucket value as "no bucket name given"
-        // and returns an empty, non-truncated page.
-        let found = s3_has_backup_archive("", "eu-west-2", Duration::from_secs(5))
+        // The fixture's single archive is dated 2026-01-01, so a later
+        // trigger time means the bucket holds only pre-existing archives -
+        // exactly the false-positive the trigger-time check exists to catch.
+        let after = "2027-01-01T00:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let found = s3_newest_backup_after("", "eu-west-2", after, Duration::from_secs(5))
             .expect("fake-aws succeeds");
         assert!(!found);
     }

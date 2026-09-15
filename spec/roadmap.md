@@ -35,7 +35,7 @@ Work toward `v1.0.0`. The stable `RXX` identifiers below are intentionally non-c
 
 ### Performance
 
-**R52/P14 closed (2026-09-15):** `backup setup-s3`'s test-backup verification poll now walks bounded `list-objects-v2` pages through the same `run_aws_json` subprocess handling as `backup health` (shared, not duplicated) instead of an unbounded `aws s3 ls --recursive`, stopping at the first archive found and printing per-attempt progress.
+**R52/P14 closed (2026-09-15):** `backup setup-s3`'s test-backup verification poll now walks bounded `list-objects-v2` pages through the same `run_aws_json` subprocess handling as `backup health` (shared, not duplicated) instead of an unbounded `aws s3 ls --recursive`, stopping at the first archive strictly newer than the recorded trigger time so pre-existing archives in a reused bucket cannot falsely verify, and printing per-attempt progress.
 
 **R52/P13 closed (2026-09-14):** independent S3 bucket scans in `backup health` now run through a bounded worker pool (`scan_s3_jobs`, same shared-queue pattern as `common::run_fleet`), the last open half of P13. Rows already resolved at the configuration phase stream immediately; rows needing a scan run concurrently and stream fastest-first as each bucket completes. A real-subprocess test extends the `fake-aws` fixture to echo the requested bucket name back into the response so concurrent jobs can be proven not to cross-wire results.
 
