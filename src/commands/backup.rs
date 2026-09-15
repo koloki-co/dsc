@@ -711,7 +711,11 @@ fn effective_stale_after_days(frequency: u64, max_age: Option<u64>) -> Option<u6
     (frequency > 0).then(|| max_age.unwrap_or(frequency).max(frequency))
 }
 
-const MAX_S3_PAGES: usize = 1_000;
+/// Upper bound on `list-objects-v2` service pages per scan: full pages hold
+/// 1,000 objects, so this permits up to one million objects while a
+/// unique-token stream that never truncates to false cannot run forever
+/// (P13). Also used by `setup-s3`'s verification page walk (P14).
+pub(crate) const MAX_S3_PAGES: usize = 1_000;
 
 /// Overall wall-clock budget for scanning one bucket across all of its
 /// pages. Bounds total command runtime even when no single page hangs
@@ -936,7 +940,11 @@ fn fold_s3_page(page: Vec<S3Object>, summary: &mut S3BucketSummary) {
     }
 }
 
-fn list_s3_args(
+/// One `list-objects-v2` call's arguments: bucket, region, optional custom
+/// endpoint, and one service continuation token. Shared with `setup-s3`'s
+/// verification poll (P14), which is AWS-only and so always passes no
+/// endpoint.
+pub(crate) fn list_s3_args(
     bucket: &str,
     region: &str,
     endpoint: Option<&str>,
@@ -966,21 +974,25 @@ fn list_s3_args(
 /// Per-page byte cap on `aws` stdout. A service page is at most 1,000
 /// objects, so ordinary output is a small fraction of this; the cap exists
 /// to bound memory against a misbehaving or hostile S3-compatible endpoint
-/// rather than real AWS traffic (P13).
-const MAX_S3_PAGE_BYTES: usize = 64 * 1024 * 1024;
+/// rather than real AWS traffic (P13). Also used by `backup_s3`'s bounded
+/// test-backup verification poll (P14).
+pub(crate) const MAX_S3_PAGE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Wall-clock budget for a single `aws` invocation (one service page).
 /// Bounds the previously-unbounded subprocess wait so a hung CLI or
-/// unresponsive endpoint cannot block a scan indefinitely (P13).
-const AWS_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// unresponsive endpoint cannot block a scan indefinitely (P13). Also used
+/// by `backup_s3`'s bounded test-backup verification poll (P14).
+pub(crate) const AWS_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Runs `aws <args> --output json` and parses its stdout, with an explicit
 /// byte cap on stdout and a wall-clock timeout on the whole invocation.
 /// Parameterised (see `tests/fixtures/fake-aws`) so tests can exercise both
 /// against a real spawned process without waiting on production-sized
 /// values. Previously used `Command::output()`, which buffers stdout
-/// without bound and blocks on `wait()` without a deadline (P13).
-fn run_aws_json(
+/// without bound and blocks on `wait()` without a deadline (P13). Shared
+/// with `backup_s3`'s test-backup verification poll (P14), so the same
+/// bounded spawn/pipe/kill handling backs both callers.
+pub(crate) fn run_aws_json(
     args: &[&str],
     access_key_id: Option<&str>,
     secret_access_key: Option<&str>,
@@ -1204,7 +1216,10 @@ fn parse_s3_objects(page: &Value) -> Result<Vec<S3Object>> {
         .collect()
 }
 
-fn is_backup_archive(key: &str) -> bool {
+/// Discourse backup archives are `.tar.gz` (or legacy `.tar`); the basename
+/// is checked so a `backups/default/` prefix never hides a match. Shared
+/// with `setup-s3`'s verification poll (P14).
+pub(crate) fn is_backup_archive(key: &str) -> bool {
     let basename = key.rsplit('/').next().unwrap_or(key);
     basename.ends_with(".tar.gz") || basename.ends_with(".tar")
 }

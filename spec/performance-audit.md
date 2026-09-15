@@ -188,6 +188,8 @@ The test-backup verifier starts `aws s3 ls --recursive` every ten seconds for up
 
 **Recommendation:** Record the trigger time and poll a paged `list-objects-v2` query using a narrow prefix or bounded result set, with an explicit subprocess timeout and visible attempt/elapsed progress.
 
+**Addressed 2026-09-15:** each poll now walks bounded `list-objects-v2` pages through `backup`'s `run_aws_json` (shared, not duplicated - now `pub(crate)` alongside `MAX_S3_PAGE_BYTES`/`AWS_CALL_TIMEOUT`/`MAX_S3_PAGES`/`list_s3_args`), replacing `aws s3 ls --recursive`'s unbounded `Command::output()`. Each page is its own byte-capped, explicitly-timed subprocess call rather than one arbitrarily long-running whole-bucket dump, and the walk stops at the first backup archive with `LastModified` strictly after the recorded trigger time - the audit's recommendation - instead of folding the entire bucket, so pre-existing archives in a reused bucket (the common `--reuse-user` re-run case) can never be mistaken for proof the newly triggered backup landed. The three-minute bound applies across the whole poll, not per attempt: each page walk receives the remaining outer budget, the sleep is clamped to it, and a final elapsed check prevents one more attempt past the deadline. A per-attempt line prints elapsed time, and if every attempt fails the last listing error is reported rather than a bare "nothing visible" (a transient `aws` failure is still retried within the outer deadline, preserving the previous non-fatal behavior). Real-subprocess tests via the `fake-aws` fixture cover a new archive being found and only pre-existing archives being skipped; the page-matching logic (basename archive check, strict-after comparison, offset-timestamp parsing, malformed/missing `LastModified`) is separately unit-tested against constructed pages.
+
 ### P15 - Medium - Deleted-topic search performs a serial detail request for every row before applying the query
 
 **Evidence:** `src/api/topics.rs:225-307`; `src/commands/topic.rs:356-403`.
@@ -420,7 +422,7 @@ Use delayed fake workers and fake subprocesses to test concurrency deterministic
 1. P9 - stream SAR serialization and bound detail-fetch concurrency.
 2. P10 and P15 - index topic lookups and bound category/deleted-topic detail reads.
 3. ~~P11 and P16 - bound and stream image/file transfer, with cached endpoint capability.~~ (done)
-4. ~~P13 - page and fold S3 data without whole-bucket materialization, and scan independent buckets through a bounded pool.~~ (done) P14 remains open.
+4. ~~P13 - page and fold S3 data without whole-bucket materialization, and scan independent buckets through a bounded pool.~~ (done) ~~P14 - bound and time the test-backup verification poll.~~ (done)
 5. P20, P22, P23, P25, and P26 - complete lower-priority streaming, durability measurement, indexing, and budget work.
 
 ## Method and progress
