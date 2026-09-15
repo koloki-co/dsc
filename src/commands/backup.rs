@@ -966,21 +966,25 @@ fn list_s3_args(
 /// Per-page byte cap on `aws` stdout. A service page is at most 1,000
 /// objects, so ordinary output is a small fraction of this; the cap exists
 /// to bound memory against a misbehaving or hostile S3-compatible endpoint
-/// rather than real AWS traffic (P13).
-const MAX_S3_PAGE_BYTES: usize = 64 * 1024 * 1024;
+/// rather than real AWS traffic (P13). Also used by `backup_s3`'s bounded
+/// test-backup verification poll (P14).
+pub(crate) const MAX_S3_PAGE_BYTES: usize = 64 * 1024 * 1024;
 
 /// Wall-clock budget for a single `aws` invocation (one service page).
 /// Bounds the previously-unbounded subprocess wait so a hung CLI or
-/// unresponsive endpoint cannot block a scan indefinitely (P13).
-const AWS_CALL_TIMEOUT: Duration = Duration::from_secs(60);
+/// unresponsive endpoint cannot block a scan indefinitely (P13). Also used
+/// by `backup_s3`'s bounded test-backup verification poll (P14).
+pub(crate) const AWS_CALL_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Runs `aws <args> --output json` and parses its stdout, with an explicit
 /// byte cap on stdout and a wall-clock timeout on the whole invocation.
 /// Parameterised (see `tests/fixtures/fake-aws`) so tests can exercise both
 /// against a real spawned process without waiting on production-sized
 /// values. Previously used `Command::output()`, which buffers stdout
-/// without bound and blocks on `wait()` without a deadline (P13).
-fn run_aws_json(
+/// without bound and blocks on `wait()` without a deadline (P13). Shared
+/// with `backup_s3`'s test-backup verification poll (P14), so the same
+/// bounded spawn/pipe/kill handling backs both callers.
+pub(crate) fn run_aws_json(
     args: &[&str],
     access_key_id: Option<&str>,
     secret_access_key: Option<&str>,

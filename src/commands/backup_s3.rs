@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::api::DiscourseClient;
+use crate::commands::backup::{AWS_CALL_TIMEOUT, MAX_S3_PAGE_BYTES, run_aws_json};
 use crate::commands::common::{ensure_api_credentials, select_discourse, selected_discourses};
 use crate::config::Config;
 use anyhow::{Context, Result, anyhow, bail};
@@ -367,7 +368,7 @@ pub fn setup_s3(
     }
     println!("Triggering a test backup and waiting for it to land in the bucket...");
     client.create_backup()?;
-    if wait_for_backup_object(&names.bucket)? {
+    if wait_for_backup_object(&names.bucket, region)? {
         println!(
             "✓ Test backup landed in s3://{}/ - setup verified.",
             names.bucket
@@ -438,20 +439,103 @@ pub fn setup_s3_all(
     Ok(())
 }
 
-/// Poll `aws s3 ls` for a backup object (`.tar.gz`) for up to ~3 minutes.
-fn wait_for_backup_object(bucket: &str) -> Result<bool> {
-    let deadline = Instant::now() + Duration::from_secs(180);
-    while Instant::now() < deadline {
-        let output = Command::new("aws")
-            .args(["s3", "ls", &format!("s3://{bucket}/"), "--recursive"])
-            .output()
-            .context("running `aws s3 ls`")?;
-        if output.status.success() && String::from_utf8_lossy(&output.stdout).contains(".tar.gz") {
+/// Poll for a backup object (`.tar.gz`) for up to ~3 minutes (P14).
+/// Previously ran `aws s3 ls --recursive`, which lists and buffers the
+/// entire bucket on every ten-second attempt via unbounded
+/// `Command::output()` - the wall-clock deadline was only checked between
+/// whole-bucket listings, so one hung `aws` process could exceed it
+/// indefinitely, and nothing was printed while waiting. Now each attempt
+/// walks bounded `list-objects-v2` pages and stops at the first archive
+/// found, so a bucket already holding earlier backups (the common case for
+/// `--reuse-user` re-runs) resolves from its first, oldest page rather than
+/// re-listing the whole bucket every attempt.
+fn wait_for_backup_object(bucket: &str, region: &str) -> Result<bool> {
+    let start = Instant::now();
+    let deadline = Duration::from_secs(180);
+    let mut attempt = 0u32;
+    while start.elapsed() < deadline {
+        attempt += 1;
+        println!(
+            "  checking s3://{bucket}/ for the new backup (attempt {attempt}, {}s elapsed)...",
+            start.elapsed().as_secs()
+        );
+        let remaining = deadline.saturating_sub(start.elapsed());
+        // A transient failure (throttling, IAM propagation delay) is not
+        // fatal to the poll - retry within the outer deadline, matching the
+        // previous implementation's tolerance of a non-zero `aws` exit.
+        if s3_has_backup_archive(bucket, region, remaining).unwrap_or(false) {
             return Ok(true);
         }
-        sleep(Duration::from_secs(10));
+        sleep(Duration::from_secs(10).min(deadline.saturating_sub(start.elapsed())));
     }
     Ok(false)
+}
+
+/// Walk `list-objects-v2` pages for `bucket`, bounded by `budget`, returning
+/// as soon as a `.tar.gz` key is seen instead of folding the whole bucket
+/// (P14). Each page is its own byte-capped, timed `aws` call
+/// (`run_aws_json`); a page cap guards against a pathological continuation
+/// loop the way `backup`'s `MAX_S3_PAGES` does for the full-inventory scan.
+fn s3_has_backup_archive(bucket: &str, region: &str, budget: Duration) -> Result<bool> {
+    const MAX_VERIFY_PAGES: usize = 1_000;
+    let start = Instant::now();
+    let mut token: Option<String> = None;
+    for _ in 0..MAX_VERIFY_PAGES {
+        let remaining = budget.saturating_sub(start.elapsed());
+        if remaining.is_zero() {
+            return Ok(false);
+        }
+        let mut args = vec![
+            "s3api".to_string(),
+            "list-objects-v2".to_string(),
+            "--bucket".to_string(),
+            bucket.to_string(),
+            "--region".to_string(),
+            region.to_string(),
+            // Use service continuation tokens, not the CLI's own
+            // auto-pagination, so each page is its own bounded call.
+            "--no-paginate".to_string(),
+        ];
+        if let Some(token) = &token {
+            args.push("--continuation-token".to_string());
+            args.push(token.clone());
+        }
+        let page = run_aws_json(
+            &args.iter().map(String::as_str).collect::<Vec<_>>(),
+            None,
+            None,
+            MAX_S3_PAGE_BYTES,
+            remaining.min(AWS_CALL_TIMEOUT),
+        )?;
+        if page_has_backup_archive(&page) {
+            return Ok(true);
+        }
+        if !page
+            .get("IsTruncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Ok(false);
+        }
+        token = page
+            .get("NextContinuationToken")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if token.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(false)
+}
+
+/// True if a `list-objects-v2` JSON page lists a `.tar.gz` object.
+fn page_has_backup_archive(page: &Value) -> bool {
+    page.get("Contents")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|object| object.get("Key").and_then(Value::as_str))
+        .any(|key| key.ends_with(".tar.gz"))
 }
 
 fn print_plan(
@@ -599,5 +683,56 @@ mod tests {
         let error = ensure_access_key_capacity("forum-discourse-backup-user", 2).unwrap_err();
         assert!(error.to_string().contains("including inactive keys"));
         assert!(error.to_string().contains("delete an existing key"));
+    }
+
+    #[test]
+    fn page_has_backup_archive_finds_a_tar_gz_key() {
+        let page = json!({
+            "IsTruncated": false,
+            "Contents": [{"Key": "backups/default/checksums.sha256", "Size": 1}],
+        });
+        assert!(!page_has_backup_archive(&page));
+
+        let page = json!({
+            "IsTruncated": false,
+            "Contents": [{"Key": "backups/default/2026-09-15.tar.gz", "Size": 1}],
+        });
+        assert!(page_has_backup_archive(&page));
+    }
+
+    #[test]
+    fn page_has_backup_archive_handles_an_empty_page() {
+        let page = json!({"IsTruncated": false, "Contents": []});
+        assert!(!page_has_backup_archive(&page));
+        assert!(!page_has_backup_archive(&json!({})));
+    }
+
+    // Real-subprocess coverage for `s3_has_backup_archive`'s use of
+    // `backup::run_aws_json` (see `tests/fixtures/fake-aws`'s header
+    // comment): when given a real `--bucket <name>`, the fixture echoes it
+    // into a single non-truncated page's object key.
+    #[test]
+    #[cfg(unix)]
+    fn s3_has_backup_archive_finds_an_existing_archive() {
+        use crate::commands::ssh::fixture_tests::FakeAwsPath;
+        let _fake_aws = FakeAwsPath::install();
+        let found = s3_has_backup_archive("some-bucket", "eu-west-2", Duration::from_secs(5))
+            .expect("fake-aws succeeds");
+        assert!(
+            found,
+            "fake-aws always echoes a .tar.gz key for a real bucket name"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn s3_has_backup_archive_reports_no_match_for_an_empty_bucket() {
+        use crate::commands::ssh::fixture_tests::FakeAwsPath;
+        let _fake_aws = FakeAwsPath::install();
+        // fake-aws treats an empty --bucket value as "no bucket name given"
+        // and returns an empty, non-truncated page.
+        let found = s3_has_backup_archive("", "eu-west-2", Duration::from_secs(5))
+            .expect("fake-aws succeeds");
+        assert!(!found);
     }
 }
