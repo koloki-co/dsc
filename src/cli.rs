@@ -376,10 +376,20 @@ pub enum Commands {
     /// Open a Discourse in the default browser.
     #[command(visible_alias = "o")]
     #[command(after_help = "Examples:
-  dsc open myforum")]
+  dsc open myforum
+  dsc open --all
+  dsc open --tags production
+  dsc open 'forum.rc*'")]
     Open {
-        /// Discourse name.
-        discourse: String,
+        /// Discourse name. May contain * or ? as a glob. Omit with --all or --tags.
+        #[arg(required_unless_present_any = ["all", "tags"], conflicts_with_all = ["all", "tags"])]
+        discourse: Option<String>,
+        /// Open every configured forum.
+        #[arg(long, conflicts_with = "tags")]
+        all: bool,
+        /// Open forums matching these tags (comma/semicolon separated, match-any).
+        #[arg(long, value_name = "tag1,tag2", conflicts_with = "all")]
+        tags: Option<String>,
     },
     /// Harden a fresh Ubuntu server reachable via `ssh root@host`.
     ///

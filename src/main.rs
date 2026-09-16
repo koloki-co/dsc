@@ -1398,7 +1398,16 @@ fn main() -> Result<()> {
             dry_run,
         ),
 
-        Commands::Open { discourse } => commands::open::open_discourse(&config, &discourse),
+        Commands::Open {
+            discourse,
+            all,
+            tags,
+        } => commands::open::open_discourse(
+            &config,
+            discourse.as_deref(),
+            all.then_some(()),
+            tags.as_deref(),
+        ),
 
         Commands::Harden {
             host,

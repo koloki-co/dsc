@@ -66,7 +66,10 @@ tags = ["gamma"]
         cmd
     }
 
-    fn start(&mut self, mut cmd: Command, missing: bool) -> Receiver<Output> {
+    /// `write_stdin` must be `false` for fleet opens: `open --all/--tags/glob`
+    /// detaches its openers and never reads stdin, so a piped stdin would
+    /// block the harness on `write_all` forever.
+    fn start(&mut self, mut cmd: Command, missing: bool, write_stdin: bool) -> Receiver<Output> {
         cmd.env("DSC_OPENER_TEST_DIR", self.dir.path())
             .env(
                 "DSC_BROWSER_OPENER",
@@ -75,12 +78,18 @@ tags = ["gamma"]
                     .join(if missing { "missing" } else { "opener.sh" }),
             )
             .process_group(0)
-            .stdin(Stdio::piped())
+            .stdin(if write_stdin {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = cmd.spawn().unwrap();
         self.group = Some(child.id() as i32);
-        let _ = child.stdin.take().unwrap().write_all(b"interactive\n");
+        if write_stdin {
+            let _ = child.stdin.take().unwrap().write_all(b"interactive\n");
+        }
         let (tx, rx) = mpsc::channel();
         self.reader = Some(thread::spawn(move || {
             let _ = tx.send(child.wait_with_output().unwrap());
@@ -138,7 +147,7 @@ fn list_open_launches_exact_selected_urls_without_waiting_or_inheriting_stdio() 
         if filtered {
             args.extend(["--tags", "gamma"]);
         }
-        let rx = fixture.start(fixture.command(&args), false);
+        let rx = fixture.start(fixture.command(&args), false, false);
         // This bounds both process exit and pipe EOF, not just elapsed time
         // measured after a potentially endless Command::output().
         let output = rx.recv_timeout(TIMEOUT).expect("list --open timed out");
@@ -167,7 +176,7 @@ fn list_open_launches_exact_selected_urls_without_waiting_or_inheriting_stdio() 
 fn missing_opener_is_reported_by_both_commands() {
     for args in [&["list", "--open"][..], &["open", "one"][..]] {
         let mut fixture = OpenerFixture::new(false);
-        let rx = fixture.start(fixture.command(args), true);
+        let rx = fixture.start(fixture.command(args), true, false);
         let output = rx.recv_timeout(TIMEOUT).expect("command timed out");
         assert!(!output.status.success());
         assert!(
@@ -182,6 +191,7 @@ fn list_open_reports_launch_success_not_late_exit_failure() {
     let rx = fixture.start(
         fixture.command(&["list", "--open", "--tags", "alpha", "-f", "urls"]),
         false,
+        false,
     );
     let output = rx.recv_timeout(TIMEOUT).expect("list --open timed out");
     assert!(output.status.success(), "{output:?}");
@@ -193,7 +203,7 @@ fn list_open_reports_launch_success_not_late_exit_failure() {
 #[test]
 fn standalone_open_checks_nonzero_exit_and_inherits_stdio() {
     let mut fixture = OpenerFixture::new(false);
-    let rx = fixture.start(fixture.command(&["open", "one"]), false);
+    let rx = fixture.start(fixture.command(&["open", "one"]), false, true);
     let output = rx.recv_timeout(TIMEOUT).expect("open timed out");
     assert!(!output.status.success());
     assert_eq!(output.stdout, b"opener stdout\n");
@@ -243,10 +253,51 @@ fn detached_opener_is_reaped_in_a_living_library_host() {
         "detached_opener_is_reaped_in_a_living_library_host",
         "--nocapture",
     ]);
-    let rx = fixture.start(cmd, false);
+    let rx = fixture.start(cmd, false, false);
     let output = rx
         .recv_timeout(Duration::from_secs(15))
         .expect("library host timed out");
     assert!(output.status.success(), "{output:?}");
     assert_eq!(fixture.records(1), ["1\nhttps://one.example\nEOF\n"]);
+}
+
+#[test]
+fn open_fleet_launches_every_selected_url_detached() {
+    // Fleet selections (`--all`, `--tags`, and a name glob) launch one
+    // detached opener per selected forum and do not wait for any of them,
+    // matching `list --open`'s contract. The glob selects one forum by a
+    // pattern rather than an exact name.
+    for (args, urls) in [
+        (
+            &["open", "--all"][..],
+            &[
+                "https://one.example",
+                "https://two.example",
+                "https://three.example",
+            ][..],
+        ),
+        (
+            &["open", "--tags", "gamma"][..],
+            &["https://two.example", "https://three.example"][..],
+        ),
+        (&["open", "t?o"][..], &["https://two.example"][..]),
+    ] {
+        let mut fixture = OpenerFixture::new(true);
+        let rx = fixture.start(fixture.command(args), false, false);
+        let output = match rx.recv_timeout(TIMEOUT) {
+            Ok(out) => out,
+            Err(_) => panic!(
+                "timed out; dir contents: {:?}",
+                std::fs::read_dir(fixture.dir.path())
+                    .unwrap()
+                    .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+            ),
+        };
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{output:?}");
+        let mut expected: Vec<_> = urls.iter().map(|url| format!("1\n{url}\nEOF\n")).collect();
+        expected.sort();
+        assert_eq!(fixture.records(urls.len()), expected);
+    }
 }

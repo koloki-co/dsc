@@ -45,21 +45,57 @@ pub fn select_discourse<'a>(
     Err(anyhow!("missing discourse for command"))
 }
 
+/// Match a config name against a simple glob pattern. Only `*` (any run of
+/// characters, including none) and `?` (exactly one character) are special;
+/// everything else, including `[`, is a literal character. Case matters,
+/// matching exact-name lookups.
+fn name_matches_pattern(name: &str, pattern: &str) -> bool {
+    fn segment_matches(name: &[char], pattern: &[char]) -> bool {
+        match (pattern.first(), name.first()) {
+            (Some('*'), _) => {
+                segment_matches(name, &pattern[1..])
+                    || (!name.is_empty() && segment_matches(&name[1..], pattern))
+            }
+            (Some('?'), Some(_)) => segment_matches(&name[1..], &pattern[1..]),
+            (Some(p), Some(n)) if p == n => segment_matches(&name[1..], &pattern[1..]),
+            (None, None) => true,
+            _ => false,
+        }
+    }
+    segment_matches(
+        &name.chars().collect::<Vec<_>>(),
+        &pattern.chars().collect::<Vec<_>>(),
+    )
+}
+
 /// Shared fleet selector for `--all`/`--tags`-style fan-out commands
 /// (`backup create --all`, `backup setup-s3 --tags`, `backup health`,
 /// `search all`, `user find`). A single `discourse_name` selects exactly
-/// that forum; otherwise `tags` (comma/semicolon separated, match-any) is
-/// applied against every configured forum, or every forum is returned when
-/// `tags` is `None`. Rejects `--tags` values that parse to no tags at all
-/// (e.g. `--tags ""` or `--tags ",;"`), since silently falling back to "no
-/// filter" there is a footgun that would fan a mutating command out to the
-/// entire fleet when the caller meant to scope it down.
+/// that forum - or, when it contains a `*` or `?`, every forum whose name
+/// matches it as a simple glob pattern. Otherwise `tags` (comma/semicolon
+/// separated, match-any) is applied against every configured forum, or every
+/// forum is returned when `tags` is `None`. Rejects `--tags` values that
+/// parse to no tags at all (e.g. `--tags ""` or `--tags ",;"`), since
+/// silently falling back to "no filter" there is a footgun that would fan a
+/// mutating command out to the entire fleet when the caller meant to scope
+/// it down.
 pub fn selected_discourses<'a>(
     config: &'a Config,
     discourse_name: Option<&str>,
     tags: Option<&str>,
 ) -> Result<Vec<&'a DiscourseConfig>> {
     if let Some(name) = discourse_name {
+        if name.contains('*') || name.contains('?') {
+            let matched: Vec<&DiscourseConfig> = config
+                .discourse
+                .iter()
+                .filter(|discourse| name_matches_pattern(&discourse.name, name))
+                .collect();
+            if matched.is_empty() {
+                return Err(not_found("discourse", name));
+            }
+            return Ok(matched);
+        }
         return find_discourse(config, name)
             .map(|discourse| vec![discourse])
             .ok_or_else(|| not_found("discourse", name));
@@ -422,8 +458,8 @@ pub fn parse_emails(input: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Config, DiscourseConfig, matches_tag_filter, parse_emails, render_shell_template,
-        selected_discourses, shell_quote, validate_ssh_target,
+        Config, DiscourseConfig, matches_tag_filter, name_matches_pattern, parse_emails,
+        render_shell_template, selected_discourses, shell_quote, validate_ssh_target,
     };
 
     #[test]
@@ -450,6 +486,60 @@ mod tests {
         assert!(err.to_string().contains("at least one non-empty tag"));
         let err = selected_discourses(&config, None, Some(",;")).unwrap_err();
         assert!(err.to_string().contains("at least one non-empty tag"));
+    }
+
+    #[test]
+    fn name_matches_pattern_supports_star_question_and_literals() {
+        assert!(name_matches_pattern("forum.rcpch.tech", "forum.rc*"));
+        assert!(name_matches_pattern("forum.rcgp.co.uk", "forum.rc*"));
+        assert!(!name_matches_pattern("wiki", "forum.rc*"));
+        assert!(name_matches_pattern("forum-x", "forum?x"));
+        assert!(!name_matches_pattern("forum-xy", "forum?x"));
+        assert!(name_matches_pattern("anything", "*"));
+        assert!(name_matches_pattern("", "*"));
+        assert!(name_matches_pattern("a", "?"));
+        assert!(!name_matches_pattern("ab", "?"));
+        assert!(name_matches_pattern("a*b", "a*b"));
+        assert!(name_matches_pattern("axb", "a*b"));
+        assert!(name_matches_pattern("a/tar.gz", "a*.gz"));
+        // `[` is literal, not a character class.
+        assert!(name_matches_pattern("brackets[1]", "brackets[1]"));
+        assert!(!name_matches_pattern("bracketsA1]", "brackets[1]"));
+        // Case matters, matching exact-name lookups.
+        assert!(!name_matches_pattern("Forum", "forum"));
+    }
+
+    #[test]
+    fn selected_discourses_by_name_glob_matches_and_requires_matches() {
+        let config = Config {
+            discourse: vec![
+                DiscourseConfig {
+                    name: "forum.rcpch.tech".to_string(),
+                    ..DiscourseConfig::default()
+                },
+                DiscourseConfig {
+                    name: "forum.rcgp.co.uk".to_string(),
+                    ..DiscourseConfig::default()
+                },
+                DiscourseConfig {
+                    name: "wiki".to_string(),
+                    ..DiscourseConfig::default()
+                },
+            ],
+            ..Config::default()
+        };
+        let matched = selected_discourses(&config, Some("forum.rc*"), None).unwrap();
+        assert_eq!(
+            matched.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            vec!["forum.rcpch.tech", "forum.rcgp.co.uk"]
+        );
+        let err = selected_discourses(&config, Some("nomatch*"), None).unwrap_err();
+        assert!(err.to_string().contains("nomatch*"));
+        // Exact names still behave as before.
+        assert_eq!(
+            selected_discourses(&config, Some("wiki"), None).unwrap()[0].name,
+            "wiki"
+        );
     }
 
     #[test]
