@@ -469,6 +469,32 @@ pub enum Commands {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: AnalyticsFormat,
     },
+    /// Fetch a single raw Discourse admin report, unmodified.
+    ///
+    /// Distinct from `dsc analytics`: no cross-report derivation or
+    /// community-health framing, just what Discourse returns for one
+    /// report id.
+    #[command(after_help = "Examples:
+  dsc report myforum signups
+  dsc report myforum posts --since 7d --format json")]
+    Report {
+        /// Discourse name.
+        discourse: String,
+        /// Discourse admin report id, passed straight through to
+        /// `/admin/reports/{id}.json`. Common ids: `signups`, `topics`,
+        /// `posts`, `likes`, `flags`, `moderators_activity`,
+        /// `trust_level_growth`, `time_to_first_response`,
+        /// `topics_with_no_response`, `users_by_trust_level`. Check your
+        /// Discourse instance's admin Reports page for the full list
+        /// available on that forum.
+        name: String,
+        /// Window to report on (e.g. `7d`, `24h`, `1m`, ISO-8601). Default: 30d.
+        #[arg(long, short = 's', default_value = "30d")]
+        since: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
     /// Inspect and run saved Discourse Data Explorer queries.
     #[command(after_help = "Examples:
   dsc explorer list myforum
