@@ -43,7 +43,7 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 | **Backups, emoji, uploads** | backup create / list / pull / push / restore, fleet backup creation and S3 health/setup, bulk emoji, file upload | S3 key rotation and retention |
 | **Fleet (multi-install)** | one config for N forums, tag filtering, write/audit settings, update-all over SSH, cross-forum search and user lookup, backup fan-out | aggregate reports |
 | **Server lifecycle** | `harden` a fresh box, stages 1-2 (new sudo user, pubkey auth, sshd lockdown to a non-standard port); `update` over SSH with skip-if-current | `harden` stage 3 - firewall, Docker, swap, fail2ban (config keys wired, SSH execution pending); one-shot `dsc install` provisioning |
-| **Reporting** | analytics snapshot (growth / activity / health); saved Data Explorer query inspection/execution; `log staff` audit-trail inspection | dashboard reports, notifications |
+| **Reporting** | analytics snapshot (growth / activity / health); single raw admin report by id; saved Data Explorer query inspection/execution; `log staff` audit-trail inspection | aggregate/cross-forum reports, notifications |
 
 Exploratory (not committed): `dsc chat`, a TUI, and an MCP server mode. See [spec/roadmap.md](spec/roadmap.md) for the full picture.
 
@@ -159,6 +159,7 @@ dsc update myforum
   - [file](docs/file.md) — checksum-verified audit/push of a file to hosts over SSH
   - [search](docs/search.md) — search topics on a Discourse
   - [analytics](docs/analytics.md) — community-health snapshot (growth, activity, health)
+  - [report](docs/report.md) — fetch a single raw Discourse admin report by id
   - [explorer](docs/explorer.md) — inspect and run saved Data Explorer queries
   - [board](docs/board.md) - list, inspect, and snapshot Discourse Boards
   - [upload](docs/upload.md) — upload a file and return its short URL

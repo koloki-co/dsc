@@ -1453,6 +1453,13 @@ fn main() -> Result<()> {
             format,
         ),
 
+        Commands::Report {
+            discourse,
+            name,
+            since,
+            format,
+        } => commands::report::report(&config, &discourse, &name, &since, format),
+
         Commands::Explorer { command } => match command {
             ExplorerCommand::List {
                 discourse,
