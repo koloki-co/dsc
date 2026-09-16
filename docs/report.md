@@ -11,7 +11,7 @@ dsc report <discourse> <name> [--since <when>] [--format text|json|yaml]
 ```
 
 - `<name>` — a Discourse admin report id, passed straight through to `/admin/reports/{id}.json`. Common ids: `signups`, `topics`, `posts`, `likes`, `flags`, `moderators_activity`, `trust_level_growth`, `time_to_first_response`, `topics_with_no_response`, `users_by_trust_level`. Check your Discourse instance's admin Reports page for the full list available on that forum — plugins can add more.
-- `--since` / `-s` (default `30d`) — window length. `24h`, `7d`, `30d`, `1y`, or an ISO-8601 timestamp. Same syntax as `dsc analytics --since`.
+- `--since` / `-s` (default `30d`) — window length. `24h`, `7d`, `30d`, `1w`, `1y`, or an ISO-8601 timestamp. Same syntax as `dsc analytics --since`.
 - `--format` / `-f` (default `text`) — `text`, `json`, or `yaml`.
 
 ## Examples
