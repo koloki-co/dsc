@@ -285,8 +285,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: SettingCommand,
     },
-    /// Export everything a forum holds about one person into a reviewable
-    /// Subject Access Request (SAR / GDPR Art. 15) bundle. Single forum.
+    /// Export supported personal-data surfaces into a reviewable Subject Access
+    /// Request (SAR / GDPR Art. 15) bundle. Single forum.
     #[command(after_help = "Examples:
   dsc sar myforum jane@example.com
   dsc sar myforum jane-doe --messages   # include private messages")]

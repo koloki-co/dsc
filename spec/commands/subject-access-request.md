@@ -1,26 +1,27 @@
 # `dsc sar` - one-shot Subject Access Request export
 
-> **Status: Phase 1 implemented (unreleased).** `dsc sar <discourse> <user>`
+> **Status: Phase 1 implemented.** `dsc sar <discourse> <user>`
 > writes the bundle (profile/PII, authored posts, likes, groups, README cover
 > sheet + manifest), with private messages opt-in via `--messages` and a
 > working `--dry-run`. Phase 2 (`--zip`, combined document, staff notes) is
-> on-demand; multi-forum fan-out is out of scope by decision.
+> on-demand. Deterministic Discourse Chat archival and opt-in inclusion belong
+> to R12; multi-forum fan-out is out of scope by decision.
 
-Spec for a new `dsc sar` command that gathers everything a Discourse holds
-about one person into a single, organised, portable bundle suitable for
-answering a **Subject Access Request** (SAR / DSAR under UK GDPR Art. 15 and
-the equivalent EU GDPR right). Goal: turn the laborious "collect all of a
+Spec for a `dsc sar` command that gathers the supported personal-data surfaces
+Discourse exposes about one person into a single, organised, portable bundle
+suitable for answering a **Subject Access Request** (SAR / DSAR under UK GDPR
+Art. 15 and the equivalent EU GDPR right). Goal: turn the laborious "collect all of a
 user's personal data by hand" task into one command. Driver: the author runs
 forums in NHS/medical-adjacent contexts (RCPCH, restorativejustculture.org)
 where SARs are a real statutory obligation and Discourse has no single
-"export everything about this person" action.
+supported-API export covering the relevant data surfaces for one person.
 
 ## Compliance scope - read this first
 
 A SAR response is a **legal** deliverable, and most of what makes it
 *compliant* is human/legal judgement, not data plumbing. `dsc sar` automates
-the part that is pure labour - finding and packaging every piece of personal
-data the Discourse **admin API** exposes about the subject - and scaffolds the
+the part that is pure labour - finding and packaging the personal-data surfaces
+the Discourse **admin API** exposes and `dsc` supports for the subject - and scaffolds the
 rest. It deliberately does **not** try to make the whole response automatically
 "legally compliant", because these steps are the controller's responsibility
 and cannot be safely automated:
@@ -34,8 +35,8 @@ and cannot be safely automated:
   policy, not data in Discourse.
 - **Timeliness**: the statutory deadline is one calendar month from receipt.
 
-So the honest framing is: **`dsc sar` produces a comprehensive, structured data
-package for a SAR and a checklist of the human steps that remain.** The cover
+So the honest framing is: **`dsc sar` produces a structured package of the
+supported data surfaces and a checklist of the human steps that remain.** The cover
 sheet and `manifest.json` make those steps explicit and flag what needs review
 (see below). The tool must never imply the bundle is ready to send unreviewed.
 
@@ -166,6 +167,10 @@ admin API is not formally versioned. Endpoints `dsc` already uses are marked.)
 - [ ] Staff/admin notes about the subject (if the Staff Notes plugin is
       present) - these are disclosable personal data.
 - [ ] Bookmarks, drafts, preferences, screened-email/IP history where exposed.
+
+### Related follow-up - Discourse Chat (R12)
+
+Chat messages can be personal data within the scope of a SAR, but they require a separate completeness and third-party-data analysis from topic-backed private messages. R12 owns API discovery, deterministic archival, and eventual opt-in SAR inclusion; see [chat archival](chat-archival.md). Until that work lands, `dsc sar` must state that Chat is not included rather than imply that the bundle contains every datum Discourse can hold.
 
 ## Backward compatibility
 

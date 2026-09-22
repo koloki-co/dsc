@@ -79,7 +79,7 @@ Its metadata supplies `id`, `title`, `slug`, `category_id`, and `deleted_at`. No
 
 ### Phase 2 - reviewables workflow
 
-- [ ] Assess a read-only `dsc reviewable list` surface for recent handled spam, including post ID and canonical post URL, only if a concrete Discourse admin API response is captured and redacted.
+- [x] Close the generic `dsc reviewable list` proposal without implementation. Discourse's built-in MCP now provides permission-aware review queue count, list, detail, and guarded action tools for single-forum agent use. Reopen only for a concrete operator requirement such as deterministic incident export, evidence retention, or cross-forum triage.
 
 ## Backward compatibility
 

@@ -1,6 +1,8 @@
 # dsc
 
-A Discourse CLI written in Rust. Manage multiple Discourse forums from your terminal — track installs, run upgrades over SSH, manage users and groups, sync topics and categories as local Markdown, upload files, search, archive activity, and more.
+A local-first Discourse operations CLI written in Rust. Manage a fleet of forums from your terminal: persist reviewable state as files, script repeatable administration, run upgrades over SSH, manage users and groups, produce compliance exports, and sync topics and categories as local Markdown.
+
+`dsc` is primarily for multi-Discourse operators and workflows that need local persistence, scripting, fleet administration, or host access. For conversational AI access to one community, use [Discourse's built-in MCP server](https://meta.discourse.org/t/connect-your-ai-apps-to-your-community-with-discourse-s-built-in-mcp-server/412755). `dsc` deliberately does not duplicate that MCP surface.
 
 Created by Marcus Baw and [Koloki Ltd](https://koloki.co/), an [official Discourse Partner](https://www.discourse.org/partners).
 

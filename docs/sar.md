@@ -1,6 +1,6 @@
 # dsc sar
 
-Export everything a Discourse forum holds about one person into a single, reviewable **Subject Access Request** (SAR / DSAR) bundle - the data-gathering half of answering a GDPR Article 15 request.
+Export the personal data `dsc` can retrieve about one person into a single, reviewable **Subject Access Request** (SAR / DSAR) bundle - the data-gathering half of answering a GDPR Article 15 request.
 
 ```
 dsc sar <discourse> <user> [--output <dir>] [--messages] [--dry-run]
@@ -13,7 +13,7 @@ dsc sar <discourse> <user> [--output <dir>] [--messages] [--dry-run]
 
 ## What it is (and isn't)
 
-`dsc sar` automates the laborious part - finding and packaging every piece of personal data the Discourse admin API exposes about a person - and **scaffolds the rest**. It does **not** make the response automatically "legally compliant"; that remains the data controller's responsibility. The bundle's `README.md` cover sheet lists the steps that are still yours:
+`dsc sar` automates the laborious part - finding and packaging the supported personal-data surfaces exposed through the Discourse admin API - and **scaffolds the rest**. It does **not** make the response automatically "legally compliant" or claim that Discourse exposes every datum through those APIs; that remains the data controller's responsibility. The bundle's `README.md` cover sheet lists the steps that are still yours:
 
 - verifying the requester is the data subject,
 - reviewing private messages for third-party data and redacting,
@@ -38,6 +38,8 @@ sar-jane-doe-2026-06-23/
 ```
 
 `manifest.json` carries a `review_required` array (IP data, and `messages/` when included) so the human steps are explicit and auditable.
+
+Discourse Chat is not included yet. Chat can contain personal data relevant to a SAR, but a defensible export must account for channel visibility, DMs, threads, edits, deletions, uploads, retention expiry, and API pagination rather than copying whichever messages happen to be visible in an interactive client. Deterministic Chat archival and opt-in SAR inclusion are tracked as [R12](https://github.com/koloki-co/dsc/blob/main/spec/roadmap.md) and specified in [chat archival](https://github.com/koloki-co/dsc/blob/main/spec/commands/chat-archival.md).
 
 ## Requirements & handling
 

@@ -8,7 +8,7 @@
   <a href="https://koloki.co/"><img src="docs/assets/koloki-logo-master-2x.png" alt="Koloki" width="220"></a>
 </p>
 
-A Discourse CLI tool written in Rust. Manage multiple Discourse forums from your terminal — track installs, run upgrades over SSH, manage emojis, perform backups, and sync topics and categories as local Markdown.
+A local-first Discourse operations CLI written in Rust. Manage a fleet of forums from your terminal: persist reviewable state as files, script repeatable administration, run upgrades over SSH, perform backups, and sync topics and categories as local Markdown.
 
 Created by Marcus Baw and [Koloki Ltd](https://koloki.co/), an [official Discourse Partner](https://www.discourse.org/partners).
 
@@ -16,16 +16,20 @@ Most functionality uses the Discourse REST API. `dsc update` runs remote rebuild
 
 **Status: alpha.** `dsc` is pre-1.0. It is used daily against production forums, and every destructive command supports `--dry-run`, but commands may still be renamed or changed - the [compatibility contract](docs/compatibility.md) takes effect at `v1.0.0`.
 
+`dsc` is primarily for people who operate multiple Discourse installations or need local files, shell scripting, compliance exports, and server administration. Most people who want an AI assistant to search, read, or participate in one community should use [Discourse's built-in MCP server](https://meta.discourse.org/t/connect-your-ai-apps-to-your-community-with-discourse-s-built-in-mcp-server/412755) instead. `dsc` does not provide an MCP server and does not plan to duplicate Discourse's maintained conversational tool surface.
+
 ## Features
 
 - Track any number of Discourse installs via a single config file.
+- Run bounded operations and audits across selected forums.
 - Manage categories, topics, settings, and groups across installs.
 - Run rebuilds over SSH and optionally post changelog updates.
 - Import from text or CSV, or add installs ad-hoc.
-- Pull/push individual topics or whole categories as Markdown.
+- Pull and push topics, categories, settings, and other state through reviewable local files.
 - Upload custom emojis in bulk.
 - List, install, and remove themes and plugins; configure outbound webhooks.
 - Create, list, and restore backups.
+- Produce deterministic compliance and archival exports that can be reviewed and retained outside an AI conversation.
 
 ## What works today
 
@@ -39,13 +43,13 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 | **Tags** | pull / push the taxonomy, rename, per-topic tag / untag | — |
 | **Site settings** | get / set / list, pull / push snapshots, diff two sources, **audit one setting across every forum** | — |
 | **Themes & palettes** | list / install / remove / pull / push / duplicate / show; component settings and fields; assets; enable / disable; attach / detach; colour palettes; remote update | — |
-| **Users & access** | list / info / find-by-email, suspend / silence, promote / demote, group membership, activity export, create, password reset, email change; invites; private messages; API keys; **one-shot SAR / GDPR export** | scoped API keys |
+| **Users & access** | list / info / find-by-email, suspend / silence, promote / demote, group membership, activity export, create, password reset, email change; invites; private messages; API keys; **one-shot SAR / GDPR export** | scoped API keys; deterministic Chat archival for SAR inclusion |
 | **Backups, emoji, uploads** | backup create / list / pull / push / restore, fleet backup creation and S3 health/setup, bulk emoji, file upload | S3 key rotation and retention |
 | **Fleet (multi-install)** | one config for N forums, tag filtering, write/audit settings, update-all over SSH, cross-forum search and user lookup, backup fan-out | aggregate reports |
 | **Server lifecycle** | `harden` a fresh box, stages 1-2 (new sudo user, pubkey auth, sshd lockdown to a non-standard port); `update` over SSH with skip-if-current | `harden` stage 3 - firewall, Docker, swap, fail2ban (config keys wired, SSH execution pending); one-shot `dsc install` provisioning |
 | **Reporting** | analytics snapshot (growth / activity / health); single raw admin report by id; saved Data Explorer query inspection/execution; `log staff` audit-trail inspection | aggregate/cross-forum reports, notifications |
 
-Exploratory (not committed): `dsc chat`, a TUI, and an MCP server mode. See [spec/roadmap.md](spec/roadmap.md) for the full picture.
+Planned work includes deterministic Chat archival for compliance exports. A TUI remains exploratory. An MCP server mode is explicitly out of scope because Discourse now maintains both a built-in per-site MCP server and the broader `@discourse/mcp` package. See [spec/roadmap.md](spec/roadmap.md) for the full picture.
 
 ## Installation
 
@@ -172,7 +176,7 @@ dsc update myforum
   - [theme](docs/theme.md) — install (git/bundle), delete, list, pull, push, duplicate; edit settings, fields (SCSS), and assets; enable/attach components; update remotes
   - [group](docs/group.md) — list, inspect, copy, and bulk-add members
   - [user](docs/user.md) — list, inspect, suspend, archive activity, and manage group memberships
-  - [sar](docs/sar.md) — export everything a forum holds about one person as a GDPR Subject Access Request bundle
+  - [sar](docs/sar.md) — export supported personal-data surfaces as a reviewable GDPR Subject Access Request bundle
   - [invite](docs/invite.md) — send invites, single or bulk from a file
   - [pm](docs/pm.md) — send and list private messages
   - [api-key](docs/api-key.md) — manage Discourse API keys
