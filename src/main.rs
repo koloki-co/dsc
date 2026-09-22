@@ -260,6 +260,18 @@ fn main() -> Result<()> {
                 },
         } => commands::emoji::list_emojis(&config, &discourse, format, verbose, inline),
 
+        Commands::Emoji {
+            command:
+                EmojiCommand::Delete {
+                    discourse,
+                    name,
+                    mut names,
+                },
+        } => {
+            names.insert(0, name);
+            commands::emoji::delete_emojis(&config, &discourse, &names, dry_run)
+        }
+
         Commands::Topic { command } => match command {
             TopicCommand::Pull {
                 discourse,

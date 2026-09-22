@@ -138,6 +138,9 @@ fn get_body(path: &str) -> String {
     if p == "/admin/backups.json" {
         return "[]".to_string();
     }
+    if p == "/admin/customize/emojis.json" {
+        return r#"{"emojis":[{"name":"partytime","url":"/images/emoji/adventuretime/partytime.png"}]}"#.to_string();
+    }
     "{}".to_string()
 }
 
@@ -462,6 +465,11 @@ const CASES: &[Case] = &[
         true,
     ),
     ("emoji push", &["emoji", "push", "mock", "BODY"], true),
+    (
+        "emoji delete",
+        &["emoji", "delete", "mock", "partytime"],
+        true,
+    ),
     ("upload", &["upload", "mock", "BODY"], true),
     (
         "notification read",

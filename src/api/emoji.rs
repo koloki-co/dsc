@@ -119,6 +119,35 @@ impl DiscourseClient {
         ))
     }
 
+    /// Delete a custom emoji by name via `DELETE /admin/config/emoji/:name.json`,
+    /// falling back to the legacy `/admin/customize/emojis/:name.json` route on
+    /// 404 (the route moved out of `/customize/` in Meta #30511, January 2025).
+    pub fn delete_custom_emoji(&self, name: &str) -> Result<()> {
+        let path = emoji_admin_path(&format!("/admin/config/emoji/{}.json", name));
+        let response = self.send_retrying(|| self.delete_builder(&path))?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        if status != StatusCode::NOT_FOUND {
+            let text = response
+                .text_capped()
+                .unwrap_or_else(|_| "<failed to read response body>".to_string());
+            return Err(http_error("emoji delete request", status, &text));
+        }
+
+        let legacy_path = emoji_admin_path(&format!("/admin/customize/emojis/{}.json", name));
+        let response = self.send_retrying(|| self.delete_builder(&legacy_path))?;
+        let status = response.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let text = response
+            .text_capped()
+            .unwrap_or_else(|_| "<failed to read response body>".to_string());
+        Err(http_error("emoji delete request", status, &text))
+    }
+
     /// List custom emojis.
     pub fn list_custom_emojis(&self) -> Result<Vec<CustomEmoji>> {
         if let Some(emojis) = self.list_admin_emojis()? {

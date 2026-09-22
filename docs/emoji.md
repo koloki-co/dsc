@@ -41,3 +41,15 @@ Flags:
 - `--inline` (or `-i`) — render emoji images inline in supported terminals.
   - Override detection with `DSC_EMOJI_INLINE_PROTOCOL=iterm2|kitty|off`.
 - `-v`, `--verbose` — include additional fields where supported.
+
+## dsc emoji delete
+
+```
+dsc emoji delete <discourse> <name>... [--dry-run]
+```
+
+Deletes one or more custom emojis by name (alias: `dsc emoji rm`). Names are matched case-insensitively against the forum's existing custom emoji; any requested name not found is reported as an error and nothing is deleted. `--dry-run` prints the plan without deleting.
+
+If a custom emoji shadowed a built-in emoji of the same name (a common reason to delete one — e.g. replacing an accidentally-uploaded `heart`), deleting it makes the built-in emoji visible again in all existing content; this is noted in the dry-run output.
+
+Uses `DELETE /admin/config/emoji/:name.json`, falling back to the legacy `/admin/customize/emojis/:name.json` route on older Discourse versions.
