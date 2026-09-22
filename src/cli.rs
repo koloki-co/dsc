@@ -1026,6 +1026,16 @@ pub enum EmojiCommand {
         #[arg(long, short = 'i')]
         inline: bool,
     },
+    /// Delete one or more custom emojis by name. Honours `--dry-run`.
+    #[command(visible_alias = "rm")]
+    Delete {
+        /// Discourse name.
+        discourse: String,
+        /// First emoji name to delete.
+        name: String,
+        /// Additional emoji names to delete.
+        names: Vec<String>,
+    },
 }
 
 #[derive(Subcommand)]
