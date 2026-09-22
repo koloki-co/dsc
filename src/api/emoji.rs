@@ -121,7 +121,7 @@ impl DiscourseClient {
 
     /// Delete a custom emoji by name via `DELETE /admin/config/emoji/:name.json`,
     /// falling back to the legacy `/admin/customize/emojis/:name.json` route on
-    /// 404 (the route moved out of `/customize/` in Meta #30511, January 2025).
+    /// 404 (the route moved in discourse/discourse#30511, January 2025).
     pub fn delete_custom_emoji(&self, name: &str) -> Result<()> {
         let path = emoji_admin_path(&format!("/admin/config/emoji/{}.json", name));
         let response = self.send_retrying(|| self.delete_builder(&path))?;
@@ -141,6 +141,11 @@ impl DiscourseClient {
         let status = response.status();
         if status.is_success() {
             return Ok(());
+        }
+        if status == StatusCode::NOT_FOUND {
+            return Err(anyhow!(
+                "emoji delete failed with 404 on both current and legacy endpoints (requires an admin API key or a supported Discourse version)"
+            ));
         }
         let text = response
             .text_capped()

@@ -336,8 +336,13 @@ fn plan_emoji_deletes(existing: &[String], requested: &[String]) -> (Vec<String>
 
     let mut planned = Vec::new();
     let mut missing = Vec::new();
+    let mut seen = HashSet::new();
     for name in requested {
-        match by_key.get(&emoji_key(name)) {
+        let key = emoji_key(name);
+        if !seen.insert(key.clone()) {
+            continue;
+        }
+        match by_key.get(&key) {
             Some(actual_name) => planned.push((*actual_name).clone()),
             None => missing.push(name.clone()),
         }
@@ -369,7 +374,7 @@ pub fn delete_emojis(
     if dry_run {
         for name in &planned {
             println!(
-                "[dry-run] {}: would delete emoji {} (any built-in emoji of the same name, previously shadowed, becomes visible again)",
+                "[dry-run] {}: would delete emoji {} (references that resolve by name may fall back to a same-named built-in emoji after Discourse refreshes them)",
                 discourse.name, name
             );
         }
@@ -377,10 +382,37 @@ pub fn delete_emojis(
     }
 
     let mut failures = Vec::new();
+    let mut accepted = Vec::new();
     for name in &planned {
         match client.delete_custom_emoji(name) {
-            Ok(()) => println!("{}: deleted emoji {}", discourse.name, name),
+            Ok(()) => accepted.push(name.clone()),
             Err(err) => failures.push((name.clone(), err.to_string())),
+        }
+    }
+
+    if !accepted.is_empty() {
+        match client.list_custom_emojis() {
+            Ok(remaining) => {
+                let remaining: HashSet<String> = remaining
+                    .into_iter()
+                    .map(|emoji| emoji_key(&emoji.name))
+                    .collect();
+                for name in accepted {
+                    if remaining.contains(&emoji_key(&name)) {
+                        failures.push((
+                            name,
+                            "still present after Discourse accepted the delete; it may be provided by a plugin rather than stored as a custom emoji"
+                                .to_string(),
+                        ));
+                    } else {
+                        println!("{}: deleted emoji {}", discourse.name, name);
+                    }
+                }
+            }
+            Err(err) => {
+                let reason = format!("delete was accepted but verification failed: {err}");
+                failures.extend(accepted.into_iter().map(|name| (name, reason.clone())));
+            }
         }
     }
     if !failures.is_empty() {
@@ -595,6 +627,15 @@ mod tests {
             plan_emoji_deletes(&existing, &["partytime".to_string(), "nope".to_string()]);
         assert_eq!(planned, vec!["partytime"]);
         assert_eq!(missing, vec!["nope"]);
+    }
+
+    #[test]
+    fn plan_emoji_deletes_deduplicates_requested_names_case_insensitively() {
+        let existing = vec!["partytime".to_string()];
+        let requested = vec!["partytime".to_string(), "PartyTime".to_string()];
+        let (planned, missing) = plan_emoji_deletes(&existing, &requested);
+        assert_eq!(planned, vec!["partytime"]);
+        assert!(missing.is_empty());
     }
 
     #[test]
