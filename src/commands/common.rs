@@ -70,7 +70,8 @@ fn name_matches_pattern(name: &str, pattern: &str) -> bool {
 
 /// Shared fleet selector for `--all`/`--tags`-style fan-out commands
 /// (`backup create --all`, `backup setup-s3 --tags`, `backup health`,
-/// `search all`, `user find`). A single `discourse_name` selects exactly
+/// `open --all`, `search all`, `version --all`, `user find`, and audit
+/// commands). A single `discourse_name` selects exactly
 /// that forum - or, when it contains a `*` or `?`, every forum whose name
 /// matches it as a simple glob pattern. Otherwise `tags` (comma/semicolon
 /// separated, match-any) is applied against every configured forum, or every
@@ -157,9 +158,8 @@ pub fn fleet_worker_count(
 /// forum never blocks others.
 ///
 /// `work` runs on a worker thread and must be `Send + Sync`; `on_done`
-/// runs on the calling thread and can safely print. The returned `Vec`
-/// is in completion order; callers that need config-file order should
-/// sort by name afterwards.
+/// runs on the calling thread and can safely print. `on_done` observes
+/// completion order, while the returned `Vec` preserves input order.
 pub fn run_fleet<T, F, G>(
     discourses: &[&DiscourseConfig],
     workers: usize,

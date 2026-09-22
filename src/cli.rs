@@ -628,18 +628,24 @@ Examples:
         )]
         dir: PathBuf,
     },
-    /// Print the dsc version.
+    /// Print dsc's version or live Discourse versions.
     #[command(visible_alias = "ver")]
-    /// Print dsc's own version, or a configured forum's Discourse version + commit.
     #[command(after_help = "Examples:
   dsc version                  # dsc's own version
   dsc version --format json    # structured {name, version}
-  dsc version accm             # the forum's live Discourse version + git commit")]
+  dsc version accm             # one forum's live Discourse version + git commit
+  dsc version --all            # every configured forum
+  dsc version --tags production --format json")]
     Version {
-        /// Forum name. When given, print that forum's live Discourse version
-        /// and git commit (from /about.json, via the configured API key)
-        /// instead of dsc's own version.
+        /// Forum name. Conflicts with --all and --tags.
+        #[arg(conflicts_with_all = ["all", "tags"])]
         discourse: Option<String>,
+        /// Report every configured forum.
+        #[arg(long, conflicts_with_all = ["discourse", "tags"])]
+        all: bool,
+        /// Report forums matching any comma-separated tag.
+        #[arg(long, value_name = "TAGS", conflicts_with_all = ["discourse", "all"])]
+        tags: Option<String>,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,

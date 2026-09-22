@@ -30,7 +30,7 @@ The one rule that makes `dsc` composable: **stdout carries the result; stderr ca
 
 ### Version and completions
 
-`dsc version [discourse] [--format json]` is the canonical interface (a command, honouring `--format`); `--version`/`-V` remain the quick human/CI check. Completions are generated from the live `clap` command (`dsc completions <shell>` to stdout, `--dir` for packaging, `install` for humans) and must never drift from the surface. Both follow the house-style rules in `rust-cli.md`.
+`dsc version [discourse | --all | --tags <tags>] [--format json]` is the canonical interface (a command, honouring `--format`); `--version`/`-V` remain the quick human/CI check. Bare `dsc version` remains config-free, while fleet selectors use the shared bounded fan-out contract. Completions are generated from the live `clap` command (`dsc completions <shell>` to stdout, `--dir` for packaging, `install` for humans) and must never drift from the surface. Both follow the house-style rules in `rust-cli.md`.
 
 ## Command patterns
 

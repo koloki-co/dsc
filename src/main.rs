@@ -123,6 +123,8 @@ fn main() -> Result<()> {
     let command = match cli.command {
         Commands::Version {
             discourse: None,
+            all: false,
+            tags: None,
             format,
         } => return commands::version::own_version(format),
         Commands::Completions {
@@ -1698,8 +1700,13 @@ fn main() -> Result<()> {
             Ok(())
         }
 
-        Commands::Version { discourse, format } => {
-            commands::version::version(&config, discourse.as_deref(), format)
+        Commands::Version {
+            discourse,
+            all,
+            tags,
+            format,
+        } => {
+            commands::version::version(&config, discourse.as_deref(), all, tags.as_deref(), format)
         }
 
         Commands::File { command } => commands::file::run(&config, &command, dry_run),

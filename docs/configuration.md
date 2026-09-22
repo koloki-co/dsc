@@ -13,7 +13,7 @@ If `--config <path>` is not provided, `dsc` resolves the active config in this o
 
 If none are found, it defaults to `./dsc.toml` (created on first write command).
 
-**Explicit selectors error on missing files for commands that use configuration.** `-c <path>` and `$DSC_CONFIG` both name a specific file; if that file does not exist, `dsc` errors rather than silently falling through to a lower-precedence config. The discovered hierarchy (steps 3-8) is the only set of paths eligible for skip-if-missing. Config-free commands (`dsc version` without a forum, `dsc completions`, and `dsc man`) do not resolve or validate configuration, even when a selector is present.
+**Explicit selectors error on missing files for commands that use configuration.** `-c <path>` and `$DSC_CONFIG` both name a specific file; if that file does not exist, `dsc` errors rather than silently falling through to a lower-precedence config. The discovered hierarchy (steps 3-8) is the only set of paths eligible for skip-if-missing. Config-free commands (bare `dsc version` without a forum, `--all`, or `--tags`; `dsc completions`; and `dsc man`) do not resolve or validate configuration, even when a config selector is present.
 
 If both `-c` and `$DSC_CONFIG` are set, the flag wins.
 
