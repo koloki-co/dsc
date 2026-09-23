@@ -1480,8 +1480,22 @@ fn main() -> Result<()> {
             discourse,
             name,
             since,
+            all,
+            tags,
             format,
-        } => commands::report::report(&config, &discourse, &name, &since, format),
+        } => {
+            if all || tags.is_some() {
+                commands::report::report_all(&config, &name, &since, tags.as_deref(), format)
+            } else {
+                commands::report::report(
+                    &config,
+                    discourse.as_deref().expect("clap requires a discourse"),
+                    &name,
+                    &since,
+                    format,
+                )
+            }
+        }
 
         Commands::Explorer { command } => match command {
             ExplorerCommand::List {

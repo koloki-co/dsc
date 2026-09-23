@@ -471,17 +471,22 @@ pub enum Commands {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: AnalyticsFormat,
     },
-    /// Fetch a single raw Discourse admin report, unmodified.
+    /// Fetch a single raw Discourse admin report, unmodified, from one forum
+    /// or a selected fleet.
     ///
     /// Distinct from `dsc analytics`: no cross-report derivation or
     /// community-health framing, just what Discourse returns for one
     /// report id.
     #[command(after_help = "Examples:
   dsc report myforum signups
-  dsc report myforum posts --since 7d --format json")]
+  dsc report myforum posts --since 7d --format json
+  dsc report --all signups -f json
+  dsc report --tags production signups")]
+    #[command(allow_missing_positional = true)]
     Report {
-        /// Discourse name.
-        discourse: String,
+        /// Discourse name. Omit with --all or --tags.
+        #[arg(required_unless_present_any = ["all", "tags"], conflicts_with_all = ["all", "tags"])]
+        discourse: Option<String>,
         /// Discourse admin report id, passed straight through to
         /// `/admin/reports/{id}.json`. Common ids: `signups`, `topics`,
         /// `posts`, `likes`, `flags`, `moderators_activity`,
@@ -493,6 +498,13 @@ pub enum Commands {
         /// Window to report on (e.g. `7d`, `24h`, `1m`, ISO-8601). Default: 30d.
         #[arg(long, short = 's', default_value = "30d")]
         since: String,
+        /// Report on every configured forum.
+        #[arg(long, conflicts_with = "tags")]
+        all: bool,
+        /// Report on forums matching these tags (comma/semicolon
+        /// separated, match-any).
+        #[arg(long, value_name = "tag1,tag2", conflicts_with = "all")]
+        tags: Option<String>,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,

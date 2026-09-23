@@ -8,6 +8,8 @@ Distinct from [`dsc analytics`](analytics.md): `analytics` combines several repo
 
 ```text
 dsc report <discourse> <name> [--since <when>] [--format text|json|yaml]
+dsc report --all <name> [--since <when>] [--format text|json|yaml]
+dsc report --tags <tag1,tag2,...> <name> [--since <when>] [--format text|json|yaml]
 ```
 
 - `<name>` — a Discourse admin report id, passed straight through to `/admin/reports/{id}.json`. Common ids: `signups`, `topics`, `posts`, `likes`, `flags`, `moderators_activity`, `trust_level_growth`, `time_to_first_response`, `topics_with_no_response`, `users_by_trust_level`. Check your Discourse instance's admin Reports page for the full list available on that forum — plugins can add more.
@@ -20,6 +22,18 @@ dsc report <discourse> <name> [--since <when>] [--format text|json|yaml]
 dsc report myforum signups
 dsc report myforum posts --since 7d --format json
 ```
+
+## Report every forum
+
+`dsc report --all <name>` fetches the same report id from every configured forum and combines the results. Use `--tags` instead of `--all` to report only forums matching any comma- or semicolon-separated tag, case-insensitively. Text output prints each forum's result under a `== forum ==` header; JSON and YAML emit one ordered row per selected forum, adding `forum` to successful report views and returning `forum` plus `error` for failures. The command continues after an individual forum fails so every result still reaches stdout, logs failures to stderr, and exits non-zero after rendering if any forum could not be reported on. An empty tag filter is rejected rather than reporting on the entire fleet.
+
+```bash
+dsc report --all signups
+dsc report --tags production signups
+dsc report --all signups --format json | jq -r '.[] | [.forum, .total] | @tsv'
+```
+
+`--all` and `--tags` are mutually exclusive fleet selectors. The positional form remains a literal forum name, so `dsc report all signups` addresses a configured forum named `all` rather than selecting the fleet.
 
 ## Output
 
