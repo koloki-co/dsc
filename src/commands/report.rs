@@ -88,12 +88,18 @@ pub fn report_all(
         },
     );
 
-    let mut views: Vec<ForumReportView> = Vec::new();
+    let mut views = Vec::new();
     let mut failed = 0usize;
     for (name, res) in results {
         match res {
-            Ok(view) => views.push(ForumReportView { forum: name, view }),
-            Err(_) => failed += 1,
+            Ok(view) => views.push(ForumReportResult::Success { forum: name, view }),
+            Err(error) => {
+                failed += 1;
+                views.push(ForumReportResult::Failure {
+                    forum: name,
+                    error: error.to_string(),
+                });
+            }
         }
     }
 
@@ -137,23 +143,37 @@ fn report_one(discourse: &DiscourseConfig, report_id: &str, since: &str) -> Resu
 }
 
 #[derive(Serialize)]
-struct ForumReportView {
-    forum: String,
-    #[serde(flatten)]
-    view: ReportView,
+#[serde(untagged)]
+enum ForumReportResult {
+    Success {
+        forum: String,
+        #[serde(flatten)]
+        view: ReportView,
+    },
+    Failure {
+        forum: String,
+        error: String,
+    },
 }
 
-fn render_all_text(views: &[ForumReportView]) -> String {
+fn render_all_text(views: &[ForumReportResult]) -> String {
     if views.is_empty() {
         return "No reports available.\n".to_string();
     }
     let mut out = String::new();
-    for (i, fv) in views.iter().enumerate() {
+    for (i, result) in views.iter().enumerate() {
         if i > 0 {
             out.push('\n');
         }
-        out.push_str(&format!("== {} ==\n", fv.forum));
-        out.push_str(&render_text(&fv.view));
+        match result {
+            ForumReportResult::Success { forum, view } => {
+                out.push_str(&format!("== {forum} ==\n"));
+                out.push_str(&render_text(view));
+            }
+            ForumReportResult::Failure { forum, error } => {
+                out.push_str(&format!("== {forum} ==\nerror: {error}\n"));
+            }
+        }
     }
     out
 }

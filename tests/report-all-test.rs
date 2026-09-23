@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Coverage for `dsc report all <name>` - the merged fan-out report across
+//! Coverage for `dsc report --all <name>` - the merged fan-out report across
 //! every configured forum, as distinct from the pre-existing single-forum
 //! `dsc report <discourse> <name>`.
 
@@ -86,7 +86,7 @@ fn report_all_merges_and_tags_results_by_forum() {
         ),
     );
 
-    let output = run_dsc(&["report", "all", "signups", "--format", "json"], &config);
+    let output = run_dsc(&["report", "--all", "signups", "--format", "json"], &config);
     assert!(
         output.status.success(),
         "report all failed: {}",
@@ -100,7 +100,7 @@ fn report_all_merges_and_tags_results_by_forum() {
     assert_eq!(rows[1]["forum"], "beta");
     assert_eq!(rows[1]["total"], 5.0);
 
-    let text_output = run_dsc(&["report", "all", "signups"], &config);
+    let text_output = run_dsc(&["report", "--all", "signups"], &config);
     assert!(text_output.status.success());
     let text = String::from_utf8_lossy(&text_output.stdout);
     assert!(text.contains("== alpha =="));
@@ -120,15 +120,21 @@ fn report_all_reports_per_forum_failures_without_losing_other_results() {
         ),
     );
 
-    let output = run_dsc(&["report", "all", "signups", "--format", "json"], &config);
+    let output = run_dsc(&["report", "--all", "signups", "--format", "json"], &config);
     assert!(
         !output.status.success(),
         "report all should fail overall when one forum errors"
     );
     let rows: Vec<serde_json::Value> =
         serde_json::from_slice(&output.stdout).expect("report all JSON");
-    assert_eq!(rows.len(), 1, "the healthy forum's report should survive");
+    assert_eq!(rows.len(), 2, "expected one result per selected forum");
     assert_eq!(rows[0]["forum"], "alpha");
+    assert_eq!(rows[1]["forum"], "down");
+    assert!(
+        rows[1]["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty())
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("down"),
@@ -172,10 +178,9 @@ fn report_all_respects_tags_filter() {
     let output = run_dsc(
         &[
             "report",
-            "all",
-            "signups",
             "--tags",
             "production",
+            "signups",
             "--format",
             "json",
         ],
@@ -199,7 +204,7 @@ fn report_all_rejects_an_empty_tags_filter() {
         &dir,
         "[[discourse]]\nname = \"alpha\"\nbaseurl = \"https://alpha.example\"\napikey = \"k\"\napi_username = \"tester\"\n",
     );
-    let output = run_dsc(&["report", "all", "signups", "--tags", ",;"], &config);
+    let output = run_dsc(&["report", "--tags", ",;", "signups"], &config);
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
@@ -210,20 +215,18 @@ fn report_all_rejects_an_empty_tags_filter() {
 }
 
 #[test]
-fn report_single_forum_rejects_tags() {
+fn report_all_remains_a_valid_single_forum_invocation() {
     let dir = TempDir::new().expect("tempdir");
     let config = write_temp_config(
         &dir,
-        "[[discourse]]\nname = \"alpha\"\nbaseurl = \"https://alpha.example\"\napikey = \"k\"\napi_username = \"tester\"\n",
+        &format!(
+            "[[discourse]]\nname = \"all\"\nbaseurl = \"{}\"\napikey = \"k\"\napi_username = \"tester\"\n",
+            start_mock(200, signups_report(7))
+        ),
     );
-    let output = run_dsc(
-        &["report", "alpha", "signups", "--tags", "production"],
-        &config,
-    );
-    assert!(!output.status.success());
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("only usable together with `all`"),
-        "stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = run_dsc(&["report", "all", "signups", "--format", "json"], &config);
+    assert!(output.status.success());
+    let view: serde_json::Value = serde_json::from_slice(&output.stdout).expect("report JSON");
+    assert_eq!(view["total"], 7.0);
+    assert!(view.get("forum").is_none());
 }
