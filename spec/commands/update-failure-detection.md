@@ -1,10 +1,47 @@
 # `dsc update` failure detection and disk-guard recovery
 
-> **Status: R42 partially implemented. Disk-guard recovery and actionable refusal output are implemented; SSH diagnostics are corrected, but the historical non-zero launcher exit remains unreproduced.**
+> **Status: R42 active after a reproduced post-reboot race on 2026-09-23. Disk recovery and SSH diagnostics are implemented; reboot transition verification, final service verification, and stop-on-failure fleet admission are now implemented on `main`. Durable detached rebuild jobs remain a future reliability phase.**
 
 The field report came from a 13-forum fleet run on 2026-07-29 (`dsc 0.12.1`) taking every managed forum from Discourse `2026.7.0-latest` to `2026.8.0-latest`. The disk guard was a confirmed `dsc` logic error. Source comparison established that v0.12.1 and current code both classified SSH success by exit status; the proven diagnostic defect was that a non-zero command discarded stdout and its exit status, then displayed ordinary git stderr as though it were the reason for failure. Why the historical launcher invocation returned non-zero remains an investigation rather than a resolved false-failure classification.
 
 Related specs: [update-concurrency](update-concurrency.md), [update-log](update-log.md).
+
+## Defect 3 - reboot disconnect skipped readiness and raced the rebuild
+
+### Field report
+
+On 2026-09-23, `dsc 0.19.0 update all -y` repeatedly failed on `bawmedical` immediately after the OS reboot:
+
+```text
+[Baw Medical Discourse [bawmedical]] Rebooting server
+[Baw Medical Discourse [bawmedical]] Waiting for server to come back online
+[Baw Medical Discourse [bawmedical]] Checking if Discourse update is needed
+[Baw Medical Discourse [bawmedical]] Running Discourse update
+Error: Discourse rebuild failed on bawmedical (ssh exit 255)
+stderr (tail):
+kex_exchange_identification: read: Connection reset by peer
+```
+
+An immediate rerun then failed its first SSH command with `Connection refused`; waiting before retrying allowed the same host to update normally. Expected: `dsc` should reconcile the ordinary SSH disconnect caused by reboot and should not start launcher until the new boot is stably reachable. Actual: readiness ran only when the reboot SSH process exited zero. A reboot that accepted the command and reset SSH with exit 255 silently skipped the entire wait. Even an exit-zero reboot could race because the first probe could reach the old boot before shutdown began.
+
+### Resolution
+
+- [x] Read `/proc/sys/kernel/random/boot_id` before reboot.
+- [x] Submit reboot exactly once. Treat SSH exit 255 as indeterminate, not as success or as a reason to retry the mutation.
+- [x] Require a different boot ID and three consecutive successful probes of that same new boot before any GitHub check or launcher invocation.
+- [x] Fail before rebuilding if the boot transition cannot be confirmed within the bounded wait.
+- [x] Require final Discourse version retrieval rather than logging success with an unknown post-update state.
+- [x] When GitHub supplied a newer target, fail verification if launcher exited zero but the running core commit remained unchanged.
+- [x] Keep sequential fleet updates stop-on-first-failure. In parallel mode, stop admitting queued forums after the first failure and wait for already-started work to finish.
+
+Raw launcher exit 255 remains deliberately non-retryable: SSH cannot distinguish a command that never started from one still running after the connection was lost. A future durable-job phase may detach launcher under a dsc-owned operation ID with atomic remote status and logs, allowing safe reconnection without duplicate submission.
+
+### Verification
+
+- [x] Unit tests reject the old boot ID, require repeated observations of one new boot ID, and reset stability after a failed probe or another boot transition.
+- [x] Unit tests accept truncated matching commit hashes and reject a successful rebuild whose commit remained unchanged.
+- [ ] Process test: a stateful fake SSH endpoint returns exit 255 from reboot, then old/refused/new boot-ID observations, and proves launcher starts exactly once only after stability.
+- [ ] Live verification on the next non-critical fleet update.
 
 ## Reported failure 1 - misleading SSH failure diagnostics
 

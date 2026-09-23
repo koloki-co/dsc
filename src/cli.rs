@@ -87,6 +87,7 @@ pub enum Commands {
   dsc update myforum
   dsc update all -p                # update every forum in parallel
   dsc update all --skip-recent     # skip forums updated in the last 24h
+  dsc update all -y --skip-recent  # unattended, resumable fleet pass
   dsc update log --latest          # one row per forum, most recent state")]
     Update {
         /// View the append-only update log instead of updating.
@@ -95,7 +96,8 @@ pub enum Commands {
         /// Discourse name, or 'all' to update every configured Discourse.
         discourse: Option<String>,
         /// Parallel mode for `dsc update all`: `-p` runs 3 at once, `-p N`
-        /// runs N. Put the forum name before `-p` (e.g. `update all -p 4`).
+        /// runs N. After a failure, already-started forums finish but no more
+        /// queued forums start. Put the forum name before `-p`.
         #[arg(long, short = 'p', num_args = 0..=1, default_missing_value = "3", value_name = "N")]
         parallel: Option<usize>,
         /// Disable changelog posting (posting prompt is on by default).

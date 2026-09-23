@@ -53,10 +53,17 @@ This is distinct from the existing **skip-if-current** gate (`is_discourse_up_to
 
 `update all` should tally the three outcomes clearly so a fleet run is legible: **updated**, **skipped (up to date)**, **skipped (rebuild in progress)**, plus any **failed**. This also makes `dsc update all -p` self-safe if two workers or two invocations ever target the same host.
 
+### Fleet failure policy
+
+- Sequential `dsc update all` is strictly stop-on-first-failure: the next forum is not started until the current forum has completed and passed verification.
+- Parallel mode can have up to the selected width already in flight. On the first failure, workers stop admitting queued forums, while already-started updates are allowed to finish so `dsc` does not detach their SSH sessions or abandon their result records.
+- A launcher SSH exit 255 is never retried automatically. It is ambiguous whether the remote mutation started, so retrying could overlap an active rebuild.
+
 ## Phases
 
 - [x] **Phase 1:** `-p [N]` folding (removed `-m`); dispatch + `update_all` signature simplified; `--help` notes the arg ordering. `-p 0` rejected; `-p` on a single forum rejected.
-- [x] **Phase 2:** pre-flight rebuild-lock check at the top of `run_update` via `REBUILD_CHECK_CMD` (`pgrep -f '[l]auncher rebuild'`, bracketed to avoid self-match, always exits 0); returns `UpdateOutcome::SkippedRebuildInProgress`; `--force` override. Verified live on koloki-demo. (A distinct cross-worker tally in parallel `update all` is a further nice-to-have, not done - each forum still reports its own outcome.)
+- [x] **Phase 2:** pre-flight rebuild-lock check at the top of `run_update` via `REBUILD_CHECK_CMD` (`pgrep -f '[l]auncher rebuild'`, bracketed to avoid self-match, always exits 0); returns `UpdateOutcome::SkippedRebuildInProgress`; `--force` override. Verified live on koloki-demo.
+- [x] **Phase 3:** stop parallel queue admission after the first failure while allowing already-started forums to finish. Each attempted forum retains its own update-log outcome; queued forums remain untouched for a later resumable pass.
 
 ## Out of scope
 

@@ -22,10 +22,12 @@ dsc update log [--latest] [--since <DUR>] [--format text|md|json]
 2. Fetch the initial Discourse version and OS details.
 3. Check available 1 KiB blocks on `/` and compare them without whole-GiB rounding. If space is below the configured minimum, run the [disk recovery](#disk-guard-and-recovery) sequence before making any OS or Discourse change.
 4. Run the OS package update over SSH and reboot if applicable.
-5. Check whether the running Discourse commit matches the latest commit on the configured branch (default `latest`, override with `--branch` or `discourse_branch` in `dsc.toml`). If they match, skip the rebuild.
-6. Run the Discourse rebuild (`./launcher rebuild app`) only if step 5 found a newer commit available.
-7. Fetch final version information, run Docker cleanup (`docker container prune -f && docker image prune -f`), and report root disk usage.
-8. Optionally post a changelog checklist to the configured topic.
+5. Verify the reboot by requiring Linux's boot ID to change, then requiring three consecutive successful SSH boot-ID probes. A reboot command that closes SSH with exit 255 is treated as indeterminate and reconciled through this check; it never skips directly to the rebuild.
+6. Check whether the running Discourse commit matches the latest commit on the configured branch (default `latest`, override with `--branch` or `discourse_branch` in `dsc.toml`). If they match, skip the rebuild.
+7. Run the Discourse rebuild (`./launcher rebuild app`) when step 6 cannot prove the running commit is current. This includes an unavailable GitHub comparison or unknown running commit, which deliberately fail open to a rebuild. A raw SSH exit 255 is not retried because it cannot prove whether launcher started.
+8. Require Discourse to serve version information again. When a newer target commit was known, refuse success if the running commit remained unchanged after the rebuild.
+9. Run Docker cleanup (`docker container prune -f && docker image prune -f`) and report root disk usage.
+10. Optionally post a changelog checklist to the configured topic.
 
 If the OS update command fails, `dsc update` aborts after attempting the rollback command (when configured).
 
@@ -66,6 +68,16 @@ dsc update all -p 4 --yes
 ```
 
 In sequential mode (without `-p`), updates run one-by-one. `all` is a reserved name for `dsc update all`.
+
+Sequential mode stops immediately after the first failed or unverifiable forum, before starting the next one. Parallel mode cannot stop work that has already started, but the first failure stops workers from admitting further queued forums; already-started updates are allowed to reach a safe terminal state before the command returns non-zero.
+
+For an unattended pass that can be rerun after fixing a failed host, use:
+
+```bash
+dsc update all -y --skip-recent
+```
+
+`-y` confirms changelog posting without prompting. `--skip-recent` silently skips forums successfully completed within the last 24 hours, so a rerun resumes with the failed and not-yet-started forums. Increase or reduce that window with `--skip-recent 6h`, for example. Do not use `--force` for routine recovery: it bypasses both the recent-success guard and the pre-existing rebuild guard.
 
 ## Rootless Docker
 

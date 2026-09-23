@@ -19,13 +19,17 @@ use std::io::{BufRead, BufReader, IsTerminal};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const DEFAULT_PARALLEL_UPDATE_WORKERS: usize = 3;
 const KIBIBYTE: u64 = 1024;
 const GIBIBYTE: u64 = 1024 * 1024 * 1024;
 const MAX_REMOTE_DIAGNOSTIC_LINES: usize = 20;
 const MAX_REMOTE_DIAGNOSTIC_CHARS: usize = 4096;
+const BOOT_ID_CMD: &str = "cat /proc/sys/kernel/random/boot_id";
+const REBOOT_READY_TIMEOUT: Duration = Duration::from_secs(3 * 60);
+const REBOOT_PROBE_INTERVAL: Duration = Duration::from_secs(5);
+const REBOOT_STABLE_PROBES: usize = 3;
 /// Window for "was this forum updated recently?" when `--skip-recent` is given
 /// without a value, or for the interactive re-update prompt.
 const DEFAULT_RECENT_WINDOW: Duration = Duration::from_secs(24 * 3600);
@@ -116,6 +120,18 @@ fn resolve_branch(discourse: &DiscourseConfig, override_value: Option<&str>) -> 
         .unwrap_or_else(|| "latest".to_string())
 }
 
+fn take_next_update(
+    queue: &std::sync::Mutex<VecDeque<DiscourseConfig>>,
+    failed: &std::sync::atomic::AtomicBool,
+) -> Option<DiscourseConfig> {
+    let mut queue = queue.lock().ok()?;
+    if failed.load(std::sync::atomic::Ordering::Acquire) {
+        None
+    } else {
+        queue.pop_front()
+    }
+}
+
 /// Run updates across a fixed worker pool pulling from a shared queue.
 /// Workers stay busy: when one finishes, the next forum starts immediately,
 /// regardless of which other workers are still running. All worker errors
@@ -129,23 +145,29 @@ fn update_all_parallel(
     force: bool,
     branch_override: Option<&str>,
 ) -> Result<()> {
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
     let queue: Arc<Mutex<VecDeque<DiscourseConfig>>> =
         Arc::new(Mutex::new(to_update.iter().cloned().collect()));
+    let failed = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::channel::<Result<()>>();
 
     let mut handles = Vec::with_capacity(workers);
     for _ in 0..workers {
         let queue = Arc::clone(&queue);
+        let failed = Arc::clone(&failed);
         let tx = tx.clone();
         let branch_override = branch_override.map(|s| s.to_string());
         handles.push(thread::spawn(move || {
             loop {
-                let next = queue.lock().ok().and_then(|mut q| q.pop_front());
+                let next = take_next_update(&queue, &failed);
                 let Some(discourse) = next else { break };
                 let branch = resolve_branch(&discourse, branch_override.as_deref());
                 let result = update_and_log(&discourse, post_changelog, yes, force, &branch);
+                if result.is_err() {
+                    failed.store(true, Ordering::Release);
+                }
                 if tx.send(result).is_err() {
                     break;
                 }
@@ -165,8 +187,14 @@ fn update_all_parallel(
             .join()
             .map_err(|_| anyhow!("update worker panicked"))?;
     }
+    let not_started = queue.lock().map(|q| q.len()).unwrap_or_default();
 
     if let Some(first) = errors.into_iter().next() {
+        if not_started > 0 {
+            eprintln!(
+                "Stopped before updating {not_started} queued forum(s) after the first failure; already-started updates were allowed to finish."
+            );
+        }
         return Err(first);
     }
     Ok(())
@@ -362,12 +390,110 @@ mod tests {
     }
 
     #[test]
+    fn parallel_queue_stops_admitting_forums_after_failure() {
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let queue = Mutex::new(VecDeque::from([
+            DiscourseConfig {
+                name: "first".to_string(),
+                ..DiscourseConfig::default()
+            },
+            DiscourseConfig {
+                name: "second".to_string(),
+                ..DiscourseConfig::default()
+            },
+        ]));
+        let failed = AtomicBool::new(false);
+
+        assert_eq!(take_next_update(&queue, &failed).unwrap().name, "first");
+        failed.store(true, Ordering::Release);
+        assert!(take_next_update(&queue, &failed).is_none());
+        assert_eq!(queue.lock().unwrap().len(), 1);
+    }
+
+    #[test]
     fn rebuild_check_avoids_self_match() {
         // The bracketed pattern must match a real `./launcher rebuild` but NOT
         // contain the literal "launcher rebuild" - otherwise pgrep matches its
         // own shell and every host looks busy.
         assert!(super::REBUILD_CHECK_CMD.contains("[l]auncher rebuild"));
         assert!(!super::REBUILD_CHECK_CMD.contains("launcher rebuild"));
+    }
+
+    #[test]
+    fn reboot_readiness_rejects_old_boot_then_requires_stable_new_boot() {
+        let mut readiness = RebootReadiness::new("old", 3);
+        assert!(!readiness.observe(Some("old")));
+        assert!(!readiness.observe(Some("new")));
+        assert!(!readiness.observe(Some("new")));
+        assert!(readiness.observe(Some("new")));
+    }
+
+    #[test]
+    fn reboot_submission_treats_ssh_disconnect_as_indeterminate() {
+        assert_eq!(
+            classify_reboot_submission(false, Some(255)),
+            Some(RebootSubmission::ConnectionLost)
+        );
+        assert_eq!(classify_reboot_submission(false, Some(1)), None);
+        assert_eq!(
+            classify_reboot_submission(true, Some(0)),
+            Some(RebootSubmission::Completed)
+        );
+    }
+
+    #[test]
+    fn reboot_readiness_resets_after_a_failed_probe() {
+        let mut readiness = RebootReadiness::new("old", 3);
+        assert!(!readiness.observe(Some("new")));
+        assert!(!readiness.observe(Some("new")));
+        assert!(!readiness.observe(None));
+        assert!(!readiness.observe(Some("new")));
+        assert!(!readiness.observe(Some("new")));
+        assert!(readiness.observe(Some("new")));
+    }
+
+    #[test]
+    fn reboot_readiness_resets_when_the_observed_new_boot_changes() {
+        let mut readiness = RebootReadiness::new("old", 2);
+        assert!(!readiness.observe(Some("new-a")));
+        assert!(!readiness.observe(Some("new-b")));
+        assert!(readiness.observe(Some("new-b")));
+    }
+
+    #[test]
+    fn commit_matching_accepts_truncated_running_hashes() {
+        assert!(commits_match(
+            Some("99f7f69f1a"),
+            Some("99f7f69f1a3569ffb19d841e6a4b4f2ea989d40d")
+        ));
+        assert!(!commits_match(Some("c77dfaf5a6"), Some("99f7f69f1a")));
+    }
+
+    #[test]
+    fn rebuild_verification_rejects_an_unchanged_commit() {
+        let error = verify_rebuild_effect(
+            true,
+            Some("c77dfaf5a6"),
+            Some("c77dfaf5a6"),
+            Some("99f7f69f1a"),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("remained unchanged"));
+    }
+
+    #[test]
+    fn rebuild_verification_accepts_a_changed_commit() {
+        assert!(
+            verify_rebuild_effect(
+                true,
+                Some("c77dfaf5a6"),
+                Some("newer-than-captured"),
+                Some("99f7f69f1a"),
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -585,7 +711,6 @@ struct UpdateMetadata {
     after_commit: Option<String>,
     reclaimed_space: Option<String>,
     before_os_version: Option<String>,
-    after_version_error: Option<String>,
     root_disk_usage: Option<String>,
     preflight_disk_recovery: Option<Box<DiskRecoveryReport>>,
     os_updated: bool,
@@ -940,8 +1065,6 @@ fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<
     });
     let cleanup_cmd =
         std::env::var("DSC_SSH_CLEANUP_CMD").unwrap_or_else(|_| default_cleanup_command(rootless));
-    let mut server_rebooted = false;
-
     stage(&discourse_label, "Running OS update");
     if let Err(err) = run_ssh_command_with_tail(
         &target,
@@ -962,41 +1085,39 @@ fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<
         return Err(err);
     }
     let os_updated = true;
+    let simulated_update = cfg!(debug_assertions)
+        && std::env::var("DSC_TEST_MARKER").is_ok_and(|value| !value.trim().is_empty())
+        && os_update_cmd == "echo OS packages updated"
+        && reboot_cmd == "echo Server rebooted";
+    let boot_id_before = if simulated_update {
+        None
+    } else {
+        Some(read_boot_id(&target).context("reading boot ID before reboot")?)
+    };
     stage(&discourse_label, "Rebooting server");
-    if run_ssh_command(&target, &reboot_cmd).is_ok() {
-        server_rebooted = true;
-        if std::env::var("DSC_SSH_OS_UPDATE_CMD").unwrap_or_default() != "echo OS packages updated"
-        {
-            stage(&discourse_label, "Waiting for server to come back online");
-            let probe_interval = std::time::Duration::from_secs(10);
-            let max_attempts = 18; // ~3 minutes total at 10s intervals
-            let mut attempts = 0;
-            loop {
-                match ssh_probe(&target) {
-                    Ok(true) => break,
-                    Ok(false) | Err(_) => {
-                        attempts += 1;
-                        if attempts >= max_attempts {
-                            return Err(anyhow!(
-                                "Server did not come back online after reboot ({} attempts)",
-                                max_attempts
-                            ));
-                        }
-                        println!(
-                            "[{}] Still waiting for SSH (attempt {}/{})",
-                            discourse_label,
-                            attempts + 1,
-                            max_attempts
-                        );
-                        std::thread::sleep(probe_interval);
-                    }
-                }
-            }
-        }
+    let reboot_submission = submit_reboot(&target, &reboot_cmd)?;
+    if reboot_submission == RebootSubmission::ConnectionLost {
+        stage(
+            &discourse_label,
+            "SSH disconnected during reboot submission; verifying that the host actually rebooted",
+        );
     }
+    if let Some(boot_id_before) = boot_id_before.as_deref() {
+        stage(
+            &discourse_label,
+            "Waiting for a changed, stable server boot ID",
+        );
+        wait_for_reboot(&target, boot_id_before, &discourse_label)?;
+    } else {
+        // Live compatibility tests replace the destructive OS update and reboot
+        // with fixed echo commands. Production updates always verify boot ID.
+    }
+    let server_rebooted = true;
 
     stage(&discourse_label, "Checking if Discourse update is needed");
-    let discourse_up_to_date = is_discourse_up_to_date(before_info.commit.as_deref(), branch);
+    let latest_commit = fetch_latest_discourse_commit(branch);
+    let discourse_up_to_date =
+        commits_match(before_info.commit.as_deref(), latest_commit.as_deref());
     let discourse_rebuilt = !discourse_up_to_date;
     if discourse_up_to_date {
         stage(
@@ -1035,32 +1156,28 @@ fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<
         &discourse_label,
         "Fetching Discourse version (after update)",
     );
-    let mut after_version_error = None;
-    let after_info = match fetch_version_info_with_retry(&client, 6) {
-        Ok(info) => {
-            let label = info.version.as_deref().unwrap_or("unknown");
-            stage(
-                &discourse_label,
-                &format!("Final Discourse Version (after update): {}", label),
-            );
-            info
-        }
-        Err(err) => {
-            let message = format!("{}", err);
-            after_version_error = Some(message.clone());
-            stage(
-                &discourse_label,
-                &format!(
-                    "Final Discourse Version (after update): unknown (fetch failed: {})",
-                    message
-                ),
-            );
-            VersionInfo {
-                version: None,
-                commit: None,
-            }
-        }
-    };
+    let after_info = fetch_version_info_with_retry(&client, 6).with_context(|| {
+        format!(
+            "Discourse did not become verifiably healthy after update on {}",
+            discourse.name
+        )
+    })?;
+    let label = after_info.version.as_deref().ok_or_else(|| {
+        anyhow!(
+            "Discourse responded after update on {}, but did not report its version",
+            discourse.name
+        )
+    })?;
+    stage(
+        &discourse_label,
+        &format!("Final Discourse Version (after update): {}", label),
+    );
+    verify_rebuild_effect(
+        discourse_rebuilt,
+        before_info.commit.as_deref(),
+        after_info.commit.as_deref(),
+        latest_commit.as_deref(),
+    )?;
     stage(&discourse_label, "Running cleanup");
     let cleanup = run_ssh_command_combined_named(&target, &cleanup_cmd, "Docker cleanup")?;
     let reclaimed_space = parse_reclaimed_space(&cleanup);
@@ -1084,7 +1201,6 @@ fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<
         after_commit: after_info.commit,
         reclaimed_space,
         before_os_version,
-        after_version_error,
         root_disk_usage,
         preflight_disk_recovery,
         os_updated,
@@ -1112,6 +1228,140 @@ fn run_ssh_command_named(target: &str, command: &str, step: &str) -> Result<Stri
         &String::from_utf8_lossy(&output.stderr),
     )?;
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RebootSubmission {
+    Completed,
+    ConnectionLost,
+}
+
+fn classify_reboot_submission(success: bool, exit_code: Option<i32>) -> Option<RebootSubmission> {
+    if success {
+        Some(RebootSubmission::Completed)
+    } else if exit_code == Some(255) {
+        Some(RebootSubmission::ConnectionLost)
+    } else {
+        None
+    }
+}
+
+/// Submit reboot exactly once. SSH commonly exits 255 because the accepted
+/// reboot tears down the connection; only the subsequent boot-ID transition
+/// can distinguish that expected disconnect from a command that never ran.
+fn submit_reboot(target: &str, command: &str) -> Result<RebootSubmission> {
+    let mut ssh = build_ssh_command(target, &[])?;
+    let output = ssh
+        .arg(command)
+        .output()
+        .with_context(|| format!("submitting reboot to {target}"))?;
+    if let Some(submission) =
+        classify_reboot_submission(output.status.success(), output.status.code())
+    {
+        return Ok(submission);
+    }
+    ensure_ssh_success(
+        "Reboot",
+        target,
+        false,
+        output.status.code(),
+        &String::from_utf8_lossy(&output.stdout),
+        &String::from_utf8_lossy(&output.stderr),
+    )?;
+    unreachable!("failed reboot status returned an error")
+}
+
+fn read_boot_id(target: &str) -> Result<String> {
+    let raw = run_ssh_command_named(target, BOOT_ID_CMD, "Boot ID probe")?;
+    let boot_id = raw.trim();
+    if boot_id.is_empty()
+        || boot_id.len() > 128
+        || !boot_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+    {
+        return Err(anyhow!("host returned an invalid Linux boot ID"));
+    }
+    Ok(boot_id.to_string())
+}
+
+struct RebootReadiness<'a> {
+    previous_boot_id: &'a str,
+    candidate_boot_id: Option<String>,
+    consecutive: usize,
+    required: usize,
+}
+
+impl<'a> RebootReadiness<'a> {
+    fn new(previous_boot_id: &'a str, required: usize) -> Self {
+        Self {
+            previous_boot_id,
+            candidate_boot_id: None,
+            consecutive: 0,
+            required: required.max(1),
+        }
+    }
+
+    fn observe(&mut self, boot_id: Option<&str>) -> bool {
+        let Some(boot_id) = boot_id else {
+            self.candidate_boot_id = None;
+            self.consecutive = 0;
+            return false;
+        };
+        if boot_id == self.previous_boot_id {
+            self.candidate_boot_id = None;
+            self.consecutive = 0;
+            return false;
+        }
+        if self.candidate_boot_id.as_deref() == Some(boot_id) {
+            self.consecutive += 1;
+        } else {
+            self.candidate_boot_id = Some(boot_id.to_string());
+            self.consecutive = 1;
+        }
+        self.consecutive >= self.required
+    }
+}
+
+fn wait_for_reboot(target: &str, previous_boot_id: &str, discourse_label: &str) -> Result<()> {
+    let deadline = Instant::now() + REBOOT_READY_TIMEOUT;
+    let mut readiness = RebootReadiness::new(previous_boot_id, REBOOT_STABLE_PROBES);
+    let mut attempts = 0usize;
+
+    loop {
+        attempts += 1;
+        let last_observation = match read_boot_id(target) {
+            Ok(boot_id) => {
+                let observation = if boot_id == previous_boot_id {
+                    "SSH reached the pre-reboot boot".to_string()
+                } else {
+                    "SSH reached the new boot but is not stable yet".to_string()
+                };
+                if readiness.observe(Some(&boot_id)) {
+                    stage(discourse_label, "Server reboot confirmed and SSH is stable");
+                    return Ok(());
+                }
+                observation
+            }
+            Err(error) => {
+                readiness.observe(None);
+                error.to_string()
+            }
+        };
+
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(anyhow!(
+                "Server reboot was not confirmed on {target} within {} seconds after {attempts} probe(s): {last_observation}",
+                REBOOT_READY_TIMEOUT.as_secs()
+            ));
+        }
+        stage(
+            discourse_label,
+            &format!("Still waiting for stable SSH after reboot (probe {attempts})"),
+        );
+        thread::sleep(REBOOT_PROBE_INTERVAL.min(deadline.saturating_duration_since(now)));
+    }
 }
 
 fn run_ssh_command_combined_named(target: &str, command: &str, step: &str) -> Result<String> {
@@ -1379,15 +1629,6 @@ fn diagnostic_tail(output: &str) -> String {
     }
 }
 
-fn ssh_probe(target: &str) -> Result<bool> {
-    let mut cmd = build_ssh_command(target, &["-o", "ConnectTimeout=10"])?;
-    let output = cmd
-        .arg("echo 'server is up'")
-        .output()
-        .with_context(|| format!("running ssh probe to {}", target))?;
-    Ok(output.status.success())
-}
-
 fn stage(target: &str, message: &str) {
     println!("[{}] {}", target, message);
 }
@@ -1524,21 +1765,10 @@ fn build_changelog_payload(metadata: &UpdateMetadata) -> String {
     } else {
         body.push(format!("  - Initial version: {}", before_version));
     }
-    let after_error = metadata
-        .after_version_error
-        .as_deref()
-        .map(|err| format!(" (fetch failed: {})", err))
-        .unwrap_or_default();
     if let Some(commit) = after_commit.as_deref() {
-        body.push(format!(
-            "  - Updated version: {}{} {}",
-            after_version, after_error, commit
-        ));
+        body.push(format!("  - Updated version: {} {}", after_version, commit));
     } else {
-        body.push(format!(
-            "  - Updated version: {}{}",
-            after_version, after_error
-        ));
+        body.push(format!("  - Updated version: {}", after_version));
     }
     if reclaimed == "unknown" {
         body.push("- [x] Docker cleanup performed".to_string());
@@ -1606,9 +1836,7 @@ fn fetch_latest_discourse_commit(branch: &str) -> Option<String> {
     }
 }
 
-/// Returns `true` if the running Discourse commit matches the latest available
-/// commit on the configured branch — meaning a rebuild would be a no-op.
-fn is_discourse_up_to_date(running_commit: Option<&str>, branch: &str) -> bool {
+fn commits_match(running_commit: Option<&str>, expected_commit: Option<&str>) -> bool {
     let Some(running) = running_commit else {
         return false;
     };
@@ -1616,13 +1844,48 @@ fn is_discourse_up_to_date(running_commit: Option<&str>, branch: &str) -> bool {
     if running.is_empty() {
         return false;
     }
-    let Some(latest) = fetch_latest_discourse_commit(branch) else {
+    let Some(expected) = expected_commit else {
         return false;
     };
+    let expected = expected.trim();
+    if expected.is_empty() {
+        return false;
+    }
     // Compare by the shorter of the two — the running commit from the
     // HTML meta tag is often truncated to 10 characters.
-    let cmp_len = running.len().min(latest.len());
-    running[..cmp_len].eq_ignore_ascii_case(&latest[..cmp_len])
+    let cmp_len = running.len().min(expected.len());
+    running[..cmp_len].eq_ignore_ascii_case(&expected[..cmp_len])
+}
+
+/// A successful launcher exit is not sufficient evidence that the requested
+/// core update took effect. When GitHub supplied a newer target, require the
+/// running commit to move away from the pre-rebuild commit. We deliberately do
+/// not require exact equality with the captured target because the branch may
+/// advance while a long rebuild is running.
+fn verify_rebuild_effect(
+    rebuilt: bool,
+    before_commit: Option<&str>,
+    after_commit: Option<&str>,
+    expected_commit: Option<&str>,
+) -> Result<()> {
+    if !rebuilt || expected_commit.is_none() {
+        return Ok(());
+    }
+    let Some(after) = after_commit else {
+        return Err(anyhow!(
+            "Discourse rebuild exited successfully, but the running commit could not be verified"
+        ));
+    };
+    if let Some(before) = before_commit
+        && !commits_match(Some(before), expected_commit)
+        && commits_match(Some(after), Some(before))
+    {
+        return Err(anyhow!(
+            "Discourse rebuild exited successfully, but the running commit remained unchanged at {}",
+            after.trim()
+        ));
+    }
+    Ok(())
 }
 
 fn format_commit_link(commit: Option<&str>) -> Option<String> {
