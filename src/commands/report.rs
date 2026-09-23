@@ -13,10 +13,13 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::{emit_result, ensure_api_credentials, select_discourse};
-use crate::config::Config;
+use crate::commands::common::{
+    emit_result, ensure_api_credentials, fleet_worker_count, run_fleet, select_discourse,
+    selected_discourses,
+};
+use crate::config::{Config, DiscourseConfig};
 use crate::utils::parse_since_cutoff;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
@@ -41,6 +44,78 @@ pub fn report(
     format: ListFormat,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
+    let view = report_one(discourse, report_id, since)?;
+    let text = render_text(&view);
+    emit_result(format, &view, &text)
+}
+
+/// Merged fan-out report: fetch the same report id from every configured
+/// forum and print one combined, forum-tagged result list. Continues past
+/// per-forum failures (missing credentials, unreachable forum, report id
+/// not available on that forum) so one bad entry doesn't blank the rest of
+/// the fleet; fails at the end if any forum could not be reported on.
+pub fn report_all(
+    config: &Config,
+    report_id: &str,
+    since: &str,
+    tags: Option<&str>,
+    format: ListFormat,
+) -> Result<()> {
+    let discourses = selected_discourses(config, None, tags)?;
+    if discourses.is_empty() {
+        return Err(if tags.is_some() {
+            anyhow!("no discourses configured matching the given tags")
+        } else {
+            anyhow!("no discourses configured")
+        });
+    }
+
+    let report_id_owned = report_id.to_string();
+    let since_owned = since.to_string();
+    let results: Vec<(String, Result<ReportView>)> = run_fleet(
+        &discourses,
+        fleet_worker_count(None, discourses.len(), 8, false),
+        move |discourse| {
+            (
+                discourse.name.clone(),
+                report_one(discourse, &report_id_owned, &since_owned),
+            )
+        },
+        |(name, res)| {
+            if let Err(e) = res {
+                eprintln!("{name}: report failed - {e}");
+            }
+        },
+    );
+
+    let mut views = Vec::new();
+    let mut failed = 0usize;
+    for (name, res) in results {
+        match res {
+            Ok(view) => views.push(ForumReportResult::Success { forum: name, view }),
+            Err(error) => {
+                failed += 1;
+                views.push(ForumReportResult::Failure {
+                    forum: name,
+                    error: error.to_string(),
+                });
+            }
+        }
+    }
+
+    let text = render_all_text(&views);
+    emit_result(format, &views, &text)?;
+
+    if failed > 0 {
+        return Err(anyhow!(
+            "report failed on {failed} of {} forum(s)",
+            discourses.len()
+        ));
+    }
+    Ok(())
+}
+
+fn report_one(discourse: &DiscourseConfig, report_id: &str, since: &str) -> Result<ReportView> {
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
 
@@ -55,7 +130,7 @@ pub fn report(
     let end_date = end.format("%Y-%m-%d").to_string();
 
     let admin_report = client.fetch_admin_report(report_id, &start_date, &end_date)?;
-    let view = ReportView {
+    Ok(ReportView {
         report_id: report_id.to_string(),
         since: since.to_string(),
         start_date,
@@ -64,9 +139,43 @@ pub fn report(
         average: admin_report.average,
         higher_is_better: admin_report.higher_is_better,
         data: admin_report.data.clone(),
-    };
-    let text = render_text(&view);
-    emit_result(format, &view, &text)
+    })
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum ForumReportResult {
+    Success {
+        forum: String,
+        #[serde(flatten)]
+        view: ReportView,
+    },
+    Failure {
+        forum: String,
+        error: String,
+    },
+}
+
+fn render_all_text(views: &[ForumReportResult]) -> String {
+    if views.is_empty() {
+        return "No reports available.\n".to_string();
+    }
+    let mut out = String::new();
+    for (i, result) in views.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        match result {
+            ForumReportResult::Success { forum, view } => {
+                out.push_str(&format!("== {forum} ==\n"));
+                out.push_str(&render_text(view));
+            }
+            ForumReportResult::Failure { forum, error } => {
+                out.push_str(&format!("== {forum} ==\nerror: {error}\n"));
+            }
+        }
+    }
+    out
 }
 
 fn render_text(view: &ReportView) -> String {
