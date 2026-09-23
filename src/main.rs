@@ -1478,8 +1478,20 @@ fn main() -> Result<()> {
             discourse,
             name,
             since,
+            tags,
             format,
-        } => commands::report::report(&config, &discourse, &name, &since, format),
+        } => match discourse.as_str() {
+            "all" => commands::report::report_all(&config, &name, &since, tags.as_deref(), format),
+            forum => {
+                if tags.is_some() {
+                    Err(anyhow!(
+                        "--tags is only usable together with `all` as the discourse argument"
+                    ))
+                } else {
+                    commands::report::report(&config, forum, &name, &since, format)
+                }
+            }
+        },
 
         Commands::Explorer { command } => match command {
             ExplorerCommand::List {
