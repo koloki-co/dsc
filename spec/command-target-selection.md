@@ -31,11 +31,11 @@ The matrix classifies command families by useful targeting semantics. It is a de
 | `user find`, `setting audit`, `app env audit` | implicit fleet, optional `--tags` | fleet comparison | complete |
 | `backup create`, `backup setup-s3` | forum, `--all`, `--tags` | forum or guarded fleet | complete |
 | `backup health` | optional forum, omission means fleet, `--tags` | forum or fleet | retain compatibility |
-| `file audit|push|pull` | forum or positional `all`, optional `--tags` | forum or guarded fleet | retain compatibility |
-| `setting get|list|pull`, `app env list|get`, `analytics`, `report`, `log staff` | forum only | forum or fleet read | candidates when a concrete fleet workflow arises; R20 covers reports |
-| `setting set|push`, `app env set|unset`, plugin and portable taxonomy/theme mutations | forum only or command-specific tags | guarded selected fleet | require complete dry-run and per-forum verification before expansion |
+| `file audit`, `file push`, `file pull` | forum or positional `all`, optional `--tags` | forum or guarded fleet | retain compatibility |
+| `setting get`, `setting list`, `setting pull`, `app env list`, `app env get`, `analytics`, `report`, `log staff` | forum only | forum or fleet read | candidates when a concrete fleet workflow arises; R20 covers reports |
+| `setting set`, `setting push`, `app env set`, `app env unset`, plugin and portable taxonomy/theme mutations | forum only or command-specific tags | guarded selected fleet | require complete dry-run and per-forum verification before expansion |
 | Resource inventory commands such as `category list`, `group list`, `emoji list`, `tag list`, `plugin list`, `theme list`, `api-key list`, `webhook list` | forum only | forum or fleet read | candidates when comparison output is defined |
-| `sar`, `render`, `upload`, `backup pull|push` | forum only | forum only unless output/destination semantics are designed | no generic `--all` |
+| `sar`, `render`, `upload`, `backup pull`, `backup push` | forum only | forum only unless output/destination semantics are designed | no generic `--all` |
 | Pairwise operations such as category/group copy, category/setting diff | explicit source/target pair | pairwise | no `--all` |
 | Topic, post, invite, PM, notification, and user-account mutations | forum only | forum-local | IDs, identities, permissions, and effects are forum-specific |
 
