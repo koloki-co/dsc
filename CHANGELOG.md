@@ -5,6 +5,94 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.20.0] - 2026-09-24
+
+### Bug fixes
+
+- **docs**: Repair upcoming change spec link ([0aa020e](https://github.com/koloki-co/dsc/commit/0aa020eb8af66a842373ae7e07610a5d0b416a39))
+
+- **report**: Use explicit fleet selectors ([2c7464d](https://github.com/koloki-co/dsc/commit/2c7464ddf12adc16d13fe1d9c27ab1df1c86df79))
+
+- **update**: Verify reboot before rebuilding ([bbd890f](https://github.com/koloki-co/dsc/commit/bbd890f278d66d5e22ea2fd1d5f5991867961ec1))
+
+- **emoji**: Verify custom emoji deletion ([8d57d6c](https://github.com/koloki-co/dsc/commit/8d57d6c769e518b80589d84500969cdfc0f04b59))
+
+- **backup**: Verify the new backup by trigger time, not any archive ([341f5df](https://github.com/koloki-co/dsc/commit/341f5dfb5984e2b4a43aab9c3403515bab77a8a4))
+
+- **backup**: Simplify concurrent scan test types ([50e3be2](https://github.com/koloki-co/dsc/commit/50e3be24d9d6e9df11aa87a9f1ffdffbeae0d292))
+
+- **backup**: Enforce AWS deadlines across pipe draining and scans ([4ca8238](https://github.com/koloki-co/dsc/commit/4ca8238a47515eb0202773a533921539039fdcbd))
+
+- **backup**: Bound S3 scans and reject incomplete pagination metadata ([061b464](https://github.com/koloki-co/dsc/commit/061b464c6e9b399ed5378a630b78f64e6a334059))
+
+- **api**: Enforce pagination boundaries without skipping activity ([79f0648](https://github.com/koloki-co/dsc/commit/79f06486443d35cde7ec1b3eef363d077051e92d))
+
+- **list**: Reap browser openers and preserve standalone exit errors ([7f25ae6](https://github.com/koloki-co/dsc/commit/7f25ae68f3f12a5f33aad842eb7ad7d8730652f7))
+
+- **uploads**: Preserve client thread safety and cache successful endpoints ([706b57b](https://github.com/koloki-co/dsc/commit/706b57b11cba8d4d2ff1e71198a4396c08043707))
+
+### Build
+
+- **deps**: Bump the routine-minor-and-patch group with 5 updates ([21f6c8a](https://github.com/koloki-co/dsc/commit/21f6c8a9755cd4c626d72f80a81473daa59356ed))
+
+- **deps**: Bump taiki-e/install-action ([56e9ab2](https://github.com/koloki-co/dsc/commit/56e9ab237007ed5547c14b3294155479a06db032))
+
+- **deps**: Bump zensical in the routine-minor-and-patch group ([6288a2a](https://github.com/koloki-co/dsc/commit/6288a2a708a8c869f2764d410aee32ddb1075364))
+
+- **deps**: Bump the routine-minor-and-patch group with 2 updates ([7d0162a](https://github.com/koloki-co/dsc/commit/7d0162a22d8b81fe5ceebe0349bcb2435ed1ced5))
+
+- **deps**: Bump the routine-minor-and-patch group with 2 updates ([c6a1c3b](https://github.com/koloki-co/dsc/commit/c6a1c3b5d87ac911595c2da531cb3baf2f78aef6))
+
+- **deps**: Bump the routine-minor-and-patch group with 2 updates ([1ee6098](https://github.com/koloki-co/dsc/commit/1ee6098bbe17fac66acfee8bfcaf6ed38eb8c96f))
+
+### CI / dependencies
+
+- **deps**: Bump rustls to 0.23.45 for RUSTSEC-2026-0285 ([fff203d](https://github.com/koloki-co/dsc/commit/fff203d625a3dc17536ccf67b8c539bb49d8e0a3))
+
+### Documentation
+
+- **roadmap**: Record upload conversion transparency ([c83bf76](https://github.com/koloki-co/dsc/commit/c83bf761789e40c1e48613fe7b5babc3e8e50172))
+
+- **cli**: Standardize fleet selectors ([577ea1b](https://github.com/koloki-co/dsc/commit/577ea1b4745a2f617d243fe8aebd706c223588ca))
+
+- Fix command matrix rendering ([547a01a](https://github.com/koloki-co/dsc/commit/547a01ab920ff376998f90dbb6239cb22ae3f8b6))
+
+- Clarify dsc's role alongside Discourse MCP ([20b63f4](https://github.com/koloki-co/dsc/commit/20b63f443b0af2dbea96bb1f98b49f3808f4fcba))
+
+- **report**: Add report to docs nav and align --since values ([1bff2e5](https://github.com/koloki-co/dsc/commit/1bff2e5579f7b05dff249f4a9020b6fe89ed4537))
+
+### Features
+
+- **explorer**: Run named queries across fleets ([a3d2a46](https://github.com/koloki-co/dsc/commit/a3d2a46a0542f8049e77a08594c6dc4232a90cb7))
+
+- **upcoming-change**: Add dsc upcoming-change list/show (R59 Phase 1) ([cf1e16d](https://github.com/koloki-co/dsc/commit/cf1e16d782b1f16b774204997297464114776e0c))
+
+- **report**: Add dsc report all fan-out (R20) ([0f847c4](https://github.com/koloki-co/dsc/commit/0f847c458678084079160382fc462b6a19975bb4))
+
+- **version**: Add fleet inventory ([6cab899](https://github.com/koloki-co/dsc/commit/6cab89998add25b8c3b380d9b9464a359cb61a37))
+
+- **emoji**: Add dsc emoji delete ([5ae2374](https://github.com/koloki-co/dsc/commit/5ae2374202b3a91645b2b610a24e00d1f3fcccad))
+
+- **report**: Add dsc report <name> for a single raw admin report ([6b96a11](https://github.com/koloki-co/dsc/commit/6b96a119cfb16c6216f8e1e904727ba75d54a024))
+
+- **open**: Fan out across --all, --tags, and name globs ([feb536c](https://github.com/koloki-co/dsc/commit/feb536ce785edeb486b1d6be5e0de50ee0705253))
+
+### Performance
+
+- **backup**: Bound and time the test-backup verification poll (P14) ([26b83f2](https://github.com/koloki-co/dsc/commit/26b83f2f40f3f9b11606079766d6e26eda57d80d))
+
+- **backup**: Scan independent S3 buckets through a bounded pool (P13) ([a05d397](https://github.com/koloki-co/dsc/commit/a05d397105ae879c1bfcd4d43a7fb6977d7c18f4))
+
+- **backup**: Bound aws subprocess output and add call/scan timeouts ([9742e7e](https://github.com/koloki-co/dsc/commit/9742e7ec8f290b95f707e665ca78e7d61b017bb6))
+
+- **backup**: Page and fold S3 bucket scanning instead of materializing it (P13) ([454945f](https://github.com/koloki-co/dsc/commit/454945f0594d33219bab7e1a8a16468a7ac98c5a))
+
+- **api**: Cap unbounded list-everything pagination loops (P26) ([3f0f85b](https://github.com/koloki-co/dsc/commit/3f0f85ba1433c9b35bcf7f70b93c3c4239c0e0be))
+
+- **list**: Stop list --open blocking on each browser opener (P29) ([54c139c](https://github.com/koloki-co/dsc/commit/54c139c3a7c061b474b31426e7925c247ebb01e5))
+
+- **uploads**: Stream multipart bodies and cache emoji upload endpoint ([68f8b51](https://github.com/koloki-co/dsc/commit/68f8b51fdbbee6d3d39915307631706ba3da322d))
+
 ## [0.19.0] - 2026-09-08
 
 ### Bug fixes
