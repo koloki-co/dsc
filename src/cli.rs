@@ -529,6 +529,15 @@ pub enum Commands {
         #[command(subcommand)]
         command: BoardCommand,
     },
+    /// List and inspect Discourse's hidden Upcoming Changes.
+    #[command(visible_alias = "upcoming")]
+    #[command(after_help = "Examples:
+  dsc upcoming-change list myforum
+  dsc upcoming-change show myforum enable_generated_llms_txt")]
+    UpcomingChange {
+        #[command(subcommand)]
+        command: UpcomingChangeCommand,
+    },
     /// Search topics on a Discourse, or `all` to fan out across every
     /// configured forum and print one merged, forum-tagged result list.
     #[command(visible_alias = "s")]
@@ -973,6 +982,36 @@ pub enum BoardCommand {
         /// Overwrite an existing file.
         #[arg(long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(next_display_order = None)]
+pub enum UpcomingChangeCommand {
+    /// List every Upcoming Change the forum exposes.
+    #[command(visible_alias = "ls")]
+    #[command(after_help = "Examples:
+  dsc upcoming-change list myforum
+  dsc upcoming-change list myforum --format json")]
+    List {
+        /// Discourse name.
+        discourse: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Show one Upcoming Change by its exact setting name.
+    #[command(after_help = "Examples:
+  dsc upcoming-change show myforum enable_generated_llms_txt
+  dsc upcoming-change show myforum enable_generated_llms_txt --format yaml")]
+    Show {
+        /// Discourse name.
+        discourse: String,
+        /// Exact setting name, as shown by `upcoming-change list`.
+        setting_name: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
     },
 }
 

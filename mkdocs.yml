@@ -85,6 +85,7 @@ nav:
       - config: config.md
   - Site admin:
       - setting: setting.md
+      - upcoming-change: upcoming-change.md
       - backup: backup.md
       - app: app.md
       - theme: theme.md

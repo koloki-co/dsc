@@ -41,7 +41,7 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 | **Categories** | list; pull / push a whole category as Markdown with durable `topic_id` binding, a reviewable dry-run plan, `--updates-only`, `--no-bump`, admonition/link conversion; declarative definition pull/push/diff/set/rename | definition assets and guarded prune |
 | **Boards** | list, inspect, and snapshot Discourse Boards with columns, topic cards, and floater cards | guarded declarative push and prune |
 | **Tags** | pull / push the taxonomy, rename, per-topic tag / untag | — |
-| **Site settings** | get / set / list, pull / push snapshots, diff two sources, **audit one setting across every forum** | — |
+| **Site settings** | get / set / list, pull / push snapshots, diff two sources, **audit one setting across every forum**, list / inspect hidden Upcoming Changes | Upcoming Change enable/disable; validated `setting upload` |
 | **Themes & palettes** | list / install / remove / pull / push / duplicate / show; component settings and fields; assets; enable / disable; attach / detach; colour palettes; remote update | — |
 | **Users & access** | list / info / find-by-email, suspend / silence, promote / demote, group membership, activity export, create, password reset, email change; invites; private messages; API keys; **one-shot SAR / GDPR export** | scoped API keys; deterministic Chat archival for SAR inclusion |
 | **Backups, emoji, uploads** | backup create / list / pull / push / restore, fleet backup creation and S3 health/setup, bulk emoji, file upload | S3 key rotation and retention |
@@ -166,6 +166,7 @@ dsc update myforum
   - [report](docs/report.md) — fetch a single raw Discourse admin report by id
   - [explorer](docs/explorer.md) — inspect and run saved Data Explorer queries
   - [board](docs/board.md) - list, inspect, and snapshot Discourse Boards
+  - [upcoming-change](docs/upcoming-change.md) — list and inspect Discourse's hidden Upcoming Changes
   - [upload](docs/upload.md) — upload a file and return its short URL
   - [emoji](docs/emoji.md) — upload and list custom emoji
   - [topic](docs/topic.md) — pull, push, and sync topics as Markdown

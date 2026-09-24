@@ -121,6 +121,19 @@ impl DiscourseClient {
         self.send_retrying(|| Ok(self.client.get(&url).timeout(REQUEST_TIMEOUT)))
     }
 
+    /// GET a path that only responds to an XHR request (some admin config
+    /// controllers, e.g. Upcoming Changes, reject a plain browser/API GET).
+    pub(crate) fn get_xhr(&self, path: &str) -> Result<Response> {
+        let url = format!("{}{}", self.baseurl, path);
+        self.send_retrying(|| {
+            Ok(self
+                .client
+                .get(&url)
+                .header("X-Requested-With", "XMLHttpRequest")
+                .timeout(REQUEST_TIMEOUT))
+        })
+    }
+
     pub(crate) fn post(&self, path: &str) -> Result<reqwest::blocking::RequestBuilder> {
         let url = format!("{}{}", self.baseurl, path);
         Ok(self.client.post(url).timeout(REQUEST_TIMEOUT))

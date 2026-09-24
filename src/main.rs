@@ -1568,6 +1568,22 @@ fn main() -> Result<()> {
             } => commands::board::board_pull(&config, &discourse, board_id, &local_path, force),
         },
 
+        Commands::UpcomingChange { command } => match command {
+            UpcomingChangeCommand::List { discourse, format } => {
+                commands::upcoming_change::upcoming_change_list(&config, &discourse, format)
+            }
+            UpcomingChangeCommand::Show {
+                discourse,
+                setting_name,
+                format,
+            } => commands::upcoming_change::upcoming_change_show(
+                &config,
+                &discourse,
+                &setting_name,
+                format,
+            ),
+        },
+
         Commands::Upload {
             discourse,
             file,
