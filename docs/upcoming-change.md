@@ -4,7 +4,7 @@ List and inspect Discourse's hidden Upcoming Changes - features gated behind
 `/admin/config/upcoming-changes.json` rather than the ordinary site-settings
 catalogue, so `dsc setting get` cannot see them. This phase is read-only;
 explicit `enable`/`disable` and `dsc setting upload` are a later phase. See
-[spec/commands/upcoming-changes-and-setting-upload.md](../spec/commands/upcoming-changes-and-setting-upload.md)
+[the implementation spec](https://github.com/koloki-co/dsc/blob/main/spec/commands/upcoming-changes-and-setting-upload.md)
 for the full design and the driver (core Discourse's `enable_generated_llms_txt`).
 
 The visible alias `upcoming` works everywhere `upcoming-change` does.
