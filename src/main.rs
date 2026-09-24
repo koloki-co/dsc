@@ -1529,6 +1529,9 @@ fn main() -> Result<()> {
             ExplorerCommand::Run {
                 discourse,
                 query_id,
+                query_name,
+                all,
+                tags,
                 params,
                 params_file,
                 csv,
@@ -1537,8 +1540,13 @@ fn main() -> Result<()> {
                 format,
             } => commands::explorer::explorer_run(
                 &config,
-                &discourse,
-                query_id,
+                commands::explorer::ExplorerRunTarget {
+                    discourse: discourse.as_deref(),
+                    all,
+                    tags: tags.as_deref(),
+                    query_id,
+                    query_name: query_name.as_deref(),
+                },
                 commands::explorer::ExplorerRunOptions {
                     params: params.as_deref(),
                     params_file: params_file.as_deref(),

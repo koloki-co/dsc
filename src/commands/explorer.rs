@@ -7,10 +7,14 @@ use crate::api::{
     ExplorerRunResult,
 };
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
-use crate::config::Config;
+use crate::commands::common::{
+    emit_result, ensure_api_credentials, fleet_worker_count, run_fleet, select_discourse,
+    selected_discourses,
+};
+use crate::config::{Config, DiscourseConfig};
 use crate::utils::{atomic_write_private, create_atomic_output};
 use anyhow::{Context, Result, anyhow};
+use serde::Serialize;
 use serde_json::{Map, Value};
 use std::fs;
 use std::path::Path;
@@ -31,6 +35,15 @@ pub struct ExplorerRunOptions<'a> {
     pub explain: bool,
     pub limit: Option<u32>,
     pub format: ListFormat,
+}
+
+/// Forum and saved-query selection for Data Explorer execution.
+pub struct ExplorerRunTarget<'a> {
+    pub discourse: Option<&'a str>,
+    pub all: bool,
+    pub tags: Option<&'a str>,
+    pub query_id: Option<i64>,
+    pub query_name: Option<&'a str>,
 }
 
 /// List all accessible saved Data Explorer queries.
@@ -84,8 +97,7 @@ pub fn explorer_show(
 /// Run one saved Data Explorer query, rendering JSON/YAML/text or writing CSV.
 pub fn explorer_run(
     config: &Config,
-    discourse_name: &str,
-    query_id: i64,
+    target: ExplorerRunTarget<'_>,
     options: ExplorerRunOptions<'_>,
     dry_run: bool,
 ) -> Result<()> {
@@ -93,7 +105,28 @@ pub fn explorer_run(
     if options.limit == Some(0) {
         return Err(anyhow!("--limit must be greater than zero"));
     }
+    if query_name_is_empty(target.query_name) {
+        return Err(anyhow!("--query-name must not be empty"));
+    }
 
+    let fleet = target.all || target.tags.is_some();
+    if fleet {
+        let query_name = target.query_name.ok_or_else(|| {
+            anyhow!(
+                "fleet Data Explorer execution requires --query-name; query IDs are forum-local"
+            )
+        })?;
+        if options.csv.is_some() {
+            return Err(anyhow!(
+                "--csv is not supported with --all or --tags; use structured output until fleet destination semantics are defined"
+            ));
+        }
+        return explorer_run_fleet(config, target.tags, query_name, &params, &options, dry_run);
+    }
+
+    let discourse_name = target
+        .discourse
+        .ok_or_else(|| anyhow!("a discourse name is required"))?;
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
@@ -106,10 +139,11 @@ pub fn explorer_run(
             Some(path) => format!("CSV file {}", path.display()),
             None => "stdout".to_string(),
         };
+        let query_label = query_label(target.query_id, target.query_name)?;
         println!(
             "[dry-run] {}: would run Data Explorer query {} ({} parameter{}) writing to {}",
             discourse.name,
-            query_id,
+            query_label,
             params.len(),
             if params.len() == 1 { "" } else { "s" },
             destination
@@ -125,6 +159,8 @@ pub fn explorer_run(
         }
         return Ok(());
     }
+
+    let query_id = resolve_query_id(&client, target.query_id, target.query_name)?;
 
     if let Some(path) = options.csv {
         let mut output = create_atomic_output(path, false, true)?;
@@ -150,6 +186,196 @@ pub fn explorer_run(
         ListFormat::Yaml => println!("{}", serde_yaml::to_string(&result)?),
     }
     Ok(())
+}
+
+fn explorer_run_fleet(
+    config: &Config,
+    tags: Option<&str>,
+    query_name: &str,
+    params: &Map<String, Value>,
+    options: &ExplorerRunOptions<'_>,
+    dry_run: bool,
+) -> Result<()> {
+    let discourses = selected_discourses(config, None, tags)?;
+    if discourses.is_empty() {
+        return Err(if tags.is_some() {
+            anyhow!("no discourses configured matching the given tags")
+        } else {
+            anyhow!("no discourses configured")
+        });
+    }
+
+    if dry_run {
+        for discourse in discourses {
+            println!(
+                "[dry-run] {}: would resolve and run exact Data Explorer query name {:?} ({} parameter{}) writing to stdout",
+                discourse.name,
+                query_name,
+                params.len(),
+                if params.len() == 1 { "" } else { "s" },
+            );
+        }
+        if !params.is_empty() {
+            println!("  params: {}", serde_json::to_string(params)?);
+        }
+        if let Some(limit) = options.limit {
+            println!("  limit: {limit}");
+        }
+        if options.explain {
+            println!("  explain: requested");
+        }
+        return Ok(());
+    }
+
+    let query_name = query_name.to_string();
+    let params = params.clone();
+    let explain = options.explain;
+    let limit = options.limit;
+    let results: Vec<FleetExplorerRunResult> = run_fleet(
+        &discourses,
+        fleet_worker_count(None, discourses.len(), 8, false),
+        |discourse| run_named_query_one(discourse, &query_name, &params, explain, limit),
+        |result| {
+            if let FleetExplorerRunResult::Failure { forum, error, .. } = result {
+                eprintln!("{forum}: Data Explorer query failed - {error}");
+            }
+        },
+    );
+
+    let failed = results
+        .iter()
+        .filter(|result| matches!(result, FleetExplorerRunResult::Failure { .. }))
+        .count();
+    let text = render_fleet_results(&results);
+    emit_result(options.format, &results, &text)?;
+
+    if failed > 0 {
+        return Err(anyhow!(
+            "Data Explorer query failed on {failed} of {} forum(s)",
+            discourses.len()
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum FleetExplorerRunResult {
+    Success {
+        forum: String,
+        query_id: i64,
+        query_name: String,
+        result: ExplorerRunResult,
+    },
+    Failure {
+        forum: String,
+        query_name: String,
+        error: String,
+    },
+}
+
+fn run_named_query_one(
+    discourse: &DiscourseConfig,
+    query_name: &str,
+    params: &Map<String, Value>,
+    explain: bool,
+    limit: Option<u32>,
+) -> FleetExplorerRunResult {
+    let result = (|| {
+        ensure_api_credentials(discourse)?;
+        let client = DiscourseClient::new(discourse)?;
+        let query_id = resolve_exact_query_name(&client, query_name)?;
+        let result = client.run_explorer_query(query_id, params, explain, limit)?;
+        Ok::<_, anyhow::Error>((query_id, result))
+    })();
+
+    match result {
+        Ok((query_id, result)) => FleetExplorerRunResult::Success {
+            forum: discourse.name.clone(),
+            query_id,
+            query_name: query_name.to_string(),
+            result,
+        },
+        Err(error) => FleetExplorerRunResult::Failure {
+            forum: discourse.name.clone(),
+            query_name: query_name.to_string(),
+            error: error.to_string(),
+        },
+    }
+}
+
+fn query_name_is_empty(query_name: Option<&str>) -> bool {
+    query_name.is_some_and(str::is_empty)
+}
+
+fn resolve_query_id(
+    client: &DiscourseClient,
+    query_id: Option<i64>,
+    query_name: Option<&str>,
+) -> Result<i64> {
+    match (query_id, query_name) {
+        (Some(query_id), None) => Ok(query_id),
+        (None, Some(query_name)) => resolve_exact_query_name(client, query_name),
+        _ => Err(anyhow!("use exactly one of a query ID or --query-name")),
+    }
+}
+
+fn resolve_exact_query_name(client: &DiscourseClient, query_name: &str) -> Result<i64> {
+    let catalogue = client.list_explorer_queries(Some(query_name), Some("name"), true)?;
+    let matches: Vec<_> = catalogue
+        .queries
+        .iter()
+        .filter(|query| query.name == query_name)
+        .collect();
+    match matches.as_slice() {
+        [query] => Ok(query.id),
+        [] => Err(anyhow!(
+            "Data Explorer query not found by exact name: {query_name}"
+        )),
+        matches => Err(anyhow!(
+            "multiple Data Explorer queries have the exact name {:?}: IDs {}",
+            query_name,
+            matches
+                .iter()
+                .map(|query| query.id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+fn query_label(query_id: Option<i64>, query_name: Option<&str>) -> Result<String> {
+    match (query_id, query_name) {
+        (Some(query_id), None) => Ok(query_id.to_string()),
+        (None, Some(query_name)) => Ok(format!("named {:?}", query_name)),
+        _ => Err(anyhow!("use exactly one of a query ID or --query-name")),
+    }
+}
+
+fn render_fleet_results(results: &[FleetExplorerRunResult]) -> String {
+    let mut output = String::new();
+    for (index, result) in results.iter().enumerate() {
+        if index > 0 {
+            output.push('\n');
+        }
+        match result {
+            FleetExplorerRunResult::Success {
+                forum,
+                query_id,
+                query_name,
+                result,
+            } => {
+                output.push_str(&format!(
+                    "== {forum} ==\nquery: {query_name} ({query_id})\n"
+                ));
+                output.push_str(&render_run_result(result));
+            }
+            FleetExplorerRunResult::Failure { forum, error, .. } => {
+                output.push_str(&format!("== {forum} ==\nerror: {error}\n"));
+            }
+        }
+    }
+    output
 }
 
 fn load_params(inline: Option<&str>, file: Option<&Path>) -> Result<Map<String, Value>> {
@@ -292,6 +518,16 @@ fn print_param_info(params: &[ExplorerParamInfo]) {
 }
 
 fn print_run_result(result: &ExplorerRunResult) {
+    print!("{}", render_run_result(result));
+    let duration = result
+        .duration
+        .map(|milliseconds| format!(", {milliseconds:.1} ms"))
+        .unwrap_or_default();
+    eprintln!("{} row(s){duration}", result.rows.len());
+}
+
+fn render_run_result(result: &ExplorerRunResult) -> String {
+    let mut output = String::new();
     let column_count = result
         .rows
         .iter()
@@ -300,7 +536,7 @@ fn print_run_result(result: &ExplorerRunResult) {
         .unwrap_or(0)
         .max(result.columns.len());
     if column_count == 0 {
-        println!("No rows returned.");
+        output.push_str("No rows returned.\n");
     } else {
         let headers: Vec<String> = (0..column_count)
             .map(|index| {
@@ -330,40 +566,37 @@ fn print_run_result(result: &ExplorerRunResult) {
                     .unwrap_or(0)
             })
             .collect();
-        print_table_row(&headers, &widths);
-        println!(
-            "{}",
+        render_table_row(&mut output, &headers, &widths);
+        output.push_str(&format!(
+            "{}\n",
             widths
                 .iter()
                 .map(|width| "-".repeat(*width))
                 .collect::<Vec<_>>()
                 .join("  ")
-        );
+        ));
         for row in &rendered_rows {
-            print_table_row(row, &widths);
+            render_table_row(&mut output, row, &widths);
         }
     }
-    let duration = result
-        .duration
-        .map(|milliseconds| format!(", {milliseconds:.1} ms"))
-        .unwrap_or_default();
-    eprintln!("{} row(s){duration}", result.rows.len());
     if let Some(explain) = &result.explain {
-        println!("\nexplain:");
-        println!("{explain}");
+        output.push_str("\nexplain:\n");
+        output.push_str(explain);
+        output.push('\n');
     }
+    output
 }
 
-fn print_table_row(cells: &[String], widths: &[usize]) {
-    println!(
-        "{}",
+fn render_table_row(output: &mut String, cells: &[String], widths: &[usize]) {
+    output.push_str(&format!(
+        "{}\n",
         cells
             .iter()
             .enumerate()
             .map(|(index, cell)| format!("{cell:<width$}", width = widths[index]))
             .collect::<Vec<_>>()
             .join("  ")
-    );
+    ));
 }
 
 fn display_value(value: &Value) -> String {

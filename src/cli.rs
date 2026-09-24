@@ -877,11 +877,30 @@ pub enum ExplorerCommand {
     },
     /// Run one saved, administrator-controlled Data Explorer query.
     Run {
-        /// Discourse name.
-        discourse: String,
-        /// Saved query ID. Negative built-in query IDs are valid.
-        #[arg(allow_negative_numbers = true)]
-        query_id: i64,
+        /// Discourse name. Omit with --all or --tags.
+        #[arg(required_unless_present_any = ["all", "tags"], conflicts_with_all = ["all", "tags"])]
+        discourse: Option<String>,
+        /// Saved query ID. Negative built-in query IDs are valid. Forum-local only.
+        #[arg(
+            allow_negative_numbers = true,
+            required_unless_present = "query_name",
+            conflicts_with = "query_name"
+        )]
+        query_id: Option<i64>,
+        /// Resolve and run this exact saved-query name on each selected forum.
+        #[arg(long, short = 'q', required_unless_present = "query_id")]
+        query_name: Option<String>,
+        /// Run the exact query name on every configured forum.
+        #[arg(long, requires = "query_name", conflicts_with = "tags")]
+        all: bool,
+        /// Run the exact query name on forums matching these tags.
+        #[arg(
+            long,
+            value_name = "tag1,tag2",
+            requires = "query_name",
+            conflicts_with = "all"
+        )]
+        tags: Option<String>,
         /// Query parameters as one JSON object.
         #[arg(long, short = 'p', conflicts_with = "params_file")]
         params: Option<String>,
@@ -900,7 +919,7 @@ pub enum ExplorerCommand {
             short = 'c',
             value_parser = tilde_pathbuf,
             value_hint = ValueHint::FilePath,
-            conflicts_with_all = ["format", "explain"]
+            conflicts_with_all = ["format", "explain", "all", "tags"]
         )]
         csv: Option<PathBuf>,
         /// Include PostgreSQL's execution plan.
@@ -3368,9 +3387,59 @@ mod tests {
         else {
             panic!("expected explorer run command");
         };
-        assert_eq!(query_id, -4);
+        assert_eq!(query_id, Some(-4));
         assert_eq!(params_file, Some(PathBuf::from("params.yaml")));
         assert_eq!(limit, Some(100));
+    }
+
+    #[test]
+    fn explorer_accepts_exact_query_name_for_fleet_run() {
+        let cli = Cli::try_parse_from([
+            "dsc",
+            "explorer",
+            "run",
+            "--all",
+            "--query-name",
+            "Email Reachability Snapshot",
+            "--format",
+            "json",
+        ])
+        .expect("fleet Data Explorer run parses");
+        let Commands::Explorer {
+            command:
+                ExplorerCommand::Run {
+                    discourse,
+                    query_id,
+                    query_name,
+                    all,
+                    ..
+                },
+        } = cli.command
+        else {
+            panic!("expected explorer run command");
+        };
+        assert!(discourse.is_none());
+        assert!(query_id.is_none());
+        assert_eq!(query_name.as_deref(), Some("Email Reachability Snapshot"));
+        assert!(all);
+    }
+
+    #[test]
+    fn explorer_rejects_fleet_query_ids_and_csv() {
+        assert!(Cli::try_parse_from(["dsc", "explorer", "run", "--all", "42"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "dsc",
+                "explorer",
+                "run",
+                "--all",
+                "--query-name",
+                "Email Reachability Snapshot",
+                "--csv",
+                "results.csv",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

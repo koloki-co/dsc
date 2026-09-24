@@ -47,6 +47,10 @@ dsc explorer run <discourse> <query-id>
 dsc explorer run <discourse> <query-id>
                  [--params <json> | --params-file <json-or-yaml-file>]
                  [--limit <n>] --csv <file>
+
+dsc explorer run <discourse> --query-name <exact-name> [options]
+dsc explorer run --all --query-name <exact-name> [options]
+dsc explorer run --tags <tag1,tag2> --query-name <exact-name> [options]
 ```
 
 Parameters must form one JSON object. Inline values use JSON; parameter files accept JSON or YAML. Discourse remains responsible for validating each saved query's declared parameter types, defaults, nullability, and entity lookups.
@@ -56,11 +60,16 @@ dsc explorer run myforum 42 --params '{"days":30,"category":"support"}'
 dsc explorer run myforum 42 --params-file notification-params.yaml --format json
 dsc explorer run myforum 42 --limit 100 --explain
 dsc explorer run myforum 42 --params-file notification-params.yaml --csv results.csv
+dsc explorer run myforum --query-name "Email Reachability Snapshot" --format json
+dsc explorer run --all --query-name "Email Reachability Snapshot" --format json
+dsc explorer run --tags production --query-name "Email Delivery Outcomes" --params '{"days":90}' --format json
 ```
 
-`--limit` must be positive and cannot bypass Data Explorer's server-side maximum. `--csv` writes the server-generated CSV atomically with owner-only permissions, refuses to overwrite an existing file, and cannot be combined with `--format` or `--explain`.
+`--query-name` resolves a complete, case-sensitive saved-query name independently on each selected forum. Substring matches are ignored, duplicate exact names are refused with their IDs, and one missing or unavailable query does not suppress other fleet results. Fleet execution uses bounded concurrency, preserves configuration order in JSON/YAML, emits one result or error per forum, and exits non-zero after rendering if any forum failed. Numeric query IDs are forum-local and cannot be used with `--all` or `--tags`.
 
-`run` honours `-n` / `--dry-run`: it prints the query id, parameters, limit, and destination, then exits without contacting the server. The saved SQL itself is read-only, but Discourse records `last_run_at` against the query and charges the API rate limit for every run, so a dry run must not send the request.
+`--limit` must be positive and cannot bypass Data Explorer's server-side maximum. `--csv` writes the server-generated CSV atomically with owner-only permissions, refuses to overwrite an existing file, and cannot be combined with `--format`, `--explain`, `--all`, or `--tags`. Fleet CSV is deferred until directory and filename semantics are defined.
+
+`run` honours `-n` / `--dry-run`: it prints the selected forums, query ID or unresolved exact name, parameters, limit, and destination, then exits without contacting the server. The saved SQL itself is read-only, but Discourse records `last_run_at` against the query and charges the API rate limit for every run, so a dry run must not send the request.
 
 Text output is a stable table. JSON and YAML preserve cell types and server metadata, including relations and execution-plan fields that the current plugin may add.
 
