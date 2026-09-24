@@ -1040,6 +1040,8 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "theme show",
     "topic list",
     "topic pull",
+    "upcoming-change list",
+    "upcoming-change show",
     "update log",
     "user activity",
     "user find",

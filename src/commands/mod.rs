@@ -39,6 +39,7 @@ pub(crate) mod ssh;
 pub mod tag;
 pub mod theme;
 pub mod topic;
+pub mod upcoming_change;
 pub mod update;
 pub mod update_log;
 pub mod upload;

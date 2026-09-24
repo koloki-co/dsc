@@ -1,6 +1,6 @@
 # `dsc upcoming-change` and `dsc setting upload`
 
-> **Status: proposed for R59.** Discovery completed on 3 September 2026 against current Discourse source and a 16-forum fleet audit, then revalidated on 6 September 2026 against Discourse commit [`a6ade3e`](https://github.com/discourse/discourse/commit/a6ade3e9915f427d115f082a2ddbc6c208c5f3c1). No implementation exists yet.
+> **Status: R59 Phase 1 implemented on `main`.** Discovery completed on 3 September 2026 against current Discourse source and a 16-forum fleet audit, then revalidated on 6 September 2026 against Discourse commit [`a6ade3e`](https://github.com/discourse/discourse/commit/a6ade3e9915f427d115f082a2ddbc6c208c5f3c1). `dsc upcoming-change list/show` (read-only) is implemented against fixture/unit tests; Phases 2-4 (enable/disable, `setting upload`, live compatibility capture) remain.
 
 ## Problem
 
@@ -249,7 +249,7 @@ Do not add this upload mutation to the standard `s/test-live` suite until a prea
 
 | Phase | Deliverable | Effort |
 | --- | --- | --- |
-| 1 | Upcoming Change list/show and typed API response | Small |
+| 1 | Upcoming Change list/show and typed API response | Small - **implemented on `main`** |
 | 2 | Explicit enable/disable with dry-run and post-verification | Small |
 | 3 | `setting upload` validated upload, binding, output, and failure recovery | Medium |
 | 4 | Resettable-forum compatibility capture and documentation; automate only after cleanup is prearmable | Small |
