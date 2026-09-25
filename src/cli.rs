@@ -563,8 +563,17 @@ pub enum Commands {
     },
     /// Upload a file. Prints the resulting upload:// short URL by default.
     #[command(visible_alias = "u")]
-    #[command(after_help = "Examples:
-  dsc upload myforum ./diagram.png")]
+    #[command(
+        after_help = "Discourse converts a PNG larger than 1280x720 to JPEG server-side
+when the JPEG would be smaller (png_to_jpg_quality site setting), which
+silently drops transparency. Text mode flags it when the returned
+extension differs from the local file's; `--upload-type custom_emoji`
+is the known conversion-exempt path.
+
+Examples:
+  dsc upload myforum ./diagram.png
+  dsc upload myforum ./logo.png --upload-type custom_emoji   # skip PNG->JPEG conversion"
+    )]
     Upload {
         /// Discourse name.
         discourse: String,
@@ -574,6 +583,8 @@ pub enum Commands {
         /// Discourse upload context. Default `composer` is correct for
         /// embedding in posts; other values include `avatar`,
         /// `profile_background`, `card_background`, `custom_emoji`.
+        /// Discourse may silently convert a large PNG to JPEG under
+        /// `composer` — `custom_emoji` is a known exempt path.
         #[arg(long, short = 't', default_value = "composer")]
         upload_type: String,
         /// Output format. Text mode prints just the short URL.
