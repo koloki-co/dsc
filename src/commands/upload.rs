@@ -28,12 +28,9 @@ pub fn upload(
 
     match format {
         ListFormat::Text => {
-            // Discourse silently converts large PNGs to JPEG server-side
-            // (`png_to_jpg_quality` setting) and loses transparency in the
-            // process. Flag it here since the short URL alone hides the
-            // extension change; JSON/YAML output already carries
-            // `original_filename` for callers who parse it themselves.
-            if let Some(hint) = conversion_hint(file_path, &info.original_filename) {
+            // The short URL alone hides server-side filename changes;
+            // JSON/YAML output already carries `original_filename`.
+            if let Some(hint) = extension_change_hint(file_path, &info.original_filename) {
                 eprintln!("{hint}");
             }
             // Default text output prints just the short URL — that's what
@@ -55,29 +52,33 @@ pub fn upload(
     Ok(())
 }
 
-/// A note for when the extension Discourse returned differs from the local
-/// file's extension — most commonly a PNG converted to JPEG server-side
-/// (`UploadCreator`, `png_to_jpg_quality` site setting), which drops
-/// transparency. `None` when there's nothing to flag (no extension on
-/// either side, or they match case-insensitively).
-fn conversion_hint(local_path: &Path, returned_filename: &str) -> Option<String> {
-    let local_ext = extension_lower(local_path.file_name()?.to_str()?)?;
-    let returned_ext = extension_lower(returned_filename)?;
+/// A note when the extension returned by Discourse differs from the local
+/// file's extension. `None` when either extension is absent or they match.
+fn extension_change_hint(local_path: &Path, returned_filename: &str) -> Option<String> {
+    let local_ext = extension_lower(local_path)?;
+    let returned_ext = extension_lower(Path::new(returned_filename))?;
     if local_ext == returned_ext {
         return None;
     }
-    Some(format!(
-        "note: Discourse converted this upload from .{local_ext} to .{returned_ext} \
-         (returned as \"{returned_filename}\"); if this was a transparent PNG the \
-         transparency is now lost. Use --upload-type custom_emoji to skip conversion, \
-         or set png_to_jpg_quality to 100 to disable it site-wide."
-    ))
+
+    let change = format!(
+        "note: Discourse returned this upload as \"{returned_filename}\" \
+         (.{returned_ext} instead of .{local_ext})."
+    );
+    if local_ext == "png" && matches!(returned_ext.as_str(), "jpg" | "jpeg") {
+        return Some(format!(
+            "{change} PNG-to-JPEG conversion loses transparency; use --upload-type \
+             custom_emoji to skip conversion, or set png_to_jpg_quality to 100 to \
+             disable it site-wide."
+        ));
+    }
+    Some(change)
 }
 
-fn extension_lower(filename: &str) -> Option<String> {
-    filename
-        .rsplit_once('.')
-        .map(|(_, ext)| ext.to_ascii_lowercase())
+fn extension_lower(path: &Path) -> Option<String> {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
         .filter(|ext| !ext.is_empty())
 }
 
@@ -87,25 +88,39 @@ mod tests {
 
     #[test]
     fn flags_a_png_to_jpeg_conversion() {
-        let hint = conversion_hint(Path::new("logo.png"), "logo.jpeg").unwrap();
-        assert!(hint.contains(".png to .jpeg"));
-        assert!(hint.contains("logo.jpeg"));
+        for returned in ["logo.jpg", "logo.jpeg"] {
+            let hint = extension_change_hint(Path::new("logo.png"), returned).unwrap();
+            assert!(hint.contains(returned));
+            assert!(hint.contains("PNG-to-JPEG conversion loses transparency"));
+            assert!(hint.contains("png_to_jpg_quality"));
+        }
+    }
+
+    #[test]
+    fn describes_other_extension_changes_without_claiming_conversion() {
+        let hint = extension_change_hint(Path::new("photo.jpg"), "photo.jpeg").unwrap();
+        assert_eq!(
+            hint,
+            "note: Discourse returned this upload as \"photo.jpeg\" \
+             (.jpeg instead of .jpg)."
+        );
     }
 
     #[test]
     fn is_case_insensitive_and_silent_when_extensions_match() {
-        assert!(conversion_hint(Path::new("logo.PNG"), "logo.png").is_none());
+        assert!(extension_change_hint(Path::new("logo.PNG"), "logo.png").is_none());
     }
 
     #[test]
     fn is_silent_when_no_conversion_happened() {
-        assert!(conversion_hint(Path::new("diagram.png"), "diagram.png").is_none());
+        assert!(extension_change_hint(Path::new("diagram.png"), "diagram.png").is_none());
     }
 
     #[test]
     fn handles_missing_extensions_without_panicking() {
-        assert!(conversion_hint(Path::new("README"), "README").is_none());
-        assert!(conversion_hint(Path::new("README"), "README.png").is_none());
-        assert!(conversion_hint(Path::new("logo.png"), "README").is_none());
+        assert!(extension_change_hint(Path::new("README"), "README").is_none());
+        assert!(extension_change_hint(Path::new("README"), "README.png").is_none());
+        assert!(extension_change_hint(Path::new("logo.png"), "README").is_none());
+        assert!(extension_change_hint(Path::new(".png"), ".jpeg").is_none());
     }
 }

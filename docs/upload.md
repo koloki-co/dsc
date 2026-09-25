@@ -17,7 +17,7 @@ echo "Posted ![diagram]($url)" | dsc topic reply myforum 1525
 
 Use `--format json` for the full upload payload (id, full URL, filesize, dimensions if applicable).
 
-## PNG → JPEG conversion
+## PNG-to-JPEG conversion
 
 Discourse's `UploadCreator` converts a PNG to JPEG server-side when the image exceeds 1280x720 pixels and the resulting JPEG would be smaller, controlled by the `png_to_jpg_quality` site setting (set it to `100` to disable conversion site-wide). The converted file comes back with a `.jpeg` extension and, if the source PNG had a transparent background, that transparency is gone.
 
@@ -25,9 +25,7 @@ The uploaded file's extension can therefore differ from what you passed in. Text
 
 ```text
 $ dsc upload myforum ./logo.png
-note: Discourse converted this upload from .png to .jpeg (returned as "logo.jpeg"); if this was a
-transparent PNG the transparency is now lost. Use --upload-type custom_emoji to skip conversion, or
-set png_to_jpg_quality to 100 to disable it site-wide.
+note: Discourse returned this upload as "logo.jpeg" (.jpeg instead of .png). PNG-to-JPEG conversion loses transparency; use --upload-type custom_emoji to skip conversion, or set png_to_jpg_quality to 100 to disable it site-wide.
 upload://a1B2c3D4e5F6.jpeg
 ```
 
