@@ -49,6 +49,7 @@ s/install-hooks # optional but encouraged: enables the tracked pre-commit lint h
 - Keep PRs focused on one change.
 - Run `s/test-fmt-clippy` before pushing; it mirrors CI's formatting, strict Clippy, and full test gate.
 - Reference the issue or spec in the PR description.
+- The PR template (`.github/pull_request_template.md`) includes a checklist item for new command surfaces: does it support every lifecycle verb the admin API exposes (create/read/update/delete/list)? A missing verb either has a documented reason (the API doesn't expose it) or a linked roadmap entry - see [spec/roadmap.md](spec/roadmap.md) R61.
 
 ## Project layout
 
