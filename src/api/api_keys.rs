@@ -88,7 +88,7 @@ impl DiscourseClient {
 
     /// Soft-revoke: sets `revoked_at`, reversible with [`Self::undo_revoke_api_key`].
     pub fn revoke_api_key(&self, key_id: u64) -> Result<()> {
-        let path = format!("/admin/api/keys/{}/revoke.json", key_id);
+        let path = format!("/admin/api/keys/{key_id}/revoke.json");
         let response = self.send_retrying(|| self.post(&path))?;
         let status = response.status();
         if !status.is_success() {
@@ -102,7 +102,7 @@ impl DiscourseClient {
 
     /// Clears `revoked_at`, undoing a prior [`Self::revoke_api_key`].
     pub fn undo_revoke_api_key(&self, key_id: u64) -> Result<()> {
-        let path = format!("/admin/api/keys/{}/undo-revoke.json", key_id);
+        let path = format!("/admin/api/keys/{key_id}/undo-revoke.json");
         let response = self.send_retrying(|| self.post(&path))?;
         let status = response.status();
         if !status.is_success() {
@@ -117,7 +117,7 @@ impl DiscourseClient {
     /// Permanently destroys the key record. Distinct from [`Self::revoke_api_key`],
     /// which is reversible.
     pub fn delete_api_key(&self, key_id: u64) -> Result<()> {
-        let path = format!("/admin/api/keys/{}.json", key_id);
+        let path = format!("/admin/api/keys/{key_id}.json");
         let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
         if !status.is_success() {

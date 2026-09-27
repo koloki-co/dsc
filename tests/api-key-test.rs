@@ -66,8 +66,8 @@ fn config_for(url: &str, dir: &TempDir) -> std::path::PathBuf {
 }
 
 // Regression test: `dsc api-key revoke` used to send DELETE to the plain
-// `/admin/api/keys/:id.json` endpoint — Discourse's *permanent* destroy
-// route — instead of the reversible `POST .../revoke` endpoint, silently
+// `/admin/api/keys/:id.json` endpoint - Discourse's *permanent* destroy
+// route - instead of the reversible `POST .../revoke` endpoint, silently
 // destroying the key record whenever a user asked only to revoke it.
 #[test]
 fn api_key_revoke_uses_reversible_revoke_endpoint() {
@@ -89,7 +89,7 @@ fn api_key_revoke_uses_reversible_revoke_endpoint() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(String::from_utf8_lossy(&output.stdout).contains("Revoked api key id:42"));
-    let seen = requests.lock().unwrap();
+    let seen = requests.lock().expect("request log");
     assert!(seen.contains(&"POST /admin/api/keys/42/revoke.json HTTP/1.1".to_string()));
     assert!(!seen.iter().any(|line| line.starts_with("DELETE ")));
 }
@@ -117,7 +117,7 @@ fn api_key_undo_revoke_reactivates_the_key() {
     assert!(
         requests
             .lock()
-            .unwrap()
+            .expect("request log")
             .contains(&"POST /admin/api/keys/42/undo-revoke.json HTTP/1.1".to_string())
     );
 }
@@ -145,7 +145,7 @@ fn api_key_delete_permanently_removes_via_delete_verb() {
     assert!(
         requests
             .lock()
-            .unwrap()
+            .expect("request log")
             .contains(&"DELETE /admin/api/keys/42.json HTTP/1.1".to_string())
     );
 }

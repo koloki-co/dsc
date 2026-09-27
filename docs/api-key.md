@@ -51,4 +51,4 @@ Undoes a previous `revoke`, reactivating the key. Alias: `unrevoke`. Honours `--
 dsc api-key delete <discourse> <key-id>
 ```
 
-**Permanently** removes the key record via `DELETE /admin/api/keys/:id.json` — unlike `revoke`, this cannot be undone. Alias: `rm`. Honours `--dry-run`.
+**Permanently** removes the key record via `DELETE /admin/api/keys/:id.json` - unlike `revoke`, this cannot be undone. Alias: `rm`. Honours `--dry-run`.
