@@ -4,9 +4,10 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_result, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use anyhow::Result;
+use serde::Serialize;
 
 pub fn api_key_list(config: &Config, discourse_name: &str, format: ListFormat) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -104,6 +105,7 @@ pub fn api_key_revoke(
     config: &Config,
     discourse_name: &str,
     key_id: u64,
+    format: ListFormat,
     dry_run: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -119,14 +121,14 @@ pub fn api_key_revoke(
     }
 
     client.revoke_api_key(key_id)?;
-    println!("Revoked api key id:{}", key_id);
-    Ok(())
+    emit_action(format, key_id, "revoked")
 }
 
 pub fn api_key_undo_revoke(
     config: &Config,
     discourse_name: &str,
     key_id: u64,
+    format: ListFormat,
     dry_run: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -142,14 +144,14 @@ pub fn api_key_undo_revoke(
     }
 
     client.undo_revoke_api_key(key_id)?;
-    println!("Undid revoke of api key id:{}", key_id);
-    Ok(())
+    emit_action(format, key_id, "restored")
 }
 
 pub fn api_key_delete(
     config: &Config,
     discourse_name: &str,
     key_id: u64,
+    format: ListFormat,
     dry_run: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -165,6 +167,22 @@ pub fn api_key_delete(
     }
 
     client.delete_api_key(key_id)?;
-    println!("Permanently deleted api key id:{}", key_id);
-    Ok(())
+    emit_action(format, key_id, "deleted")
+}
+
+#[derive(Serialize)]
+struct ApiKeyActionResult {
+    id: u64,
+    action: &'static str,
+}
+
+fn emit_action(format: ListFormat, key_id: u64, action: &'static str) -> Result<()> {
+    let result = ApiKeyActionResult { id: key_id, action };
+    let text = match action {
+        "revoked" => format!("Revoked api key id:{key_id}"),
+        "restored" => format!("Undid revoke of api key id:{key_id}"),
+        "deleted" => format!("Permanently deleted api key id:{key_id}"),
+        _ => format!("API key id:{key_id}: {action}"),
+    };
+    emit_result(format, &result, &text)
 }

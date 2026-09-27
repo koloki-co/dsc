@@ -32,7 +32,7 @@ Scoped keys (e.g. write-only-to-topics) are not yet supported — those need to 
 ## dsc api-key revoke
 
 ```text
-dsc api-key revoke <discourse> <key-id>
+dsc api-key revoke <discourse> <key-id> [--format text|json|yaml]
 ```
 
 Revokes the key by ID (soft: sets `revoked_at`, the key stops authenticating but the record is kept). Use `dsc api-key list` to find the ID. Honours `--dry-run`. Reversible with `dsc api-key undo-revoke`.
@@ -40,7 +40,7 @@ Revokes the key by ID (soft: sets `revoked_at`, the key stops authenticating but
 ## dsc api-key undo-revoke
 
 ```text
-dsc api-key undo-revoke <discourse> <key-id>
+dsc api-key undo-revoke <discourse> <key-id> [--format text|json|yaml]
 ```
 
 Undoes a previous `revoke`, reactivating the key. Alias: `unrevoke`. Honours `--dry-run`.
@@ -48,7 +48,9 @@ Undoes a previous `revoke`, reactivating the key. Alias: `unrevoke`. Honours `--
 ## dsc api-key delete
 
 ```text
-dsc api-key delete <discourse> <key-id>
+dsc api-key delete <discourse> <key-id> [--format text|json|yaml]
 ```
 
 **Permanently** removes the key record via `DELETE /admin/api/keys/:id.json` - unlike `revoke`, this cannot be undone. Alias: `rm`. Honours `--dry-run`.
+
+All three mutation commands return an object containing `id` and `action` under JSON/YAML output. Text remains the default.

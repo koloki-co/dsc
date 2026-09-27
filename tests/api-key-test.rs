@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 struct MockResponse {
@@ -19,13 +20,32 @@ fn start_mock(
     responses: Vec<MockResponse>,
 ) -> (String, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock listener");
+    listener
+        .set_nonblocking(true)
+        .expect("configure mock listener");
     let addr = listener.local_addr().expect("mock addr");
     let requests = Arc::new(Mutex::new(Vec::new()));
     let thread_requests = Arc::clone(&requests);
     let handle = std::thread::spawn(move || {
         let mut responses = VecDeque::from(responses);
         while let Some(response) = responses.pop_front() {
-            let (stream, _) = listener.accept().expect("accept mock request");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(Instant::now() < deadline, "missing mock request");
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept mock request: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("set mock read timeout");
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("set mock write timeout");
             handle_request(stream, response, &thread_requests);
         }
     });
@@ -103,7 +123,7 @@ fn api_key_undo_revoke_reactivates_the_key() {
     let (url, requests, handle) = start_mock(responses);
     let dir = TempDir::new().expect("tempdir");
     let output = run_dsc(
-        &["api-key", "undo-revoke", "mock", "42"],
+        &["api-key", "undo-revoke", "mock", "42", "--format", "json"],
         &config_for(&url, &dir),
     );
     handle.join().expect("mock thread");
@@ -113,7 +133,12 @@ fn api_key_undo_revoke_reactivates_the_key() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stdout).contains("Undid revoke of api key id:42"));
+    let result: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("parse structured result");
+    assert_eq!(
+        result,
+        serde_json::json!({ "id": 42, "action": "restored" })
+    );
     assert!(
         requests
             .lock()
@@ -166,4 +191,23 @@ fn api_key_delete_dry_run_makes_no_request() {
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("would permanently delete api key id:42")
     );
+}
+
+#[test]
+fn api_key_mutations_reject_zero_id_before_network_access() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        "[[discourse]]\nname = \"mock\"\nbaseurl = \"http://127.0.0.1:1\"\napikey = \"key\"\napi_username = \"system\"\n",
+    );
+
+    for command in ["revoke", "undo-revoke", "delete"] {
+        let output = run_dsc(&["api-key", command, "mock", "0"], &config_path);
+        assert!(!output.status.success(), "{command} accepted key ID zero");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("0 is not in 1.."),
+            "unexpected {command} error: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
