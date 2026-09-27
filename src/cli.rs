@@ -2342,13 +2342,40 @@ pub enum ApiKeyCommand {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
-    /// Revoke an API key by ID.
-    #[command(visible_alias = "rm")]
+    /// Revoke an API key by ID. Reversible with `undo-revoke`.
     Revoke {
         /// Discourse name.
         discourse: String,
         /// API key ID (from `dsc api-key list`).
+        #[arg(value_parser = clap::value_parser!(u64).range(1..))]
         key_id: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Undo a previous revoke, reactivating the key.
+    #[command(visible_alias = "unrevoke")]
+    UndoRevoke {
+        /// Discourse name.
+        discourse: String,
+        /// API key ID (from `dsc api-key list`).
+        #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+        key_id: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Permanently delete an API key by ID. Unlike `revoke`, this cannot be undone.
+    #[command(visible_alias = "rm")]
+    Delete {
+        /// Discourse name.
+        discourse: String,
+        /// API key ID (from `dsc api-key list`).
+        #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+        key_id: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
     },
 }
 

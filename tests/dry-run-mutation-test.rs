@@ -447,6 +447,12 @@ const CASES: &[Case] = &[
     ),
     ("api-key revoke", &["api-key", "revoke", "mock", "1"], true),
     (
+        "api-key undo-revoke",
+        &["api-key", "undo-revoke", "mock", "1"],
+        true,
+    ),
+    ("api-key delete", &["api-key", "delete", "mock", "1"], true),
+    (
         "webhook create",
         &[
             "webhook",
