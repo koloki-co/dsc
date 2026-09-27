@@ -694,6 +694,12 @@ fn main() -> Result<()> {
             ApiKeyCommand::Revoke { discourse, key_id } => {
                 commands::api_key::api_key_revoke(&config, &discourse, key_id, dry_run)
             }
+            ApiKeyCommand::UndoRevoke { discourse, key_id } => {
+                commands::api_key::api_key_undo_revoke(&config, &discourse, key_id, dry_run)
+            }
+            ApiKeyCommand::Delete { discourse, key_id } => {
+                commands::api_key::api_key_delete(&config, &discourse, key_id, dry_run)
+            }
         },
 
         Commands::Webhook { command } => match command {

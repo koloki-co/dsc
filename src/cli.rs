@@ -2342,9 +2342,24 @@ pub enum ApiKeyCommand {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
-    /// Revoke an API key by ID.
-    #[command(visible_alias = "rm")]
+    /// Revoke an API key by ID. Reversible with `undo-revoke`.
     Revoke {
+        /// Discourse name.
+        discourse: String,
+        /// API key ID (from `dsc api-key list`).
+        key_id: u64,
+    },
+    /// Undo a previous revoke, reactivating the key.
+    #[command(visible_alias = "unrevoke")]
+    UndoRevoke {
+        /// Discourse name.
+        discourse: String,
+        /// API key ID (from `dsc api-key list`).
+        key_id: u64,
+    },
+    /// Permanently delete an API key by ID. Unlike `revoke`, this cannot be undone.
+    #[command(visible_alias = "rm")]
+    Delete {
         /// Discourse name.
         discourse: String,
         /// API key ID (from `dsc api-key list`).

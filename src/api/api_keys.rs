@@ -86,7 +86,37 @@ impl DiscourseClient {
         Ok(created)
     }
 
+    /// Soft-revoke: sets `revoked_at`, reversible with [`Self::undo_revoke_api_key`].
     pub fn revoke_api_key(&self, key_id: u64) -> Result<()> {
+        let path = format!("/admin/api/keys/{}/revoke.json", key_id);
+        let response = self.send_retrying(|| self.post(&path))?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response
+                .text_capped()
+                .unwrap_or_else(|_| "<failed to read response body>".to_string());
+            return Err(http_error("api key revoke request", status, &text));
+        }
+        Ok(())
+    }
+
+    /// Clears `revoked_at`, undoing a prior [`Self::revoke_api_key`].
+    pub fn undo_revoke_api_key(&self, key_id: u64) -> Result<()> {
+        let path = format!("/admin/api/keys/{}/undo-revoke.json", key_id);
+        let response = self.send_retrying(|| self.post(&path))?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response
+                .text_capped()
+                .unwrap_or_else(|_| "<failed to read response body>".to_string());
+            return Err(http_error("api key undo-revoke request", status, &text));
+        }
+        Ok(())
+    }
+
+    /// Permanently destroys the key record. Distinct from [`Self::revoke_api_key`],
+    /// which is reversible.
+    pub fn delete_api_key(&self, key_id: u64) -> Result<()> {
         let path = format!("/admin/api/keys/{}.json", key_id);
         let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
@@ -94,7 +124,7 @@ impl DiscourseClient {
             let text = response
                 .text_capped()
                 .unwrap_or_else(|_| "<failed to read response body>".to_string());
-            return Err(http_error("api key revoke request", status, &text));
+            return Err(http_error("api key delete request", status, &text));
         }
         Ok(())
     }

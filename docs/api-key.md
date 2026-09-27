@@ -35,4 +35,20 @@ Scoped keys (e.g. write-only-to-topics) are not yet supported — those need to 
 dsc api-key revoke <discourse> <key-id>
 ```
 
-Revokes the key by ID. Use `dsc api-key list` to find the ID. Honours `--dry-run`.
+Revokes the key by ID (soft: sets `revoked_at`, the key stops authenticating but the record is kept). Use `dsc api-key list` to find the ID. Honours `--dry-run`. Reversible with `dsc api-key undo-revoke`.
+
+## dsc api-key undo-revoke
+
+```text
+dsc api-key undo-revoke <discourse> <key-id>
+```
+
+Undoes a previous `revoke`, reactivating the key. Alias: `unrevoke`. Honours `--dry-run`.
+
+## dsc api-key delete
+
+```text
+dsc api-key delete <discourse> <key-id>
+```
+
+**Permanently** removes the key record via `DELETE /admin/api/keys/:id.json` — unlike `revoke`, this cannot be undone. Alias: `rm`. Honours `--dry-run`.

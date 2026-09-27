@@ -122,3 +122,49 @@ pub fn api_key_revoke(
     println!("Revoked api key id:{}", key_id);
     Ok(())
 }
+
+pub fn api_key_undo_revoke(
+    config: &Config,
+    discourse_name: &str,
+    key_id: u64,
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+
+    if dry_run {
+        println!(
+            "[dry-run] {}: would undo revoke of api key id:{}",
+            discourse.name, key_id
+        );
+        return Ok(());
+    }
+
+    client.undo_revoke_api_key(key_id)?;
+    println!("Undid revoke of api key id:{}", key_id);
+    Ok(())
+}
+
+pub fn api_key_delete(
+    config: &Config,
+    discourse_name: &str,
+    key_id: u64,
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+
+    if dry_run {
+        println!(
+            "[dry-run] {}: would permanently delete api key id:{}",
+            discourse.name, key_id
+        );
+        return Ok(());
+    }
+
+    client.delete_api_key(key_id)?;
+    println!("Permanently deleted api key id:{}", key_id);
+    Ok(())
+}
