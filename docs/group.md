@@ -43,10 +43,10 @@ Copies the specified group. If `--target` is omitted, copies within the same Dis
 ## dsc group destroy
 
 ```text
-dsc group destroy <discourse> <group-id>      # alias: rm
+dsc group destroy <discourse> <group-id> [--format text|json|yaml]      # alias: rm
 ```
 
-Permanently deletes a group via `DELETE /admin/groups/:id.json`. Refuses automatic (built-in) groups such as `admins` or `trust_level_1`, as Discourse does. Honours `--dry-run`, which prints the group that would be deleted without changing anything.
+Permanently deletes a group via `DELETE /admin/groups/:id.json`. Refuses automatic (built-in) groups such as `admins` or `trust_level_1`, as Discourse does. Honours `--dry-run`, which reports the resolved group and exact request without changing anything. JSON/YAML output returns the group's `id`, `name`, and `action`; a structured dry-run also includes `request`. Text remains the default.
 
 ## dsc group add
 

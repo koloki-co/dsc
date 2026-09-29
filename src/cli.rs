@@ -1577,7 +1577,11 @@ pub enum GroupCommand {
         /// Discourse name.
         discourse: String,
         /// Group ID (from `dsc group list`).
+        #[arg(value_parser = clap::value_parser!(u64).range(1..))]
         group: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
     },
     /// Bulk add members to a group from a file (or stdin) of email addresses.
     #[command(visible_alias = "a")]
