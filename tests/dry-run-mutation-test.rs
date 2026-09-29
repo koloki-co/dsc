@@ -434,6 +434,7 @@ const CASES: &[Case] = &[
         &["group", "copy", "mock", "41", "--target", "mock"],
         true,
     ),
+    ("group destroy", &["group", "destroy", "mock", "41"], true),
     (
         "invite send",
         &["invite", "send", "mock", "n@example.com"],
