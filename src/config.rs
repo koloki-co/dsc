@@ -227,10 +227,30 @@ fn warn_on_reserved_template_vars(config: &Config) {
 }
 
 /// Save configuration to a TOML file.
+///
+/// If `path` is itself a symlink to an existing file — the common
+/// dotfiles-management pattern, e.g. `~/.config/dsc/dsc.toml` symlinked
+/// into a tracked dotfiles repo — writes are resolved to that real target
+/// instead. The underlying atomic write (rename into place) would
+/// otherwise silently replace the symlink itself with a plain file,
+/// destroying the user's dotfiles link on the very first `dsc add`/
+/// `import`/`install` that saves the config. A dangling symlink is left
+/// alone; the write then fails with the existing, clearer "refusing to
+/// write through symbolic link" error from `reject_symlink` rather than
+/// this function inventing a new failure mode for that case.
 pub fn save_config(path: &Path, config: &Config) -> Result<()> {
     let raw = toml::to_string_pretty(config).with_context(|| "serializing config")?;
-    write_config_file(path, raw.as_bytes())?;
+    write_config_file(&resolve_symlink_target(path), raw.as_bytes())?;
     Ok(())
+}
+
+fn resolve_symlink_target(path: &Path) -> PathBuf {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+        }
+        _ => path.to_path_buf(),
+    }
 }
 
 fn write_config_file(path: &Path, raw: &[u8]) -> Result<()> {
@@ -446,6 +466,84 @@ mod tests {
         let debug = format!("{discourse:?}");
         assert!(debug.contains("#####REDACTED#####"));
         assert!(!debug.contains("never-print-this-secret"));
+    }
+
+    #[test]
+    fn save_config_through_a_symlink_writes_the_target_and_preserves_the_link() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let dir = tempfile::tempdir().expect("tempdir");
+            let real = dir.path().join("real-dsc.toml");
+            fs::write(&real, "").unwrap();
+            let link = dir.path().join("dsc.toml");
+            symlink(&real, &link).unwrap();
+
+            let config = Config {
+                discourse: vec![DiscourseConfig {
+                    name: "numun".to_string(),
+                    baseurl: "https://communities.numun.fund".to_string(),
+                    ..DiscourseConfig::default()
+                }],
+                ..Config::default()
+            };
+            save_config(&link, &config).expect("save through symlink must succeed");
+
+            assert!(
+                fs::symlink_metadata(&link)
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "the symlink at the config path must survive the write, not be replaced by a plain file"
+            );
+            let target_content = fs::read_to_string(&real).unwrap();
+            assert!(target_content.contains("numun"));
+            assert!(target_content.contains("communities.numun.fund"));
+
+            // Reading back through the symlink (the normal `load_config`
+            // path) sees the same content that was written.
+            let reloaded = load_config(&link).unwrap();
+            assert_eq!(reloaded.discourse[0].name, "numun");
+        }
+    }
+
+    #[test]
+    fn save_config_through_a_dangling_symlink_still_refuses_clearly() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+
+            let dir = tempfile::tempdir().expect("tempdir");
+            let missing_target = dir.path().join("does-not-exist.toml");
+            let link = dir.path().join("dsc.toml");
+            symlink(&missing_target, &link).unwrap();
+
+            let err = save_config(&link, &Config::default()).unwrap_err();
+            assert!(err.to_string().contains("symbolic link"));
+        }
+    }
+
+    #[test]
+    fn save_config_on_a_plain_path_is_unaffected() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("dsc.toml");
+        let config = Config {
+            discourse: vec![DiscourseConfig {
+                name: "plain".to_string(),
+                baseurl: "https://plain.example".to_string(),
+                ..DiscourseConfig::default()
+            }],
+            ..Config::default()
+        };
+        save_config(&path, &config).unwrap();
+        assert!(
+            !fs::symlink_metadata(&path)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert!(fs::read_to_string(&path).unwrap().contains("plain"));
     }
 
     #[test]
