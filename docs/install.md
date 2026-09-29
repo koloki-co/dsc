@@ -2,7 +2,7 @@
 
 Provisions Discourse on a `dsc harden`-prepared box: clones `discourse_docker`, renders `containers/app.yml`, runs `launcher bootstrap && launcher start`, polls for a live site, and appends a `[[discourse]]` entry to `dsc.toml`.
 
-**Phase 1** — the default single-container `standalone.yml` stack at the default path. Not yet implemented: `--image` (base image override) and `--bootstrap-admin` (create the first admin account non-interactively). See [spec/commands/install.md](https://github.com/koloki-co/dsc/blob/main/spec/commands/install.md) for the full design and remaining phases.
+**Phase 1** — the default single-container `standalone.yml` stack at the default path, **targeting rootless Docker only** (see [Prerequisites](#prerequisites)). Not yet implemented: a rootful-Docker target, `--image` (base image override), and `--bootstrap-admin` (create the first admin account non-interactively). See [spec/commands/install.md](https://github.com/koloki-co/dsc/blob/main/spec/commands/install.md) for the full design and remaining phases.
 
 ## Usage
 
@@ -21,8 +21,8 @@ dsc install <name> --host <host>
 1. **Preflight** — checks RAM (hard floor 1 GB, warns below 2 GB) and free disk on `/var` (hard floor 5 GB, warns below 30 GB), the same thresholds `dsc harden` uses.
 2. **Clones `discourse_docker`** to `/var/discourse` if it isn't already there; otherwise `git pull`s it. Idempotent — safe to re-run after a partial failure.
 3. **Renders `containers/app.yml`** from a template based directly on `discourse_docker`'s own `samples/standalone.yml`: Postgres + Redis + rate-limited web, ports 80 and 443 exposed, `docker_manager` pre-installed. `DISCOURSE_HOSTNAME` and `DISCOURSE_DEVELOPER_EMAILS` are always set; the SMTP block is included only if `--smtp-host` is given (otherwise the rendered file carries a comment noting mail is unconfigured); `params.version` is set only if `--branch` is given (omitting it keeps `discourse_docker`'s own default, `tests-passed`). Every substituted value is YAML single-quote-escaped, and the whole file is transported to the remote host base64-encoded — so a password or hostname containing `$`, backticks, or quotes can't break the shell command or the YAML structure.
-4. **Uploads it** to `/var/discourse/containers/app.yml` (`sudo install -m 0644`).
-5. **Runs `launcher bootstrap app && launcher start app`**, streaming a live spinner with the latest output line (this step routinely takes 5-20 minutes); on failure, the last 20 lines of stdout and stderr are included in the error.
+4. **Uploads it** to `/var/discourse/containers/app.yml` (`install -m 0644`, no `sudo` — see Prerequisites).
+5. **Runs `launcher bootstrap app && launcher start app`** as the plain SSH user with `DOCKER_HOST` exported explicitly for the rootless socket (no `sudo`), streaming a live spinner with the latest output line (this step routinely takes 5-20 minutes); on failure, the last 20 lines of stdout and stderr are included in the error.
 6. **Polls `http://<host>/about.json`** every 5 seconds for up to 5 minutes. Deliberately plain HTTP, not HTTPS — a freshly-bootstrapped `standalone.yml` has no SSL template enabled yet (that's a separate later step involving DNS and Let's Encrypt), so port 80 is the only thing that can answer.
 7. **Appends a `[[discourse]]` entry** to `dsc.toml`: `name`, `baseurl: https://<host>`, `ssh_host`, `ssh_user`, and `ssh_port` (omitted when 22, matching how existing entries work). `apikey`/`api_username` are left empty — create an API key on the new forum's admin panel and set them afterwards (`dsc api-key create`, then edit `dsc.toml` or `dsc setting`... there is no direct "set my own api key" setting command; edit the file).
 
@@ -43,4 +43,10 @@ Every step is written to be safely re-run: cloning is skipped if `/var/discourse
 
 ## Prerequisites
 
-`dsc install` assumes a `dsc harden`-prepared box: a non-root sudo user with NOPASSWD sudo (for `git clone`, `install`, and `launcher`), and Docker already installed. Stage 3 of `dsc harden` (which will install Docker as part of hardening) is not yet shipped — see [harden](harden.md) — so for now, install Docker yourself first (rootless, per the [official guide](https://github.com/discourse/discourse_docker#user-content-installation-notes), remembering the `setcap cap_net_bind_service=ep` step and `loginctl enable-linger` so Discourse can bind ports 80/443 and survives SSH disconnect).
+`dsc install` assumes a `dsc harden`-prepared box: a non-root sudo user with NOPASSWD sudo, and **rootless Docker** already installed and working for that user. Stage 3 of `dsc harden` (which will install Docker as part of hardening) is not yet shipped — see [harden](harden.md) — so for now, install Docker yourself first:
+
+1. Rootless install, per the [official guide](https://github.com/discourse/discourse_docker#user-content-installation-notes): `curl -fsSL https://get.docker.com | sh`, `sudo apt install -y uidmap`, then as the SSH user (not root): `dockerd-rootless-setuptool.sh install`.
+2. `sudo setcap cap_net_bind_service=ep $(which rootlesskit)` — without this, the rootless daemon cannot bind ports 80/443 and Discourse will never come up.
+3. `loginctl enable-linger <user>` — without this, the rootless daemon (and later, the Discourse container) dies the moment your SSH session ends.
+
+`dsc install` itself only needs `sudo` for one thing: creating `/var/discourse` (since `/var` isn't user-writable) and handing ownership to the SSH user with `chown`. Everything after that — the `git clone`, the `app.yml` write, and `launcher bootstrap`/`start` — runs as that plain user with `DOCKER_HOST` pointed at the rootless socket, never as root. A **rootful** Docker target (where `launcher` needs `sudo` to reach `/var/run/docker.sock`) is not supported by Phase 1 — it would need a different, mutually-exclusive command sequence; tracked as a Phase 2 candidate in the spec.

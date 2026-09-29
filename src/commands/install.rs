@@ -148,6 +148,13 @@ pub fn install(
 /// otherwise fast-forward it. Idempotent, like every other install step —
 /// re-running `dsc install` after a partial failure shouldn't redo work
 /// that already succeeded.
+///
+/// Ownership: `/var/discourse` ends up owned by the SSH user, not root.
+/// Phase 1 targets rootless Docker (the documented `dsc harden` stage-3
+/// default), where `launcher` runs as that unprivileged user with no
+/// `sudo` at all — so the checkout it operates on must be writable by
+/// that user too. Creating the top-level directory is the one step that
+/// still needs `sudo`, since `/var` itself isn't user-writable.
 fn ensure_discourse_docker(target: &str, extra: &[&str], dry_run: bool) -> Result<()> {
     announce("checking for an existing /var/discourse checkout");
     let exists = ssh_text(
@@ -157,19 +164,26 @@ fn ensure_discourse_docker(target: &str, extra: &[&str], dry_run: bool) -> Resul
         dry_run,
     )?;
     if dry_run || exists.trim() == "no" {
-        announce("cloning discourse_docker to /var/discourse");
-        ssh_text(
-            target,
-            extra,
-            &format!("sudo -n git clone {} /var/discourse", shell_quote(REPO_URL)),
-            dry_run,
-        )?;
+        announce(
+            "cloning discourse_docker to /var/discourse (owned by the SSH user, for rootless Docker)",
+        );
+        let cmd = format!(
+            r#"
+set -e
+sudo -n mkdir -p {dir}
+sudo -n chown "$(id -un)":"$(id -gn)" {dir}
+git clone {repo} {dir}
+"#,
+            dir = shell_quote(CONTAINER_DIR),
+            repo = shell_quote(REPO_URL),
+        );
+        ssh_text(target, extra, cmd.trim(), dry_run)?;
     } else {
         announce("/var/discourse already present, pulling latest discourse_docker");
         ssh_text(
             target,
             extra,
-            "cd /var/discourse && sudo -n git pull",
+            &format!("cd {} && git pull", shell_quote(CONTAINER_DIR)),
             dry_run,
         )?;
     }
@@ -181,16 +195,18 @@ fn ensure_discourse_docker(target: &str, extra: &[&str], dry_run: bool) -> Resul
 /// password or hostname can never be misparsed as shell syntax — the shell
 /// only ever sees the base64 alphabet, and the YAML-level quoting in
 /// [`render_app_yml`] is what protects the *rendered file's* structure.
+/// No `sudo`: see [`ensure_discourse_docker`] on why `/var/discourse` is
+/// user-owned for the rootless-Docker case this phase targets.
 fn upload_app_yml(target: &str, extra: &[&str], app_yml: &str, dry_run: bool) -> Result<()> {
     announce(&format!("writing {}", APP_YML_PATH));
     let b64 = base64::engine::general_purpose::STANDARD.encode(app_yml.as_bytes());
     let cmd = format!(
         r#"
 set -e
-sudo -n mkdir -p {dir}
+mkdir -p {dir}
 tmp=$(mktemp)
 printf '%s' {b64} | base64 -d > "$tmp"
-sudo -n install -m 0644 "$tmp" {path}
+install -m 0644 "$tmp" {path}
 rm -f "$tmp"
 "#,
         dir = shell_quote(
@@ -209,9 +225,20 @@ rm -f "$tmp"
 /// Run `./launcher bootstrap app && ./launcher start app`, streaming
 /// progress live (this step routinely takes 5-20 minutes) with a bounded
 /// tail retained for the error message if it fails.
+///
+/// No `sudo`, and `DOCKER_HOST` is exported explicitly rather than relied
+/// on from the user's shell rc: this targets rootless Docker (per `dsc
+/// harden`'s stage-3 default, `docker_rootless = true`), where the
+/// unprivileged user talks to their own per-user daemon socket directly —
+/// running `launcher` as root instead would talk to a root-owned rootful
+/// daemon that doesn't exist in this setup. A non-interactive SSH command
+/// doesn't source `~/.bashrc` (only interactive shells do), which is where
+/// the rootless install script normally adds `DOCKER_HOST` — so it has to
+/// be set inline here instead of assumed from the environment. Phase 1
+/// doesn't support a rootful-Docker target; see `docs/install.md`.
 fn run_launcher(target: &str, extra: &[&str], dry_run: bool) -> Result<()> {
     let cmd_str = format!(
-        "cd {dir} && sudo -n ./launcher bootstrap app && sudo -n ./launcher start app",
+        "export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock && cd {dir} && ./launcher bootstrap app && ./launcher start app",
         dir = shell_quote(CONTAINER_DIR),
     );
     if dry_run {
