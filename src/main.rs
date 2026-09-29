@@ -580,6 +580,10 @@ fn main() -> Result<()> {
                 commands::group::group_copy(&config, &discourse, target.as_deref(), group, dry_run)
             }
 
+            GroupCommand::Destroy { discourse, group } => {
+                commands::group::group_destroy(&config, &discourse, group, dry_run)
+            }
+
             GroupCommand::Add {
                 discourse,
                 group,

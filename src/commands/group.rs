@@ -167,6 +167,44 @@ pub fn group_copy(
     Ok(())
 }
 
+pub fn group_destroy(
+    config: &Config,
+    discourse_name: &str,
+    group_id: u64,
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+    let group = match client.fetch_group_detail_by_id(group_id)? {
+        Some(detail) => detail,
+        None => {
+            let summary = find_group_summary(&client, group_id)?;
+            client.fetch_group_detail(summary.id, Some(&summary.name))?
+        }
+    };
+    if group.automatic.unwrap_or(false) {
+        return Err(anyhow!(
+            "group {} (\"{}\") is an automatic group and cannot be deleted",
+            group_id,
+            group.name
+        ));
+    }
+    if dry_run {
+        println!(
+            "[dry-run] {}: would delete group {} (\"{}\")",
+            discourse.name, group_id, group.name
+        );
+        return Ok(());
+    }
+    client.delete_group(group_id)?;
+    println!(
+        "{}: deleted group {} (\"{}\")",
+        discourse.name, group_id, group.name
+    );
+    Ok(())
+}
+
 /// Try the numeric ID route for group detail first. Only list all groups
 /// to recover a name for the fallback path if the ID route 404s.
 fn find_group_summary(client: &DiscourseClient, group_id: u64) -> Result<GroupSummary> {

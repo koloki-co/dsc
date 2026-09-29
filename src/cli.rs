@@ -149,7 +149,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: CategoryCommand,
     },
-    /// List/inspect/copy groups.
+    /// List/inspect/copy/destroy groups.
     #[command(visible_alias = "grp")]
     #[command(after_help = "Examples:
   dsc group list myforum
@@ -1569,6 +1569,14 @@ pub enum GroupCommand {
         #[arg(long, short = 't')]
         target: Option<String>,
         /// Group ID.
+        group: u64,
+    },
+    /// Permanently delete a group. Honours `--dry-run`; refuses automatic groups.
+    #[command(visible_alias = "rm")]
+    Destroy {
+        /// Discourse name.
+        discourse: String,
+        /// Group ID (from `dsc group list`).
         group: u64,
     },
     /// Bulk add members to a group from a file (or stdin) of email addresses.

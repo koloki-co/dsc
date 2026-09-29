@@ -50,6 +50,20 @@ impl DiscourseClient {
         Err(anyhow!("group not found: {}", group_id))
     }
 
+    /// Permanently delete a group via the admin API.
+    pub fn delete_group(&self, group_id: u64) -> Result<()> {
+        let path = format!("/admin/groups/{}.json", group_id);
+        let response = self.send_retrying(|| self.delete_builder(&path))?;
+        let status = response.status();
+        let text = response
+            .text_capped()
+            .context("reading delete group response")?;
+        if !status.is_success() {
+            return Err(http_error("delete group request", status, &text));
+        }
+        Ok(())
+    }
+
     /// Fetch group details by numeric ID. Returns `None` only when the ID
     /// route returns 404; authentication and server failures remain errors.
     pub fn fetch_group_detail_by_id(&self, group_id: u64) -> Result<Option<GroupDetail>> {
