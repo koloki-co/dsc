@@ -5,6 +5,44 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.21.0] - 2026-09-29
+
+### Bug fixes
+
+- **install**: Target rootless Docker, not sudo/rootful ([ed80b33](https://github.com/koloki-co/dsc/commit/ed80b332ed2d911f8f981a983ab0e7b547513316))
+
+- **harden**: Correct malformed OpenSSH algorithm-overlay syntax ([1a09c22](https://github.com/koloki-co/dsc/commit/1a09c2286aa658e39d7685b2bcbc1d6fbde00539))
+
+- **group**: Harden group destruction ([4dcc0f0](https://github.com/koloki-co/dsc/commit/4dcc0f02e711c48c7a0f5defa1199ffc7513d46d))
+
+- **api-key**: Harden mutation commands ([3356550](https://github.com/koloki-co/dsc/commit/3356550ccd61760a21da264f198bc89e66f9116a))
+
+- **api-key**: Record remaining lifecycle gaps ([2262fc0](https://github.com/koloki-co/dsc/commit/2262fc0ce2c6a8a9bb82b288f6b2539991192ce2))
+
+- **api-key**: Revoke via the reversible endpoint, not permanent delete ([4310736](https://github.com/koloki-co/dsc/commit/4310736b3ecd77001e6d5497017f249f4ab10fc1))
+
+- **docs**: Clarify API key revoke coverage ([f31a46b](https://github.com/koloki-co/dsc/commit/f31a46ba311441d424aa090b92761a9d6a6fab2a))
+
+- **docs**: Correct delete-surface references ([3475528](https://github.com/koloki-co/dsc/commit/3475528625175faf666e8915324183958fa0a34d))
+
+- **upload**: Distinguish generic extension changes ([77efdb7](https://github.com/koloki-co/dsc/commit/77efdb7332c30ba2ea1451fd5689e0c5a9b66093))
+
+### Documentation
+
+- **roadmap**: Close R61 delete-surface survey, file R66-R69 ([c73b5ec](https://github.com/koloki-co/dsc/commit/c73b5ec6447d67155d1cfe5af3d468240d23f659))
+
+### Features
+
+- **install**: Add `dsc install` for from-zero Discourse provisioning (R14 Phase 1) ([0734ccc](https://github.com/koloki-co/dsc/commit/0734cccf90e26335707827f154efb84142407214))
+
+- **group**: Add group destroy (R67) ([7ce8372](https://github.com/koloki-co/dsc/commit/7ce8372dcb7b0ea39cd94693a1aba6df3709cb07))
+
+- **upload**: Flag PNG-to-JPEG conversion in text output (R64) ([b804a7f](https://github.com/koloki-co/dsc/commit/b804a7fbdb53de83a97979aabf3051b22364be9c))
+
+### Tests
+
+- **group**: Triage group destroy for dry-run ([449d5fb](https://github.com/koloki-co/dsc/commit/449d5fbeb465648ca014f75df7122bbe798e9a6b))
+
 ## [0.20.0] - 2026-09-24
 
 ### Bug fixes
