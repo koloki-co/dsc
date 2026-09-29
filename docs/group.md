@@ -1,6 +1,6 @@
 # dsc group
 
-List, inspect, and copy groups.
+List, inspect, copy, and destroy groups.
 
 ## dsc group list
 
@@ -39,6 +39,14 @@ Copies the specified group. If `--target` is omitted, copies within the same Dis
 - All other fields match the source, except the ID which is assigned by Discourse.
 
 `<group-id>` can be found using `dsc group list`.
+
+## dsc group destroy
+
+```text
+dsc group destroy <discourse> <group-id> [--format text|json|yaml]      # alias: rm
+```
+
+Permanently deletes a group via `DELETE /admin/groups/:id.json`. Refuses automatic (built-in) groups such as `admins` or `trust_level_1`, as Discourse does. Honours `--dry-run`, which reports the resolved group and exact request without changing anything. JSON/YAML output returns the group's `id`, `name`, and `action`; a structured dry-run also includes `request`. Text remains the default.
 
 ## dsc group add
 

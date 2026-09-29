@@ -5,10 +5,13 @@
 use crate::api::DiscourseClient;
 use crate::api::GroupSummary;
 use crate::cli::{ListFormat, StructuredFormat};
-use crate::commands::common::{ensure_api_credentials, not_found, parse_emails, select_discourse};
+use crate::commands::common::{
+    emit_result, ensure_api_credentials, not_found, parse_emails, select_discourse,
+};
 use crate::config::Config;
 use crate::utils::{normalize_baseurl, slugify};
 use anyhow::{Context, Result, anyhow};
+use serde::Serialize;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
@@ -165,6 +168,73 @@ pub fn group_copy(
     );
     println!("{}", url);
     Ok(())
+}
+
+pub fn group_destroy(
+    config: &Config,
+    discourse_name: &str,
+    group_id: u64,
+    format: ListFormat,
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+    let group = match client.fetch_group_detail_by_id(group_id)? {
+        Some(detail) => detail,
+        None => {
+            let summary = find_group_summary(&client, group_id)?;
+            client.fetch_group_detail(summary.id, Some(&summary.name))?
+        }
+    };
+    if group.automatic {
+        return Err(anyhow!(
+            "group {} (\"{}\") is an automatic group and cannot be deleted",
+            group_id,
+            group.name
+        ));
+    }
+    let request = format!("DELETE /admin/groups/{group_id}.json");
+    if dry_run {
+        let text = format!(
+            "[dry-run] {}: would delete group {} (\"{}\") via {}",
+            discourse.name, group_id, group.name, request
+        );
+        return emit_result(
+            format,
+            &GroupDestroyResult {
+                id: group_id,
+                name: group.name,
+                action: "planned",
+                request: Some(request),
+            },
+            &text,
+        );
+    }
+    client.delete_group(group_id)?;
+    let text = format!(
+        "{}: deleted group {} (\"{}\")",
+        discourse.name, group_id, group.name
+    );
+    emit_result(
+        format,
+        &GroupDestroyResult {
+            id: group_id,
+            name: group.name,
+            action: "deleted",
+            request: None,
+        },
+        &text,
+    )
+}
+
+#[derive(Serialize)]
+struct GroupDestroyResult {
+    id: u64,
+    name: String,
+    action: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request: Option<String>,
 }
 
 /// Try the numeric ID route for group detail first. Only list all groups

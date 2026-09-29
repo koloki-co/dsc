@@ -62,7 +62,8 @@ fn get_body(path: &str) -> String {
     let post = r#"{"id":1,"topic_id":7,"post_number":1,"raw":"hello","cooked":"<p>hello</p>","username":"tester","created_at":"2026-01-01T00:00:00.000Z","category_id":4}"#;
     let category = r#"{"id":4,"name":"Test","slug":"test","color":"0088CC","text_color":"FFFFFF","style_type":"icon","icon":"star","emoji":null,"position":1,"description":"d","read_restricted":false,"permission":1,"topic_template":"","allowed_tags":[],"allowed_tag_groups":[]}"#;
     let theme = r#"{"id":1,"name":"Test theme","component":false,"enabled":true,"user_selectable":true,"default":false,"color_scheme_id":19,"theme_fields":[{"target":"common","name":"scss","value":"body{}","type_id":1}],"settings":[{"setting":"k","value":"old","type":"string","default":"old"}],"child_themes":[{"id":2,"name":"Child"}],"remote_theme":null}"#;
-    let group = r#"{"id":41,"name":"testgroup","full_name":"Test Group","user_count":1}"#;
+    let group =
+        r#"{"id":41,"name":"testgroup","full_name":"Test Group","user_count":1,"automatic":false}"#;
 
     if p == "/site.json" {
         return r#"{"site":{"title":"Mock"}}"#.to_string();
@@ -434,6 +435,7 @@ const CASES: &[Case] = &[
         &["group", "copy", "mock", "41", "--target", "mock"],
         true,
     ),
+    ("group destroy", &["group", "destroy", "mock", "41"], true),
     (
         "invite send",
         &["invite", "send", "mock", "n@example.com"],

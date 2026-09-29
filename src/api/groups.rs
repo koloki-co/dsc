@@ -50,6 +50,20 @@ impl DiscourseClient {
         Err(anyhow!("group not found: {}", group_id))
     }
 
+    /// Permanently delete a group via the admin API.
+    pub fn delete_group(&self, group_id: u64) -> Result<()> {
+        let path = format!("/admin/groups/{group_id}.json");
+        let response = self.send_retrying(|| self.delete_builder(&path))?;
+        let status = response.status();
+        let text = response
+            .text_capped()
+            .context("reading delete group response")?;
+        if !status.is_success() {
+            return Err(http_error("delete group request", status, &text));
+        }
+        Ok(())
+    }
+
     /// Fetch group details by numeric ID. Returns `None` only when the ID
     /// route returns 404; authentication and server failures remain errors.
     pub fn fetch_group_detail_by_id(&self, group_id: u64) -> Result<Option<GroupDetail>> {
@@ -542,6 +556,7 @@ mod tests {
             "group": {
                 "id": 42,
                 "name": "staff",
+                "automatic": true,
                 "watching_category_ids": [5, 9],
                 "tracking_category_ids": [],
                 "watching_first_post_category_ids": [],
@@ -556,17 +571,19 @@ mod tests {
         }"#;
         let body: GroupDetailResponse = serde_json::from_str(raw).expect("parse");
         assert_eq!(body.group.watching_category_ids, Some(vec![5, 9]));
+        assert!(body.group.automatic);
         assert_eq!(body.group.muted_category_ids, Some(vec![3]));
         assert_eq!(body.group.watching_tags.as_ref().unwrap().len(), 1);
         assert_eq!(body.group.watching_tags.as_ref().unwrap()[0].slug, "urgent");
         let serialized = serde_json::to_value(&body.group).expect("serialize");
+        assert!(serialized.get("automatic").is_none());
         assert_eq!(serialized["tracking_category_ids"], serde_json::json!([]));
         assert_eq!(serialized["tracking_tags"], serde_json::json!([]));
     }
 
     #[test]
     fn group_detail_defaults_to_empty_when_fields_absent() {
-        let raw = r#"{"group": {"id": 1, "name": "trust_level_0"}}"#;
+        let raw = r#"{"group": {"id": 1, "name": "trust_level_0", "automatic": true}}"#;
         let body: GroupDetailResponse = serde_json::from_str(raw).expect("parse");
         assert!(body.group.watching_category_ids.is_none());
         assert!(body.group.watching_tags.is_none());
@@ -578,6 +595,7 @@ mod tests {
             "group": {
                 "id": 42,
                 "name": "staff",
+                "automatic": true,
                 "watching_category_ids": [5],
                 "watching_tags": [{"id": 1, "name": "urgent", "slug": "urgent"}]
             }

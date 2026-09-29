@@ -328,6 +328,11 @@ pub struct GroupDetail {
     pub flair_background_color: Option<String>,
     #[serde(default)]
     pub bio_raw: Option<String>,
+    /// True for Discourse's built-in groups (admins, staff, trust_level_*).
+    /// Required for destructive-action safety, but never serialised so
+    /// `group info` output is unchanged.
+    #[serde(skip_serializing)]
+    pub automatic: bool,
     /// Category IDs a group's members watch by default, keyed by notification level.
     /// Populated by the API for admins/owners; omitted from output unless requested.
     #[serde(default, skip_serializing_if = "Option::is_none")]
