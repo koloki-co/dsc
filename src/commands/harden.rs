@@ -63,10 +63,17 @@ pub(crate) struct Options {
 /// - Keep upstream defaults as they evolve.
 /// - Remove known-legacy algorithms.
 /// - Prefer PQ-hybrid KEX first.
-const DEFAULT_CIPHERS: &str = "-*-cbc,-3des-cbc";
-const DEFAULT_KEX: &str = "^sntrup761x25519-sha512@openssh.com,-diffie-hellman-group1-sha1,-diffie-hellman-group14-sha1,-diffie-hellman-group-exchange-sha1";
+///
+/// OpenSSH's list-modifier syntax allows exactly one `+`/`-`/`^` at the
+/// *start of the whole directive value*; every comma-separated item after
+/// it must be a bare algorithm name/wildcard, not individually prefixed.
+/// A `^`-mode value must also be algorithm names sshd actually recognises
+/// (unlike `-`/`+`, which tolerate already-absent entries), so it can't
+/// also carry a removal list in the same directive.
+const DEFAULT_CIPHERS: &str = "-*-cbc";
+const DEFAULT_KEX: &str = "^sntrup761x25519-sha512@openssh.com";
 const DEFAULT_MACS: &str =
-    "-hmac-sha1,-hmac-sha1-96,-hmac-md5,-hmac-md5-96,-umac-64@openssh.com,-umac-64-etm@openssh.com";
+    "-hmac-sha1,hmac-sha1-96,hmac-md5,hmac-md5-96,umac-64@openssh.com,umac-64-etm@openssh.com";
 
 /// Resolve final options. CLI overrides win, then `[harden]` config block,
 /// then the built-in defaults documented in `dsc.example.toml`.
@@ -734,7 +741,7 @@ mod tests {
         assert!(!opts.mosh);
         assert_eq!(opts.journald_max_use, "500M");
         assert!(opts.sshd_kex.contains("sntrup761x25519-sha512@openssh.com"));
-        assert_eq!(opts.sshd_ciphers, "-*-cbc,-3des-cbc");
+        assert_eq!(opts.sshd_ciphers, "-*-cbc");
         assert!(opts.sshd_macs.contains("-hmac-sha1"));
     }
 
@@ -807,18 +814,29 @@ mod tests {
             s
         );
 
-        // Walk the actual directive lines and ensure every weak algorithm is
-        // either absent or appears only as a removal (`-foo` token).
+        // KexAlgorithms is `^`-mode (promote to head), which requires exact
+        // algorithm names and can't also carry a removal list (see the
+        // DEFAULT_KEX doc comment) — so it must be exactly this one token,
+        // nothing appended.
+        for line in s.lines() {
+            if line.to_lowercase().starts_with("kexalgorithms ") {
+                assert_eq!(
+                    line.trim(),
+                    "KexAlgorithms ^sntrup761x25519-sha512@openssh.com",
+                    "KexAlgorithms must not carry extra comma-separated items"
+                );
+            }
+        }
+
+        // Walk the remaining directive lines and confirm each is a `-`
+        // (removal) list that names every known-weak algorithm. Note the
+        // directive's single leading `-` covers the *entire* comma list —
+        // it is not repeated per item (see DEFAULT_MACS/DEFAULT_CIPHERS'
+        // doc comment) — so a correctly-formed removal token is bare.
+        // `3des-cbc` isn't listed separately: it ends in `-cbc`, so the
+        // `*-cbc` wildcard already removes it.
         let weak_by_directive: &[(&str, &[&str])] = &[
-            ("ciphers ", &["*-cbc", "3des-cbc"]),
-            (
-                "kexalgorithms ",
-                &[
-                    "diffie-hellman-group1-sha1",
-                    "diffie-hellman-group14-sha1",
-                    "diffie-hellman-group-exchange-sha1",
-                ],
-            ),
+            ("ciphers ", &["*-cbc"]),
             (
                 "macs ",
                 &[
@@ -838,25 +856,70 @@ mod tests {
                 if !lower.starts_with(directive) {
                     continue;
                 }
-                let value = lower[directive.len()..].trim();
-                for token in value.split(',') {
-                    let token = token.trim();
-                    for weak in *weak_list {
-                        // The removal token (`-weak`) and the additive form
-                        // (`weak` or `+weak` or `^weak`) need to be told apart:
-                        // we want NO additive form, only removals.
-                        if token == *weak
-                            || token == format!("+{}", weak)
-                            || token == format!("^{}", weak)
-                        {
-                            panic!(
-                                "{} directive includes weak algorithm `{}` additively: {}",
-                                directive.trim(),
-                                weak,
-                                line
-                            );
-                        }
-                    }
+                let value = line[directive.len()..].trim();
+                let mode = value.chars().next().unwrap_or(' ');
+                assert_eq!(
+                    mode,
+                    '-',
+                    "{} directive must use `-` (removal) mode to retire weak algorithms: {}",
+                    directive.trim(),
+                    line
+                );
+                let tokens: Vec<&str> =
+                    value[mode.len_utf8()..].split(',').map(str::trim).collect();
+                for weak in *weak_list {
+                    assert!(
+                        tokens.iter().any(|t| t.eq_ignore_ascii_case(weak)),
+                        "{} directive does not remove known-weak algorithm `{}`: {}",
+                        directive.trim(),
+                        weak,
+                        line
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn algorithm_overlays_use_valid_openssh_list_modifier_syntax() {
+        // Regression test for a bug where DEFAULT_KEX/CIPHERS/MACS embedded a
+        // `-` on every comma-separated item (e.g. `^good,-legacy1,-legacy2`)
+        // instead of only on the directive's single leading modifier
+        // character. sshd only recognises one `+`/`-`/`^` per directive,
+        // applying to the *whole* list that follows; a per-item `-` makes
+        // that item a literal (invalid) algorithm name. In `^`-mode this is
+        // a hard `sshd -t` failure ("Unsupported KEX algorithm
+        // \"-diffie-hellman-group1-sha1\"", dash included in the name);
+        // in `-`/`+`-mode it silently fails to remove/add anything.
+        let opts = resolve_options(None, None, &HardenConfig::default());
+        let s = build_sshd_drop_in(&opts, "discourse");
+
+        for directive in ["ciphers ", "kexalgorithms ", "macs "] {
+            for line in s.lines() {
+                let lower = line.to_lowercase();
+                if !lower.starts_with(directive) {
+                    continue;
+                }
+                let value = line[directive.len()..].trim();
+                let mut chars = value.chars();
+                let leading = chars.next().unwrap_or(' ');
+                assert!(
+                    matches!(leading, '+' | '-' | '^'),
+                    "{} value {:?} must open with a single +/-/^ list modifier",
+                    directive.trim(),
+                    value
+                );
+                let rest = &value[leading.len_utf8()..];
+                for token in rest.split(',') {
+                    let first = token.chars().next().unwrap_or(' ');
+                    assert!(
+                        !matches!(first, '+' | '-' | '^'),
+                        "{} item {:?} carries its own +/-/^ modifier — \
+                         only the directive's single leading character may: {}",
+                        directive.trim(),
+                        token,
+                        line
+                    );
                 }
             }
         }
