@@ -330,6 +330,24 @@ pub(crate) fn validate_ssh_target(target: &str) -> Result<()> {
     Ok(())
 }
 
+/// Flatten a multi-line remote command into a single readable line, capped
+/// at 200 characters, for `--dry-run` display. Shared by `harden` and
+/// `install`, whose remote commands are often multi-line shell scripts that
+/// would otherwise spam the dry-run plan with raw newlines.
+pub(crate) fn oneline_for_dry_run(s: &str) -> String {
+    let compact = s
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join("; ");
+    if compact.len() > 200 {
+        format!("{}…", &compact[..200])
+    } else {
+        compact
+    }
+}
+
 pub fn parse_tags(raw: &str) -> Vec<String> {
     raw.split([';', ','])
         .map(|tag| tag.trim().to_string())

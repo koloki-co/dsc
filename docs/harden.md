@@ -1,6 +1,6 @@
 # dsc harden
 
-Turn a fresh Ubuntu server reachable via `ssh root@host` into a hardened box ready for `dsc install`. **WIP** — currently ships **stages 1 and 2**; stage 3 is in development.
+Turn a fresh Ubuntu server reachable via `ssh root@host` into a hardened box ready for [`dsc install`](install.md). **WIP** — currently ships **stages 1 and 2**; stage 3 (which will install Docker, among other things) is in development. Until stage 3 ships, install Docker yourself before running `dsc install` — see that doc's [Prerequisites](install.md#prerequisites) section.
 
 ## Usage
 
@@ -57,6 +57,15 @@ mosh                         = false      # opt-in; opens UDP 60000-61000
 ```
 
 Read [`dsc.example.toml`](https://github.com/koloki-co/dsc/blob/main/dsc.example.toml) for the full annotated block.
+
+## After hardening: `dsc install`
+
+Once stages 1-2 have succeeded, the box is ready for Discourse itself — see [dsc install](install.md). `dsc install`'s `--ssh-user`/`--ssh-port` defaults match `dsc harden`'s own defaults, so the common case needs no extra flags:
+
+```console
+dsc harden 203.0.113.10 --pubkey-file ~/.ssh/id_ed25519.pub
+dsc install myforum --host 203.0.113.10 --email admin@example.com
+```
 
 ## Why publish a hardening routine?
 

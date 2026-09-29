@@ -13,7 +13,7 @@
 //! (fail2ban / upgrades / timezone / swap / docker / ufw) lands in a
 //! follow-up commit.
 
-use crate::commands::common::{shell_quote, validate_ssh_target};
+use crate::commands::common::{oneline_for_dry_run, shell_quote, validate_ssh_target};
 use crate::config::HardenConfig;
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
@@ -627,7 +627,11 @@ fn ssh_run(target: &SshTarget, command: &str, dry_run: bool) -> Result<String> {
     validate_ssh_target(&target.user).context("invalid SSH user")?;
     validate_ssh_target(&target.host).context("invalid SSH host")?;
     if dry_run {
-        eprintln!("[dry-run] ssh {} -- {}", target.as_arg(), oneline(command));
+        eprintln!(
+            "[dry-run] ssh {} -- {}",
+            target.as_arg(),
+            oneline_for_dry_run(command)
+        );
         return Ok(String::new());
     }
     let mut cmd = Command::new("ssh");
@@ -652,21 +656,6 @@ fn ssh_run(target: &SshTarget, command: &str, dry_run: bool) -> Result<String> {
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
-/// Flatten a multi-line command for dry-run display.
-fn oneline(s: &str) -> String {
-    let compact = s
-        .lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .collect::<Vec<_>>()
-        .join("; ");
-    if compact.len() > 200 {
-        format!("{}…", &compact[..200])
-    } else {
-        compact
-    }
 }
 
 #[cfg(test)]

@@ -46,7 +46,7 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 | **Users & access** | list / info / find-by-email, suspend / silence, promote / demote, group membership, activity export, create, password reset, email change; invites; private messages; API keys; **one-shot SAR / GDPR export** | scoped API keys; deterministic Chat archival for SAR inclusion |
 | **Backups, emoji, uploads** | backup create / list / pull / push / restore, fleet backup creation and S3 health/setup, bulk emoji, file upload | S3 key rotation and retention |
 | **Fleet (multi-install)** | one config for N forums, tag filtering, write/audit settings, update-all over SSH, cross-forum search and user lookup, backup fan-out | aggregate reports |
-| **Server lifecycle** | `harden` a fresh box, stages 1-2 (new sudo user, pubkey auth, sshd lockdown to a non-standard port); `update` over SSH with skip-if-current | `harden` stage 3 - firewall, Docker, swap, fail2ban (config keys wired, SSH execution pending); one-shot `dsc install` provisioning |
+| **Server lifecycle** | `harden` a fresh box, stages 1-2 (new sudo user, pubkey auth, sshd lockdown to a non-standard port); one-shot `install` on a hardened box (clone discourse_docker, render app.yml, bootstrap + start, poll for a live site, record in dsc.toml); `update` over SSH with skip-if-current | `harden` stage 3 - firewall, Docker, swap, fail2ban (config keys wired, SSH execution pending); `install --image`/`--bootstrap-admin` |
 | **Reporting** | analytics snapshot (growth / activity / health); single raw admin report by id; saved Data Explorer query inspection/execution; `log staff` audit-trail inspection | aggregate/cross-forum reports, notifications |
 
 Planned work includes deterministic Chat archival for compliance exports. A TUI remains exploratory. An MCP server mode is explicitly out of scope because Discourse now maintains both a built-in per-site MCP server and the broader `@discourse/mcp` package. See [spec/roadmap.md](spec/roadmap.md) for the full picture.
@@ -188,6 +188,7 @@ dsc update myforum
   - [config](docs/config.md) — inspect and validate the dsc config itself
   - [version](docs/version.md) — dsc's own version, or live version and commit inventory for one forum or a selected fleet
   - [harden](docs/harden.md) — provision a fresh Ubuntu server: new sudo user + pubkey auth, sshd lockdown (stages 1-2, shipped); firewall/Docker/swap/fail2ban is stage 3, still WIP
+  - [install](docs/install.md) — provision Discourse itself on a hardened box: clone discourse_docker, render app.yml, bootstrap + start, poll for a live site, record in dsc.toml
 - [Shell completions](docs/completions.md) — bash, zsh, and fish
 - [Man pages](docs/manpages.md) — generate Unix man pages for `dsc` and every subcommand
 - [Development](docs/development.md) — building, testing, releasing, project layout

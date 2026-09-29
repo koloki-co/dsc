@@ -432,6 +432,56 @@ pub enum Commands {
         )]
         pubkey_file: PathBuf,
     },
+    /// Provision Discourse on a `dsc harden`-prepared box: clone
+    /// `discourse_docker`, render `app.yml`, `launcher bootstrap && start`,
+    /// poll for a live site, and record the result in `dsc.toml`.
+    ///
+    /// Phase 1: the default single-container `standalone.yml` stack at
+    /// `/var/discourse/containers/app.yml`. Not yet implemented: `--image`
+    /// (base image override) and `--bootstrap-admin`; see
+    /// `spec/commands/install.md`.
+    #[command(after_help = "Examples:
+  dsc install numun --host communities.numun.fund --ssh-user discourse --ssh-port 2227 \\
+    --email marcus@koloki.co --smtp-host smtp.example.com --smtp-user user@example.com --smtp-pass-stdin")]
+    Install {
+        /// Name to give this Discourse in dsc.toml once it's live.
+        name: String,
+        /// Hostname or IP the box is reachable at, and the value written to
+        /// `DISCOURSE_HOSTNAME` — so this should already be (or be about to
+        /// become) the site's real public hostname, not a bare IP, unless
+        /// you plan to re-render `app.yml` before going live.
+        #[arg(long)]
+        host: String,
+        /// SSH username. Matches `dsc harden`'s default new-user account.
+        #[arg(long, default_value = "discourse")]
+        ssh_user: String,
+        /// SSH port. Matches `dsc harden`'s default moved port.
+        #[arg(long, default_value_t = 2227)]
+        ssh_port: u16,
+        /// Admin/developer email(s) for `DISCOURSE_DEVELOPER_EMAILS`.
+        /// Comma-separated for more than one, or repeat the flag.
+        #[arg(long = "email", required = true, value_delimiter = ',')]
+        emails: Vec<String>,
+        /// SMTP server address. Omit to leave mail unconfigured (the forum
+        /// will not be able to send any email until this is set later).
+        #[arg(long)]
+        smtp_host: Option<String>,
+        /// SMTP port. Defaults to whatever `discourse_docker` itself
+        /// defaults to (587) when `--smtp-host` is given but this isn't.
+        #[arg(long)]
+        smtp_port: Option<u16>,
+        /// SMTP username.
+        #[arg(long)]
+        smtp_user: Option<String>,
+        /// Read the SMTP password from stdin (one line) rather than taking
+        /// it as an argument, so it never lands in shell history or `ps`.
+        #[arg(long, requires = "smtp_host")]
+        smtp_pass_stdin: bool,
+        /// Discourse git revision to build (`params.version` in app.yml).
+        /// Omit to use discourse_docker's own default (`tests-passed`).
+        #[arg(long)]
+        branch: Option<String>,
+    },
     /// Community-health analytics — growth, activity, and health metrics
     /// for a Discourse, with optional period-over-period comparison.
     ///
@@ -3749,6 +3799,137 @@ mod tests {
     }
 
     #[test]
+    fn install_parses_defaults_and_email_list() {
+        let cli = Cli::try_parse_from([
+            "dsc",
+            "install",
+            "numun",
+            "--host",
+            "communities.numun.fund",
+            "--email",
+            "marcus@koloki.co,kat@numun.fund",
+        ])
+        .expect("install parses");
+        let Commands::Install {
+            name,
+            host,
+            ssh_user,
+            ssh_port,
+            emails,
+            smtp_host,
+            smtp_pass_stdin,
+            branch,
+            ..
+        } = cli.command
+        else {
+            panic!("expected install command");
+        };
+        assert_eq!(name, "numun");
+        assert_eq!(host, "communities.numun.fund");
+        assert_eq!(ssh_user, "discourse");
+        assert_eq!(ssh_port, 2227);
+        assert_eq!(
+            emails,
+            vec!["marcus@koloki.co".to_string(), "kat@numun.fund".to_string()]
+        );
+        assert_eq!(smtp_host, None);
+        assert!(!smtp_pass_stdin);
+        assert_eq!(branch, None);
+    }
+
+    #[test]
+    fn install_requires_at_least_one_email() {
+        let result = Cli::try_parse_from(["dsc", "install", "numun", "--host", "example.test"]);
+        assert!(
+            result.is_err(),
+            "install without --email must fail to parse"
+        );
+        assert!(result.err().unwrap().to_string().contains("email"));
+    }
+
+    #[test]
+    fn install_smtp_pass_stdin_requires_smtp_host() {
+        let result = Cli::try_parse_from([
+            "dsc",
+            "install",
+            "numun",
+            "--host",
+            "example.test",
+            "--email",
+            "a@example.com",
+            "--smtp-pass-stdin",
+        ]);
+        assert!(
+            result.is_err(),
+            "--smtp-pass-stdin without --smtp-host must fail to parse"
+        );
+        let message = result.err().unwrap().to_string();
+        assert!(message.contains("smtp_host") || message.contains("smtp-host"));
+    }
+
+    #[test]
+    fn install_ssh_overrides_and_smtp_flags_parse() {
+        let cli = Cli::try_parse_from([
+            "dsc",
+            "install",
+            "numun",
+            "--host",
+            "203.0.113.10",
+            "--ssh-user",
+            "root",
+            "--ssh-port",
+            "22",
+            "--email",
+            "marcus@koloki.co",
+            "--smtp-host",
+            "smtp.example.com",
+            "--smtp-port",
+            "587",
+            "--smtp-user",
+            "user@example.com",
+            "--smtp-pass-stdin",
+            "--branch",
+            "stable",
+        ])
+        .expect("install with overrides parses");
+        let Commands::Install {
+            ssh_user,
+            ssh_port,
+            smtp_host,
+            smtp_port,
+            smtp_user,
+            smtp_pass_stdin,
+            branch,
+            ..
+        } = cli.command
+        else {
+            panic!("expected install command");
+        };
+        assert_eq!(ssh_user, "root");
+        assert_eq!(ssh_port, 22);
+        assert_eq!(smtp_host.as_deref(), Some("smtp.example.com"));
+        assert_eq!(smtp_port, Some(587));
+        assert_eq!(smtp_user.as_deref(), Some("user@example.com"));
+        assert!(smtp_pass_stdin);
+        assert_eq!(branch.as_deref(), Some("stable"));
+    }
+
+    #[test]
+    fn install_is_not_in_the_dry_run_refusal_list() {
+        let cli = Cli::try_parse_from([
+            "dsc",
+            "install",
+            "numun",
+            "--host",
+            "example.test",
+            "--email",
+            "a@example.com",
+        ])
+        .expect("install parses");
+        assert_eq!(cli.command.dry_run_refusal_reason(), None);
+    }
+
+    #[test]
     fn log_staff_limit_rejects_values_outside_discourse_page_bounds() {
         let base = ["dsc", "log", "staff", "forum", "--limit"];
         assert!(Cli::try_parse_from(base.into_iter().chain(["0"])).is_err());
@@ -3946,6 +4127,15 @@ mod tests {
             &["dsc", "config"],
             &["dsc", "sar", "forum", "user"],
             &["dsc", "harden", "host", "--pubkey-file", "key.pub"],
+            &[
+                "dsc",
+                "install",
+                "numun",
+                "--host",
+                "communities.numun.fund",
+                "--email",
+                "marcus@koloki.co",
+            ],
             &["dsc", "explorer", "list", "forum"],
             &["dsc", "explorer", "show", "forum", "1"],
             &["dsc", "explorer", "run", "forum", "1"],

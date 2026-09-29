@@ -1459,6 +1459,38 @@ fn main() -> Result<()> {
             dry_run,
         ),
 
+        Commands::Install {
+            name,
+            host,
+            ssh_user,
+            ssh_port,
+            emails,
+            smtp_host,
+            smtp_port,
+            smtp_user,
+            smtp_pass_stdin,
+            branch,
+        } => {
+            let smtp_pass = if smtp_pass_stdin {
+                Some(commands::install::read_smtp_pass_from_stdin()?)
+            } else {
+                None
+            };
+            let opts = commands::install::InstallOptions {
+                name,
+                host,
+                ssh_user,
+                ssh_port,
+                emails,
+                smtp_host,
+                smtp_port,
+                smtp_user,
+                smtp_pass,
+                branch,
+            };
+            commands::install::install(&mut config, &config_path, &opts, dry_run)
+        }
+
         Commands::Search {
             discourse,
             query,

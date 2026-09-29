@@ -130,6 +130,17 @@ pub struct DiscourseConfig {
     pub changelog_topic_id: Option<u64>,
     #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
     pub ssh_host: Option<String>,
+    /// SSH username for remote operations, when it differs from whatever
+    /// `~/.ssh/config` would resolve for `ssh_host`. Written automatically
+    /// by `dsc install` on a successful provisioning run; harmless to set
+    /// by hand for a forum that was installed manually.
+    #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
+    pub ssh_user: Option<String>,
+    /// SSH port for remote operations, when it differs from 22 and isn't
+    /// already resolved via `~/.ssh/config`. Written automatically by
+    /// `dsc install` on a successful provisioning run.
+    #[serde(default, deserialize_with = "deserialize_opt_u64_zero_as_none")]
+    pub ssh_port: Option<u64>,
     /// Path to the Discourse Docker app configuration on the remote host.
     /// Defaults to `/var/discourse/containers/app.yml` when omitted.
     #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
@@ -168,6 +179,8 @@ impl fmt::Debug for DiscourseConfig {
             .field("tags", &self.tags)
             .field("changelog_topic_id", &self.changelog_topic_id)
             .field("ssh_host", &self.ssh_host)
+            .field("ssh_user", &self.ssh_user)
+            .field("ssh_port", &self.ssh_port)
             .field("app_yml_path", &self.app_yml_path)
             .field("docker_rootless", &self.docker_rootless)
             .field("discourse_branch", &self.discourse_branch)
@@ -450,6 +463,37 @@ mod tests {
             config.discourse[0].update_colour.as_deref(),
             Some("#3f8f77")
         );
+    }
+
+    #[test]
+    fn ssh_user_and_port_parse_from_toml() {
+        let config: Config = toml::from_str(
+            r#"
+            [[discourse]]
+            name = "myforum"
+            baseurl = "https://forum.example.com"
+            ssh_host = "myforum"
+            ssh_user = "discourse"
+            ssh_port = 2227
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.discourse[0].ssh_user.as_deref(), Some("discourse"));
+        assert_eq!(config.discourse[0].ssh_port, Some(2227));
+    }
+
+    #[test]
+    fn ssh_user_and_port_default_to_none() {
+        let config: Config = toml::from_str(
+            r#"
+            [[discourse]]
+            name = "myforum"
+            baseurl = "https://forum.example.com"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.discourse[0].ssh_user, None);
+        assert_eq!(config.discourse[0].ssh_port, None);
     }
 
     #[test]

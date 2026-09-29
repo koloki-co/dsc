@@ -20,6 +20,7 @@ pub mod file;
 pub mod group;
 pub mod harden;
 pub mod import;
+pub mod install;
 pub mod invite;
 pub mod list;
 pub mod log;

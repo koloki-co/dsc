@@ -1013,6 +1013,7 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "group members",
     "harden",
     "import",
+    "install",
     "list tidy",
     "log staff",
     "man",
