@@ -222,9 +222,52 @@ rm -f "$tmp"
     Ok(())
 }
 
-/// Run `./launcher bootstrap app && ./launcher start app`, streaming
-/// progress live (this step routinely takes 5-20 minutes) with a bounded
-/// tail retained for the error message if it fails.
+const DOCKER_HOST_EXPORT: &str = "export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock";
+
+/// `docker ps --format '{{.Names}}'` output, parsed into container names.
+/// Pure function so the parsing is unit-testable without SSH.
+fn parse_running_container_names(ps_output: &str) -> Vec<&str> {
+    ps_output
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// Whether a container literally named `app` is currently running. Under
+/// `--dry-run` this can't be known without connecting (which dry-run must
+/// not do), so it conservatively reports `false` — [`run_launcher`]'s
+/// dry-run message accounts for the ambiguity explicitly rather than
+/// silently guessing.
+fn app_container_is_running(target: &str, extra: &[&str], dry_run: bool) -> Result<bool> {
+    if dry_run {
+        return Ok(false);
+    }
+    let out = ssh_text(
+        target,
+        extra,
+        &format!("{DOCKER_HOST_EXPORT} && docker ps --format '{{{{.Names}}}}'"),
+        dry_run,
+    )?;
+    Ok(parse_running_container_names(&out).contains(&"app"))
+}
+
+/// Bootstrap-and-start a fresh install, or `rebuild` over an already
+/// running one, streaming progress live (this step routinely takes
+/// 5-20 minutes) with a bounded tail retained for the error message if
+/// it fails.
+///
+/// The branch matters: discourse_docker's `bootstrap` builds a new image
+/// in a throwaway container that shares the same `/shared` volume as
+/// whatever's already running, and its Postgres bootstrap hook
+/// deliberately refuses to start when it finds another Postgres already
+/// bound to that shared socket - exactly the case on a `dsc install`
+/// re-run after an earlier success (found live against Numun,
+/// 2026-09-29: a second run hit `postgres already running stop
+/// container` and failed cleanly, without touching the already-running
+/// site). `launcher rebuild app` is discourse_docker's own answer to
+/// this: bootstrap the new image, then stop the old container and start
+/// the new one, in the right order.
 ///
 /// No `sudo`, and `DOCKER_HOST` is exported explicitly rather than relied
 /// on from the user's shell rc: this targets rootless Docker (per `dsc
@@ -237,13 +280,27 @@ rm -f "$tmp"
 /// be set inline here instead of assumed from the environment. Phase 1
 /// doesn't support a rootful-Docker target; see `docs/install.md`.
 fn run_launcher(target: &str, extra: &[&str], dry_run: bool) -> Result<()> {
-    let cmd_str = format!(
-        "export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock && cd {dir} && ./launcher bootstrap app && ./launcher start app",
-        dir = shell_quote(CONTAINER_DIR),
-    );
+    let already_running = app_container_is_running(target, extra, dry_run)?;
+    let (cmd_str, step_label) = if already_running {
+        (
+            format!(
+                "{DOCKER_HOST_EXPORT} && cd {dir} && ./launcher rebuild app",
+                dir = shell_quote(CONTAINER_DIR),
+            ),
+            "launcher rebuild (app already running)",
+        )
+    } else {
+        (
+            format!(
+                "{DOCKER_HOST_EXPORT} && cd {dir} && ./launcher bootstrap app && ./launcher start app",
+                dir = shell_quote(CONTAINER_DIR),
+            ),
+            "launcher bootstrap + start",
+        )
+    };
     if dry_run {
         announce(&format!(
-            "[dry-run] would run on {}{}: {}",
+            "[dry-run] would run on {}{}: {} (or `launcher rebuild app` instead, if a container named `app` turns out to already be running — not knowable without connecting)",
             ssh_extra_display(extra),
             target,
             oneline_for_dry_run(&cmd_str)
@@ -252,7 +309,7 @@ fn run_launcher(target: &str, extra: &[&str], dry_run: bool) -> Result<()> {
     }
     let mut cmd = build_ssh_command(target, extra)?;
     cmd.arg(&cmd_str);
-    run_streamed(cmd, "launcher bootstrap + start")
+    run_streamed(cmd, step_label)
 }
 
 /// Poll `http://<host>/about.json` until it responds successfully. Plain
@@ -652,6 +709,25 @@ mod tests {
             smtp_pass: None,
             branch: None,
         }
+    }
+
+    #[test]
+    fn parses_running_container_names_from_docker_ps_output() {
+        assert_eq!(parse_running_container_names("app\n"), vec!["app"]);
+        assert_eq!(
+            parse_running_container_names("app\nsome-other-container\n"),
+            vec!["app", "some-other-container"]
+        );
+        assert!(parse_running_container_names("").is_empty());
+        // Blank lines (e.g. trailing newline quirks) are dropped, not
+        // treated as a container literally named "".
+        assert_eq!(parse_running_container_names("app\n\n"), vec!["app"]);
+    }
+
+    #[test]
+    fn does_not_confuse_a_similarly_named_container_with_app() {
+        let names = parse_running_container_names("app-old\nmy-app\n");
+        assert!(!names.contains(&"app"));
     }
 
     #[test]
