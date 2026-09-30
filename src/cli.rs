@@ -1979,16 +1979,18 @@ pub enum ThemeCommand {
     Delete {
         /// Discourse name.
         discourse: String,
-        /// Theme ID (from `dsc theme list`).
-        theme_id: u64,
+        /// Theme ID (from `dsc theme list`). Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
     },
     /// Pull a theme to a local JSON file.
     #[command(visible_alias = "pl")]
     Pull {
         /// Discourse name.
         discourse: String,
-        /// Theme ID (from `dsc theme list`).
-        theme_id: u64,
+        /// Theme ID (from `dsc theme list`). Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Destination file path (auto-derived from theme name when omitted).
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
@@ -2004,8 +2006,9 @@ pub enum ThemeCommand {
         /// Local JSON file path.
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
-        /// Theme ID to update (creates a new theme when omitted).
-        theme_id: Option<u64>,
+        /// Theme ID to update (creates a new theme when omitted). Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: Option<i64>,
         /// Confirm updating an existing live theme after reviewing `--dry-run`.
         #[arg(long)]
         yes: bool,
@@ -2015,8 +2018,9 @@ pub enum ThemeCommand {
     Duplicate {
         /// Discourse name.
         discourse: String,
-        /// Theme ID to duplicate (from `dsc theme list`).
-        theme_id: u64,
+        /// Theme ID to duplicate (from `dsc theme list`). Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
@@ -2025,8 +2029,9 @@ pub enum ThemeCommand {
     Show {
         /// Discourse name.
         discourse: String,
-        /// Theme ID (from `dsc theme list`).
-        theme_id: u64,
+        /// Theme ID (from `dsc theme list`). Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
@@ -2044,22 +2049,25 @@ pub enum ThemeCommand {
     Enable {
         /// Discourse name.
         discourse: String,
-        /// Theme ID (from `dsc theme list`).
-        theme_id: u64,
+        /// Theme ID (from `dsc theme list`). Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
     },
     /// Disable a theme or component.
     Disable {
         /// Discourse name.
         discourse: String,
-        /// Theme ID (from `dsc theme list`).
-        theme_id: u64,
+        /// Theme ID (from `dsc theme list`). Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
     },
     /// Attach a component to a parent theme (makes it active on that theme).
     Attach {
         /// Discourse name.
         discourse: String,
-        /// Parent theme ID.
-        parent_id: u64,
+        /// Parent theme ID. Can be a built-in system theme (Foundation/Horizon).
+        #[arg(allow_negative_numbers = true)]
+        parent_id: i64,
         /// Component (child theme) ID to attach.
         component_id: u64,
     },
@@ -2067,8 +2075,9 @@ pub enum ThemeCommand {
     Detach {
         /// Discourse name.
         discourse: String,
-        /// Parent theme ID.
-        parent_id: u64,
+        /// Parent theme ID. Can be a built-in system theme (Foundation/Horizon).
+        #[arg(allow_negative_numbers = true)]
+        parent_id: i64,
         /// Component (child theme) ID to detach.
         component_id: u64,
     },
@@ -2096,8 +2105,9 @@ pub enum ThemeCommand {
     Update {
         /// Discourse name.
         discourse: String,
-        /// Theme ID (from `dsc theme list`).
-        theme_id: u64,
+        /// Theme ID (from `dsc theme list`). Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Only check for updates; don't pull.
         #[arg(long)]
         check: bool,
@@ -2118,8 +2128,9 @@ pub enum ThemeFieldCommand {
     List {
         /// Discourse name.
         discourse: String,
-        /// Theme ID.
-        theme_id: u64,
+        /// Theme ID. Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
@@ -2128,8 +2139,9 @@ pub enum ThemeFieldCommand {
     Pull {
         /// Discourse name.
         discourse: String,
-        /// Theme ID.
-        theme_id: u64,
+        /// Theme ID. Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Field spec: `target/name`, e.g. `common/scss`.
         field: String,
         /// Destination file (auto-derived from the field name when omitted).
@@ -2143,8 +2155,9 @@ pub enum ThemeFieldCommand {
     Push {
         /// Discourse name.
         discourse: String,
-        /// Theme ID.
-        theme_id: u64,
+        /// Theme ID. Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Field spec: `target/name`, e.g. `common/scss`.
         field: String,
         /// File whose contents become the field body.
@@ -2164,8 +2177,9 @@ pub enum ThemeAssetCommand {
     List {
         /// Discourse name.
         discourse: String,
-        /// Theme ID.
-        theme_id: u64,
+        /// Theme ID. Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
@@ -2174,8 +2188,9 @@ pub enum ThemeAssetCommand {
     Set {
         /// Discourse name.
         discourse: String,
-        /// Theme ID.
-        theme_id: u64,
+        /// Theme ID. Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Upload-var name (referenced as `$name` in SCSS).
         name: String,
         /// File to upload (image/font).
@@ -2186,8 +2201,9 @@ pub enum ThemeAssetCommand {
     Unset {
         /// Discourse name.
         discourse: String,
-        /// Theme ID.
-        theme_id: u64,
+        /// Theme ID. Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Upload-var name to unbind.
         name: String,
     },
@@ -2201,8 +2217,9 @@ pub enum ThemeSettingCommand {
     List {
         /// Discourse name.
         discourse: String,
-        /// Theme ID (from `dsc theme list`).
-        theme_id: u64,
+        /// Theme ID (from `dsc theme list`). Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
@@ -2211,8 +2228,9 @@ pub enum ThemeSettingCommand {
     Get {
         /// Discourse name.
         discourse: String,
-        /// Theme ID.
-        theme_id: u64,
+        /// Theme ID. Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Setting key (the `setting` name from `theme setting list`).
         key: String,
         /// Output format.
@@ -2224,8 +2242,9 @@ pub enum ThemeSettingCommand {
     Set {
         /// Discourse name.
         discourse: String,
-        /// Theme ID.
-        theme_id: u64,
+        /// Theme ID. Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Setting key.
         key: String,
         /// New value (verbatim).
@@ -2237,8 +2256,9 @@ pub enum ThemeSettingCommand {
     Pull {
         /// Discourse name.
         discourse: String,
-        /// Theme ID.
-        theme_id: u64,
+        /// Theme ID. Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Destination file (auto-derived from the theme name when omitted).
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: Option<PathBuf>,
@@ -2251,8 +2271,9 @@ pub enum ThemeSettingCommand {
     Push {
         /// Discourse name.
         discourse: String,
-        /// Theme ID.
-        theme_id: u64,
+        /// Theme ID. Negative built-in theme IDs (Foundation/Horizon) are valid.
+        #[arg(allow_negative_numbers = true)]
+        theme_id: i64,
         /// Settings file to apply.
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
@@ -3673,6 +3694,36 @@ mod tests {
             panic!("expected theme palette pull command");
         };
         assert_eq!(palette_id, -2);
+    }
+
+    #[test]
+    fn theme_show_accepts_a_negative_builtin_theme_id() {
+        // Regression test: dsc theme commands used to reject negative
+        // theme_id arguments outright (u64), so Foundation/Horizon -
+        // Discourse's built-in default themes on any fresh install -
+        // could never be referenced at all, not even to inspect them.
+        let cli = Cli::try_parse_from(["dsc", "theme", "show", "forum", "-1"])
+            .expect("negative built-in theme ID parses");
+        let Commands::Theme {
+            command: ThemeCommand::Show { theme_id, .. },
+        } = cli.command
+        else {
+            panic!("expected theme show command");
+        };
+        assert_eq!(theme_id, -1);
+    }
+
+    #[test]
+    fn theme_duplicate_accepts_a_negative_builtin_theme_id() {
+        let cli = Cli::try_parse_from(["dsc", "theme", "duplicate", "forum", "-2"])
+            .expect("negative built-in theme ID parses");
+        let Commands::Theme {
+            command: ThemeCommand::Duplicate { theme_id, .. },
+        } = cli.command
+        else {
+            panic!("expected theme duplicate command");
+        };
+        assert_eq!(theme_id, -2);
     }
 
     #[test]

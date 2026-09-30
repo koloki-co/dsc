@@ -17,7 +17,7 @@ use std::path::Path;
 
 #[derive(Debug, Serialize)]
 struct ThemeListEntry {
-    id: u64,
+    id: i64,
     name: String,
     status: String,
 }
@@ -40,7 +40,7 @@ pub fn theme_list(
     let entries: Vec<ThemeListEntry> = themes
         .into_iter()
         .map(|theme| {
-            let id = theme.get("id").and_then(|v| v.as_u64()).unwrap_or_default();
+            let id = theme.get("id").and_then(Value::as_i64).unwrap_or_default();
             let name = theme
                 .get("name")
                 .and_then(|v| v.as_str())
@@ -137,7 +137,7 @@ pub fn theme_install(
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("(unknown)");
-    match theme.get("id").and_then(|v| v.as_u64()) {
+    match theme.get("id").and_then(Value::as_i64) {
         Some(id) => println!("{}: installed \"{}\" (theme {})", discourse.name, name, id),
         None => println!("{}: theme import completed", discourse.name),
     }
@@ -168,7 +168,7 @@ fn redact_url(url: &str) -> String {
 pub fn theme_delete(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     dry_run: bool,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -238,7 +238,7 @@ pub fn theme_remove(
 pub fn theme_pull(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     local_path: Option<&Path>,
     force: bool,
 ) -> Result<()> {
@@ -276,7 +276,7 @@ pub fn theme_push(
     config: &Config,
     discourse_name: &str,
     json_path: &Path,
-    theme_id: Option<u64>,
+    theme_id: Option<i64>,
     dry_run: bool,
     assume_yes: bool,
 ) -> Result<()> {
@@ -365,7 +365,7 @@ pub fn theme_push(
 pub fn theme_duplicate(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     format: ListFormat,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -481,7 +481,7 @@ struct ThemeSettingsFile {
     version: u32,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     discourse_version: Option<String>,
-    theme_id: u64,
+    theme_id: i64,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     theme_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -578,7 +578,7 @@ fn is_json_path(p: &Path) -> bool {
 pub fn theme_setting_list(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     format: ListFormat,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -607,7 +607,7 @@ pub fn theme_setting_list(
 pub fn theme_setting_get(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     key: &str,
     format: ListFormat,
 ) -> Result<()> {
@@ -637,7 +637,7 @@ pub fn theme_setting_get(
 pub fn theme_setting_set(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     key: &str,
     value: &str,
     dry_run: bool,
@@ -666,7 +666,7 @@ pub fn theme_setting_set(
 pub fn theme_setting_pull(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     local_path: Option<&Path>,
     force: bool,
 ) -> Result<()> {
@@ -744,7 +744,7 @@ pub fn theme_setting_pull(
 pub fn theme_setting_push(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     local_path: &Path,
     dry_run: bool,
 ) -> Result<()> {
@@ -953,7 +953,7 @@ fn theme_field_entries(theme: &Value) -> Vec<ThemeFieldEntry> {
 pub fn theme_field_list(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     format: ListFormat,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -985,7 +985,7 @@ pub fn theme_field_list(
 pub fn theme_field_pull(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     field_spec: &str,
     local_path: Option<&Path>,
     force: bool,
@@ -1041,7 +1041,7 @@ pub fn theme_field_pull(
 pub fn theme_field_push(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     field_spec: &str,
     local_path: &Path,
     dry_run: bool,
@@ -1141,7 +1141,7 @@ struct ThemeAssetEntry {
 pub fn theme_asset_list(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     format: ListFormat,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -1194,7 +1194,7 @@ pub fn theme_asset_list(
 pub fn theme_asset_set(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     var_name: &str,
     file: &Path,
     dry_run: bool,
@@ -1236,7 +1236,7 @@ pub fn theme_asset_set(
 pub fn theme_asset_unset(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     var_name: &str,
     dry_run: bool,
 ) -> Result<()> {
@@ -1284,7 +1284,7 @@ pub fn theme_asset_unset(
 pub fn theme_update(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     check: bool,
     dry_run: bool,
 ) -> Result<()> {
@@ -1366,7 +1366,7 @@ pub fn theme_update(
 pub fn theme_set_enabled(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     enabled: bool,
     dry_run: bool,
 ) -> Result<()> {
@@ -1392,7 +1392,7 @@ pub fn theme_set_enabled(
 pub fn theme_set_child(
     config: &Config,
     discourse_name: &str,
-    parent_id: u64,
+    parent_id: i64,
     component_id: u64,
     attach: bool,
     dry_run: bool,
@@ -1455,19 +1455,19 @@ pub fn theme_set_child(
 
 #[derive(Debug, Serialize)]
 struct ThemeRelation {
-    id: u64,
+    id: i64,
     name: String,
 }
 
 #[derive(Debug, Serialize)]
 struct ThemeShow {
-    id: u64,
+    id: i64,
     name: String,
     component: bool,
     enabled: bool,
     default: bool,
     user_selectable: bool,
-    color_scheme_id: Option<u64>,
+    color_scheme_id: Option<i64>,
     parent_themes: Vec<ThemeRelation>,
     child_themes: Vec<ThemeRelation>,
     settings_count: usize,
@@ -1483,7 +1483,11 @@ fn theme_relations(theme: &Value, key: &str) -> Vec<ThemeRelation> {
         .map(|arr| {
             arr.iter()
                 .filter_map(|r| {
-                    let id = r.get("id").and_then(|v| v.as_u64())?;
+                    // A component's parent can legitimately be a built-in
+                    // system theme (Foundation/Horizon, negative IDs) - the
+                    // normal Discourse workflow attaches new components to
+                    // whatever the current default theme is.
+                    let id = r.get("id").and_then(Value::as_i64)?;
                     let name = r
                         .get("name")
                         .and_then(|v| v.as_str())
@@ -1519,9 +1523,9 @@ fn theme_field_inventory(theme: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn build_theme_show(theme: &Value, theme_id: u64) -> ThemeShow {
+fn build_theme_show(theme: &Value, theme_id: i64) -> ThemeShow {
     ThemeShow {
-        id: theme.get("id").and_then(|v| v.as_u64()).unwrap_or(theme_id),
+        id: theme.get("id").and_then(Value::as_i64).unwrap_or(theme_id),
         name: theme
             .get("name")
             .and_then(|v| v.as_str())
@@ -1543,7 +1547,9 @@ fn build_theme_show(theme: &Value, theme_id: u64) -> ThemeShow {
             .get("user_selectable")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        color_scheme_id: theme.get("color_scheme_id").and_then(|v| v.as_u64()),
+        // A theme's colour scheme can legitimately be a built-in palette
+        // (negative ID, e.g. -1 "Light") - see `dsc theme palette list`.
+        color_scheme_id: theme.get("color_scheme_id").and_then(Value::as_i64),
         parent_themes: theme_relations(theme, "parent_themes"),
         child_themes: theme_relations(theme, "child_themes"),
         settings_count: theme_setting_entries(theme).len(),
@@ -1568,7 +1574,7 @@ fn format_relations(rels: &[ThemeRelation]) -> String {
 pub fn theme_show(
     config: &Config,
     discourse_name: &str,
-    theme_id: u64,
+    theme_id: i64,
     format: ListFormat,
 ) -> Result<()> {
     let discourse = select_discourse(config, Some(discourse_name))?;
@@ -1620,12 +1626,12 @@ mod tests {
     fn extract_theme_unwraps_envelope_and_passes_bare() {
         let wrapped = json!({ "theme": { "id": 11, "name": "kitchen" } });
         assert_eq!(
-            extract_theme(&wrapped).get("id").and_then(|v| v.as_u64()),
+            extract_theme(&wrapped).get("id").and_then(Value::as_i64),
             Some(11)
         );
         let bare = json!({ "id": 7, "name": "bare" });
         assert_eq!(
-            extract_theme(&bare).get("id").and_then(|v| v.as_u64()),
+            extract_theme(&bare).get("id").and_then(Value::as_i64),
             Some(7)
         );
     }
@@ -1881,6 +1887,26 @@ mod tests {
     }
 
     #[test]
+    fn theme_relations_handles_a_built_in_system_theme_parent() {
+        // A component's parent can legitimately be Foundation/Horizon
+        // (Discourse's built-in default themes, negative IDs) - the normal
+        // workflow attaches new components to whatever the current default
+        // theme is. Regression test for a bug where `.as_u64()` silently
+        // dropped these entries instead of surfacing them.
+        let theme = json!({
+            "parent_themes": [
+                { "id": -1, "name": "Foundation" },
+                { "id": -2, "name": "Horizon" }
+            ]
+        });
+        let rels = theme_relations(&theme, "parent_themes");
+        assert_eq!(rels.len(), 2);
+        assert_eq!(rels[0].id, -1);
+        assert_eq!(rels[0].name, "Foundation");
+        assert_eq!(rels[1].id, -2);
+    }
+
+    #[test]
     fn theme_field_inventory_joins_target_and_name() {
         let theme = json!({
             "theme_fields": [
@@ -1914,5 +1940,36 @@ mod tests {
         assert_eq!(show.child_themes.len(), 1);
         assert_eq!(show.settings_count, 1);
         assert_eq!(show.fields, vec!["common/scss"]);
+    }
+
+    #[test]
+    fn build_theme_show_handles_a_negative_built_in_theme_id() {
+        // Regression test for a bug where `dsc theme` commands couldn't
+        // reference Discourse's built-in system themes (Foundation/Horizon,
+        // the default themes on any fresh install) at all: `.as_u64()`
+        // silently coerced a negative id to 0, and `theme_id: u64` on the
+        // CLI/API-client side rejected negative arguments outright.
+        let theme = json!({
+            "id": -1,
+            "name": "Foundation",
+            "component": false,
+            "enabled": true,
+            "default": true,
+            "user_selectable": false,
+            "color_scheme_id": -1
+        });
+        let show = build_theme_show(&theme, -1);
+        assert_eq!(show.id, -1);
+        assert_eq!(show.color_scheme_id, Some(-1));
+    }
+
+    #[test]
+    fn theme_list_entry_preserves_a_negative_built_in_theme_id() {
+        // theme_list's own extraction (distinct from build_theme_show's)
+        // had the same `.as_u64().unwrap_or_default()` bug, silently
+        // showing every built-in theme's id as 0.
+        let theme = json!({ "id": -2, "name": "Horizon", "enabled": true });
+        let id = theme.get("id").and_then(Value::as_i64).unwrap_or_default();
+        assert_eq!(id, -2);
     }
 }

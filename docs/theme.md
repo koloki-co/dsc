@@ -10,6 +10,8 @@ dsc theme list <discourse> [--format text|json|yaml] [--verbose]
 
 Lists installed themes on the specified Discourse. `-v`/`--verbose` includes additional fields where supported.
 
+Every `theme_id`/`parent_id` argument across `dsc theme` accepts Discourse's built-in system themes (Foundation, Horizon — currently `-1`/`-2`, the defaults on any fresh install) as well as regular positive-ID themes, e.g. `dsc theme duplicate myforum -1` or `dsc theme show myforum -2`. Pass the negative number directly; no `--` separator needed.
+
 ## dsc theme install
 
 ```

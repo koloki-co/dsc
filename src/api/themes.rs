@@ -26,7 +26,7 @@ impl DiscourseClient {
     }
 
     /// Fetch a single theme by ID.
-    pub fn fetch_theme(&self, theme_id: u64) -> Result<Value> {
+    pub fn fetch_theme(&self, theme_id: i64) -> Result<Value> {
         let response = self.get(&format!("/admin/themes/{}.json", theme_id))?;
         let status = response.status();
         let text = response
@@ -62,7 +62,7 @@ impl DiscourseClient {
     }
 
     /// Delete a theme by ID.
-    pub fn delete_theme(&self, theme_id: u64) -> Result<()> {
+    pub fn delete_theme(&self, theme_id: i64) -> Result<()> {
         let path = format!("/admin/themes/{}.json", theme_id);
         let response = self.send_retrying(|| self.delete_builder(&path))?;
         let status = response.status();
@@ -76,7 +76,7 @@ impl DiscourseClient {
     }
 
     /// Update an existing theme.
-    pub fn update_theme(&self, theme_id: u64, theme: &Value) -> Result<()> {
+    pub fn update_theme(&self, theme_id: i64, theme: &Value) -> Result<()> {
         let payload = json!({ "theme": theme });
         let path = format!("/admin/themes/{}.json", theme_id);
         let response = self.send_retrying(|| Ok(self.put(&path)?.json(&payload)))?;
@@ -94,7 +94,7 @@ impl DiscourseClient {
     /// `PUT /admin/themes/:id/setting.json` with `name` + `value` form fields.
     /// For JSON-schema list settings, `value` is the JSON text as a string
     /// (the caller passes it through verbatim).
-    pub fn set_theme_setting(&self, theme_id: u64, name: &str, value: &str) -> Result<()> {
+    pub fn set_theme_setting(&self, theme_id: i64, name: &str, value: &str) -> Result<()> {
         let path = format!("/admin/themes/{}/setting.json", theme_id);
         let payload = [("name", name), ("value", value)];
         let response = self.send_retrying(|| Ok(self.put(&path)?.form(&payload)))?;
@@ -112,7 +112,7 @@ impl DiscourseClient {
     /// return the updated theme JSON. Used for the remote-theme lifecycle:
     /// `remote_check` refreshes `commits_behind` without pulling, and
     /// `remote_update` pulls the latest upstream commit.
-    pub fn put_theme_flag(&self, theme_id: u64, flag: &str) -> Result<Value> {
+    pub fn put_theme_flag(&self, theme_id: i64, flag: &str) -> Result<Value> {
         let payload = json!({ "theme": { flag: true } });
         let path = format!("/admin/themes/{}.json", theme_id);
         let response = self.send_retrying(|| Ok(self.put(&path)?.json(&payload)))?;
