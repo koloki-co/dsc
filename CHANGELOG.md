@@ -5,6 +5,36 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.22.0] - 2026-09-30
+
+### Bug fixes
+
+- **theme**: Support Discourse's built-in negative-ID system themes ([62b1939](https://github.com/koloki-co/dsc/commit/62b1939cd7c6a84c209e40e1b4cf0bc0aaeff6b0))
+
+- **config**: Omit empty [harden]/[template] sections from save_config ([4931b96](https://github.com/koloki-co/dsc/commit/4931b96371f7fc335c4f7be2c14bb7a6d09d9a7b))
+
+- **install**: Use launcher rebuild when a container is already running ([f4de2a5](https://github.com/koloki-co/dsc/commit/f4de2a5c414f265d0605758e2afc4c6c6fef550e))
+
+- **config**: Save_config resolves a symlinked config path to its target ([f255218](https://github.com/koloki-co/dsc/commit/f25521821f918e8e9d5d78134d1e46d7887db7a4))
+
+- **api-key**: Follow offset pagination in api-key list (R70) ([f066762](https://github.com/koloki-co/dsc/commit/f0667623ccfa5298d3b744723703a1a14339b9a9))
+
+### Build
+
+- **deps**: Bump zensical in the routine-minor-and-patch group ([b12d6c4](https://github.com/koloki-co/dsc/commit/b12d6c484bb284800bb03bd34a0e17a35da0b504))
+
+- **deps**: Bump taiki-e/install-action ([4e6d7cf](https://github.com/koloki-co/dsc/commit/4e6d7cfa15d5fa5890d82c072851b66f7bd1fe79))
+
+### Features
+
+- **install**: Warn loudly when SMTP is omitted ([7e36ade](https://github.com/koloki-co/dsc/commit/7e36ade6112daa9a9757c271b9bbc050324fb627))
+
+- **install**: Always request SSL/Let's Encrypt in the rendered app.yml ([643a9ea](https://github.com/koloki-co/dsc/commit/643a9ea778d96f81dca5393abb987cb781e5eb52))
+
+### Tests
+
+- **themes**: Guard against the negative-Discourse-ID bug class ([6687c11](https://github.com/koloki-co/dsc/commit/6687c11b2f818c94a65878ff41e203795a4c37ba))
+
 ## [0.21.0] - 2026-09-29
 
 ### Bug fixes
