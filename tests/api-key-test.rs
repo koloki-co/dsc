@@ -85,6 +85,53 @@ fn config_for(url: &str, dir: &TempDir) -> std::path::PathBuf {
     )
 }
 
+#[test]
+fn api_key_list_follows_offset_pagination() {
+    let full: &'static str = Box::leak(
+        format!(
+            "{{\"keys\":[{}]}}",
+            (1..=50)
+                .map(|i| format!("{{\"id\":{i}}}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+        .into_boxed_str(),
+    );
+    let responses = vec![
+        MockResponse {
+            status: "200 OK",
+            body: full,
+        },
+        MockResponse {
+            status: "200 OK",
+            body: "{\"keys\":[{\"id\":51}]}",
+        },
+    ];
+    let (url, requests, handle) = start_mock(responses);
+    let dir = TempDir::new().expect("tempdir");
+    let output = run_dsc(
+        &["api-key", "list", "mock", "--format", "json"],
+        &config_for(&url, &dir),
+    );
+    handle.join().expect("mock thread");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse list");
+    assert_eq!(result.as_array().expect("array").len(), 51);
+    let seen = requests.lock().expect("request log");
+    assert_eq!(
+        *seen,
+        vec![
+            "GET /admin/api/keys.json?offset=0&limit=50 HTTP/1.1".to_string(),
+            "GET /admin/api/keys.json?offset=50&limit=50 HTTP/1.1".to_string(),
+        ]
+    );
+}
+
 // Regression test: `dsc api-key revoke` used to send DELETE to the plain
 // `/admin/api/keys/:id.json` endpoint - Discourse's *permanent* destroy
 // route - instead of the reversible `POST .../revoke` endpoint, silently

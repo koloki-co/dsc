@@ -2,11 +2,14 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::{DiscourseClient, ResponseBody};
+use super::client::{DiscourseClient, MAX_PAGINATION_PAGES, ResponseBody};
 use super::error::http_error;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+/// Discourse's `Admin::ApiController::INDEX_LIMIT`: the most keys one page returns.
+const API_KEYS_PAGE_SIZE: usize = 50;
 
 /// One row from /admin/api/keys.json.
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -40,23 +43,50 @@ pub struct CreatedApiKey {
 }
 
 impl DiscourseClient {
+    /// List every API key, following Discourse's `offset`/`limit` pagination
+    /// (the controller caps each page at 50 keys).
     pub fn list_api_keys(&self) -> Result<Vec<ApiKeySummary>> {
-        let response = self.get("/admin/api/keys.json")?;
-        let status = response.status();
-        let text = response
-            .text_capped()
-            .context("reading api keys response")?;
-        if !status.is_success() {
-            return Err(http_error("api keys list request", status, &text));
+        let mut all: Vec<ApiKeySummary> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..MAX_PAGINATION_PAGES {
+            let path = format!(
+                "/admin/api/keys.json?offset={}&limit={API_KEYS_PAGE_SIZE}",
+                all.len()
+            );
+            let response = self.get(&path)?;
+            let status = response.status();
+            let text = response
+                .text_capped()
+                .context("reading api keys response")?;
+            if !status.is_success() {
+                return Err(http_error("api keys list request", status, &text));
+            }
+            let value: Value =
+                serde_json::from_str(&text).context("parsing api keys response json")?;
+            let keys_value = value
+                .get("keys")
+                .cloned()
+                .unwrap_or(Value::Array(Vec::new()));
+            let page: Vec<ApiKeySummary> =
+                serde_json::from_value(keys_value).context("deserialising api keys")?;
+            let page_len = page.len();
+            let mut added = 0;
+            for key in page {
+                if seen.insert(key.id) {
+                    all.push(key);
+                    added += 1;
+                }
+            }
+            if page_len < API_KEYS_PAGE_SIZE {
+                return Ok(all);
+            }
+            if added == 0 {
+                return Err(anyhow!("api key pagination made no progress"));
+            }
         }
-        let value: Value = serde_json::from_str(&text).context("parsing api keys response json")?;
-        let keys_value = value
-            .get("keys")
-            .cloned()
-            .unwrap_or(Value::Array(Vec::new()));
-        let keys: Vec<ApiKeySummary> =
-            serde_json::from_value(keys_value).context("deserialising api keys")?;
-        Ok(keys)
+        Err(anyhow!(
+            "api key pagination exceeded {MAX_PAGINATION_PAGES} pages"
+        ))
     }
 
     /// Create a new API key. `username` of `None` makes a global all-users key.
