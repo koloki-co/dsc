@@ -68,6 +68,9 @@ pub fn install(
             "at least one --email is required (used for DISCOURSE_DEVELOPER_EMAILS)"
         ));
     }
+    if opts.smtp_host.is_none() {
+        warn_no_smtp();
+    }
     validate_ssh_target(&opts.ssh_user).context("invalid --ssh-user")?;
     validate_ssh_target(&opts.host).context("invalid --host")?;
 
@@ -133,6 +136,9 @@ pub fn install(
     } else {
         config.discourse.push(entry);
         save_config(config_path, config)?;
+        if opts.smtp_host.is_none() {
+            warn_no_smtp();
+        }
         announce(&format!(
             "✓ added '{}' to {}. apikey/api_username are still empty — create an API key on the new forum and run `dsc setting set {} apikey/api_username`, or edit the file directly.",
             opts.name,
@@ -544,6 +550,28 @@ fn assert_enough_disk(gb_raw: &str, dry_run: bool) -> Result<()> {
 
 fn announce(msg: &str) {
     eprintln!("[install] {}", msg);
+}
+
+/// Discourse's normal signup flow sends a confirmation email before an
+/// account can log in - including the very first admin account. Without a
+/// working SMTP relay, nobody can actually get into the new site through
+/// the web UI at all, no matter how well everything else went. This is
+/// easy to miss because every other step still succeeds and `about.json`
+/// still responds - found live against Numun (2026-09-30) as a real
+/// "how do I even log in" blocker discovered only after the site was
+/// already up. Printed once up front (so it's seen before any of the
+/// noisy remote-command output) and again in the final summary (in case
+/// the first one scrolled off during a long `launcher bootstrap`).
+fn warn_no_smtp() {
+    eprintln!(
+        "[install] WARNING: no --smtp-host given. Discourse cannot send the confirmation \
+         email the first admin signup needs — without SMTP, nobody can log in to this site \
+         at all yet, even though it will otherwise come up fine. Either re-run with \
+         --smtp-host/--smtp-user/--smtp-pass-stdin now, or add SMTP settings to app.yml \
+         and `launcher rebuild app` before anyone tries to sign up. A personal account \
+         (Gmail, Proton Mail, etc.) with an app-specific password is a fine temporary \
+         stopgap until a dedicated transactional provider is set up."
+    );
 }
 
 /// Run a short remote command and capture its stdout as text. For quick
