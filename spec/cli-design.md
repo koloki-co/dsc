@@ -75,6 +75,19 @@ The small, boring rules that keep the surface uniform.
 - `text`: print `No <resource> found.` (keep useful context where it helps, e.g. `No PMs found in {direction}.`)
 - `json`/`yaml`: a normal empty array/object, never a magic string.
 
+### Discourse ID types
+
+Discourse's admin API returns **signed** numeric IDs on the wire, and reserves negative values for built-in/system entities: users `system` (`-1`) and `discobot` (`-2`), themes Foundation (`-1`) and Horizon (`-2`), and several built-in colour schemes/palettes. This has silently broken three separate `dsc` features so far (`dsc user list` erroring on a page containing `system`/`discobot`; `dsc theme`/`dsc palette` unable to reference a built-in theme or colour scheme at all), each found live against a real forum, not in review.
+
+Two independent things go wrong if an ID field is typed `u64` where Discourse can return a negative value:
+
+1. **CLI parsing.** `clap` rejects a negative argument outright unless the field is `i64` *and* the arg has `#[arg(allow_negative_numbers = true)]` (clap does not infer this from the type - it must be set explicitly on every affected field).
+2. **JSON extraction.** `serde_json::Value::as_u64()` returns `None` for a negative number - not an error. Chained into `.unwrap_or_default()` this silently becomes `0`; chained into `.filter_map()` it silently drops the row. Either way: wrong output, no error message. A field deserialized straight into a struct with `id: u64` fails loudly instead (a hard `serde` error) - safer than the silent form, but still wrong for any resource type where Discourse legitimately returns negative IDs.
+
+**When adding a parameter, CLI arg, or struct field for a Discourse resource's numeric ID**, check first whether that resource type can have a negative/built-in/system row (skim the relevant Discourse admin controller/serializer, or just try requesting page 1 of `active` users or the themes list on a fresh install - `system`, `discobot`, and the default theme are on every install). If it can: type it `i64`, add `#[arg(allow_negative_numbers = true)]` on every CLI field, and use `.as_i64()` at every extraction site. If it can't (freshly-created resources always get positive IDs from Discourse - topics, posts, categories, tags, groups, API keys, webhooks, uploads, invites - and counts/enums are never IDs at all): `u64` is correct and no special handling is needed.
+
+`tests/discourse-id-typing-test.rs` enforces the extraction half of this mechanically: every `.as_u64()` call site in `src/` must be in that test's allowlist with a one-line justification, so a new one can't land silently. There's no equivalent mechanical guard for the CLI-typing half or for a fresh `id: u64` struct field - that's a judgement call at review time, using the check above. Prior art to copy from: `src/api/users.rs` (`UserSummary`/`UserDetail`, plus `spec/commands/user-list-negative-ids.md`), `commands/palette.rs` (`palette_id: i64`), and `commands/theme.rs`/`api/themes.rs` (`theme_id`/`parent_id: i64`).
+
 ### Flag style
 
 - Short flags are lowercase. Reuse established letters across commands: `-f`/`--format`, `-n`/`--dry-run`, `-p`/`--parallel`, `-b`/`--branch`.
