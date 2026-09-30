@@ -44,9 +44,9 @@ where
 pub struct Config {
     #[serde(default)]
     pub discourse: Vec<DiscourseConfig>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "HardenConfig::is_unset")]
     pub harden: HardenConfig,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "TemplateConfig::is_empty")]
     pub template: TemplateConfig,
 }
 
@@ -59,11 +59,17 @@ pub struct TemplateConfig {
     pub vars: BTreeMap<String, String>,
 }
 
+impl TemplateConfig {
+    fn is_empty(&self) -> bool {
+        self.vars.is_empty()
+    }
+}
+
 /// User overrides for `dsc harden` defaults. Every field is optional;
 /// anything left unset falls back to the built-in defaults applied in
 /// `commands::harden::resolve_options`. CLI flags override this block on
 /// a per-run basis.
-#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
 pub struct HardenConfig {
     /// Username for the new sudo-enabled non-root account. Default: `discourse`.
     #[serde(default, deserialize_with = "deserialize_opt_string_empty_as_none")]
@@ -113,6 +119,15 @@ pub struct HardenConfig {
     pub extra_ufw_allow: Option<Vec<String>>,
 }
 
+impl HardenConfig {
+    /// True when every field is unset — no `[harden]` overrides at all.
+    /// Used to omit an empty `[harden]` table from `save_config` output
+    /// rather than writing back a header with nothing under it.
+    fn is_unset(&self) -> bool {
+        *self == HardenConfig::default()
+    }
+}
+
 /// Configuration for a single Discourse install.
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct DiscourseConfig {
@@ -160,7 +175,7 @@ pub struct DiscourseConfig {
     pub update_colour: Option<String>,
     /// Per-forum template variables for `dsc render`, overriding
     /// `[template.vars]` globals of the same name and introducing new ones.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub template: BTreeMap<String, String>,
 }
 
@@ -544,6 +559,70 @@ mod tests {
                 .is_symlink()
         );
         assert!(fs::read_to_string(&path).unwrap().contains("plain"));
+    }
+
+    #[test]
+    fn save_config_omits_empty_harden_and_template_sections() {
+        // Regression test: `toml::to_string_pretty` writes a bare `[section]`
+        // header for a present-but-empty sub-table (unlike an `Option<T>`
+        // field, which correctly disappears when `None`). Without
+        // `skip_serializing_if`, every `save_config` call — including ones
+        // triggered by `dsc add`/`import`/`install` — silently accumulated
+        // `[harden]`, `[template.vars]`, and `[discourse.template]` noise
+        // into a hand-written dsc.toml that never asked for any of them.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("dsc.toml");
+        let config = Config {
+            discourse: vec![DiscourseConfig {
+                name: "numun".to_string(),
+                baseurl: "https://communities.numun.fund".to_string(),
+                ..DiscourseConfig::default()
+            }],
+            ..Config::default()
+        };
+        save_config(&path, &config).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(
+            !written.contains("[harden]"),
+            "empty [harden] must be omitted:\n{written}"
+        );
+        assert!(
+            !written.contains("[template"),
+            "empty [template.vars]/[discourse.template] must be omitted:\n{written}"
+        );
+    }
+
+    #[test]
+    fn save_config_keeps_harden_and_template_sections_when_set() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("dsc.toml");
+        let mut template_vars = BTreeMap::new();
+        template_vars.insert("organisation".to_string(), "Koloki".to_string());
+        let mut discourse_template = BTreeMap::new();
+        discourse_template.insert("region".to_string(), "EU".to_string());
+        let config = Config {
+            discourse: vec![DiscourseConfig {
+                name: "numun".to_string(),
+                baseurl: "https://communities.numun.fund".to_string(),
+                template: discourse_template,
+                ..DiscourseConfig::default()
+            }],
+            harden: HardenConfig {
+                new_user: Some("discourse".to_string()),
+                ..HardenConfig::default()
+            },
+            template: TemplateConfig {
+                vars: template_vars,
+            },
+        };
+        save_config(&path, &config).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(written.contains("[harden]"));
+        assert!(written.contains(r#"new_user = "discourse""#));
+        assert!(written.contains("[template.vars]"));
+        assert!(written.contains(r#"organisation = "Koloki""#));
+        assert!(written.contains("[discourse.template]"));
+        assert!(written.contains(r#"region = "EU""#));
     }
 
     #[test]
