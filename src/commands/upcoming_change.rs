@@ -4,7 +4,7 @@
 
 use crate::api::{DiscourseClient, UpcomingChange};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_result, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use anyhow::{Result, bail};
 use serde::Serialize;
@@ -79,7 +79,7 @@ pub fn upcoming_change_set(
         );
     }
 
-    let outcome = if was_enabled == enable {
+    let outcome: &'static str = if was_enabled == enable {
         "unchanged"
     } else if dry_run {
         "planned"
@@ -104,10 +104,34 @@ pub fn upcoming_change_set(
         before.clone()
     };
 
+    let prefix = if dry_run { "[dry-run] " } else { "" };
+    let scope = after
+        .upcoming_change
+        .as_ref()
+        .and_then(|d| d.enabled_for.as_deref())
+        .unwrap_or("-");
+    let text = match outcome {
+        "unchanged" => format!(
+            "{prefix}{}: {} already {} (value:{}, enabled_for:{scope}); no change",
+            discourse.name,
+            setting_name,
+            action_state(enable),
+            before.value
+        ),
+        "planned" => format!(
+            "{prefix}{}: would {action} {} (value:{} -> {enable}, enabled_for:{scope}) via PUT /admin/config/upcoming-changes/toggle.json",
+            discourse.name, setting_name, before.value
+        ),
+        _ => format!(
+            "{}: {action}d {} (value:{} -> {}, enabled_for:{scope})",
+            discourse.name, setting_name, before.value, after.value
+        ),
+    };
+
     let result = SetResult {
         setting: setting_name.to_string(),
-        action: action.to_string(),
-        outcome: outcome.to_string(),
+        action,
+        outcome,
         dry_run,
         previous_value: before.value.clone(),
         value: after.value.clone(),
@@ -117,32 +141,7 @@ pub fn upcoming_change_set(
             .and_then(|d| d.enabled_for.clone()),
         groups: after.groups.clone(),
     };
-    match format {
-        ListFormat::Text => {
-            let prefix = if dry_run { "[dry-run] " } else { "" };
-            let scope = result.enabled_for.as_deref().unwrap_or("-");
-            match outcome {
-                "unchanged" => println!(
-                    "{prefix}{}: {} already {} (value:{}, enabled_for:{scope}); no change",
-                    discourse.name,
-                    setting_name,
-                    action_state(enable),
-                    result.value
-                ),
-                "planned" => println!(
-                    "{prefix}{}: would {action} {} (value:{} -> {enable}, enabled_for:{scope}) via PUT /admin/config/upcoming-changes/toggle.json",
-                    discourse.name, setting_name, result.previous_value
-                ),
-                _ => println!(
-                    "{}: {action}d {} (value:{} -> {}, enabled_for:{scope})",
-                    discourse.name, setting_name, result.previous_value, result.value
-                ),
-            }
-        }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&result)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&result)?),
-    }
-    Ok(())
+    emit_result(format, &result, &text)
 }
 
 fn action_state(enable: bool) -> &'static str {
@@ -152,8 +151,8 @@ fn action_state(enable: bool) -> &'static str {
 #[derive(Serialize)]
 struct SetResult {
     setting: String,
-    action: String,
-    outcome: String,
+    action: &'static str,
+    outcome: &'static str,
     dry_run: bool,
     previous_value: serde_json::Value,
     value: serde_json::Value,

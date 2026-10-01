@@ -579,7 +579,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: BoardCommand,
     },
-    /// List and inspect Discourse's hidden Upcoming Changes.
+    /// List, inspect, enable, and disable Discourse's hidden Upcoming Changes.
     #[command(visible_alias = "upcoming")]
     #[command(after_help = "Examples:
   dsc upcoming-change list myforum
