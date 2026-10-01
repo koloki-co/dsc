@@ -105,6 +105,9 @@ fn get_body(path: &str) -> String {
     if p.starts_with("/admin/themes/") {
         return format!(r#"{{"theme":{theme}}}"#);
     }
+    if p == "/admin/config/upcoming-changes.json" {
+        return r#"{"upcoming_changes":[{"setting":"enable_generated_llms_txt","value":false,"depends_on_met":true,"upcoming_change":{"status":"beta","enabled_for":"no_one"}}]}"#.to_string();
+    }
     if p == "/admin/site_settings.json" {
         return r#"{"site_settings":[{"setting":"title","value":"Mock","default":"Discourse","type":"string","category":"required","description":"t"}]}"#.to_string();
     }
@@ -275,6 +278,26 @@ type Case = (&'static str, &'static [&'static str], bool);
 const CASES: &[Case] = &[
     ("board show", &["board", "show", "mock", "3"], true),
     ("board pull", &["board", "pull", "mock", "3"], true),
+    (
+        "upcoming-change enable",
+        &[
+            "upcoming-change",
+            "enable",
+            "mock",
+            "enable_generated_llms_txt",
+        ],
+        true,
+    ),
+    (
+        "upcoming-change disable",
+        &[
+            "upcoming-change",
+            "disable",
+            "mock",
+            "enable_generated_llms_txt",
+        ],
+        true,
+    ),
     (
         "topic reply",
         &["topic", "reply", "mock", "7", "BODY"],

@@ -6,7 +6,8 @@ use crate::api::{DiscourseClient, UpcomingChange};
 use crate::cli::ListFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
 use crate::config::Config;
-use anyhow::Result;
+use anyhow::{Result, bail};
+use serde::Serialize;
 
 /// List every Upcoming Change the forum exposes.
 pub fn upcoming_change_list(
@@ -45,6 +46,119 @@ pub fn upcoming_change_show(
         ListFormat::Yaml => println!("{}", serde_yaml::to_string(&change)?),
     }
     Ok(())
+}
+
+/// Enable or disable one Upcoming Change: explicit target state, idempotent,
+/// dry-runnable, and post-verified by re-fetching the list.
+pub fn upcoming_change_set(
+    config: &Config,
+    discourse_name: &str,
+    setting_name: &str,
+    enable: bool,
+    format: ListFormat,
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+
+    let before = client.show_upcoming_change(setting_name)?;
+    let action = if enable { "enable" } else { "disable" };
+    let was_enabled = before.is_enabled();
+
+    if enable && before.depends_on_met == Some(false) {
+        bail!(
+            "refusing to enable '{setting_name}': its dependencies are not met \
+             (depends_on: {}). Enable the dependencies first; dsc does not do this automatically",
+            before
+                .depends_on_humanized_names
+                .as_ref()
+                .or(before.depends_on.as_ref())
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        );
+    }
+
+    let outcome = if was_enabled == enable {
+        "unchanged"
+    } else if dry_run {
+        "planned"
+    } else {
+        "changed"
+    };
+
+    if outcome == "changed" {
+        client.set_upcoming_change(setting_name, enable)?;
+    }
+    let after = if outcome == "changed" {
+        let after = client.show_upcoming_change(setting_name)?;
+        if after.is_enabled() != enable {
+            bail!(
+                "{action} of '{setting_name}' was accepted but the forum still reports value:{}; \
+                 check the Discourse admin UI",
+                after.value
+            );
+        }
+        after
+    } else {
+        before.clone()
+    };
+
+    let result = SetResult {
+        setting: setting_name.to_string(),
+        action: action.to_string(),
+        outcome: outcome.to_string(),
+        dry_run,
+        previous_value: before.value.clone(),
+        value: after.value.clone(),
+        enabled_for: after
+            .upcoming_change
+            .as_ref()
+            .and_then(|d| d.enabled_for.clone()),
+        groups: after.groups.clone(),
+    };
+    match format {
+        ListFormat::Text => {
+            let prefix = if dry_run { "[dry-run] " } else { "" };
+            let scope = result.enabled_for.as_deref().unwrap_or("-");
+            match outcome {
+                "unchanged" => println!(
+                    "{prefix}{}: {} already {} (value:{}, enabled_for:{scope}); no change",
+                    discourse.name,
+                    setting_name,
+                    action_state(enable),
+                    result.value
+                ),
+                "planned" => println!(
+                    "{prefix}{}: would {action} {} (value:{} -> {enable}, enabled_for:{scope}) via PUT /admin/config/upcoming-changes/toggle.json",
+                    discourse.name, setting_name, result.previous_value
+                ),
+                _ => println!(
+                    "{}: {action}d {} (value:{} -> {}, enabled_for:{scope})",
+                    discourse.name, setting_name, result.previous_value, result.value
+                ),
+            }
+        }
+        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&result)?),
+        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&result)?),
+    }
+    Ok(())
+}
+
+fn action_state(enable: bool) -> &'static str {
+    if enable { "enabled" } else { "disabled" }
+}
+
+#[derive(Serialize)]
+struct SetResult {
+    setting: String,
+    action: String,
+    outcome: String,
+    dry_run: bool,
+    previous_value: serde_json::Value,
+    value: serde_json::Value,
+    enabled_for: Option<String>,
+    groups: Option<serde_json::Value>,
 }
 
 fn print_list(changes: &[UpcomingChange]) {

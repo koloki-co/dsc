@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Client for Discourse's Upcoming Changes admin API
-//! (`/admin/config/upcoming-changes.json`), read-only in this phase. See
+//! (`/admin/config/upcoming-changes.json`), list/show plus the explicit enable/disable toggle. See
 //! `spec/commands/upcoming-changes-and-setting-upload.md` for the full
 //! discovery notes.
 
@@ -71,6 +71,19 @@ struct UpcomingChangesEnvelope {
 }
 
 const UPCOMING_CHANGES_PATH: &str = "/admin/config/upcoming-changes.json";
+const UPCOMING_CHANGES_TOGGLE_PATH: &str = "/admin/config/upcoming-changes/toggle.json";
+
+impl UpcomingChange {
+    /// Whether the change is effectively on. Discourse serialises the value
+    /// as a JSON boolean; tolerate the `t`/`true` string forms too.
+    pub fn is_enabled(&self) -> bool {
+        match &self.value {
+            Value::Bool(b) => *b,
+            Value::String(s) => matches!(s.as_str(), "true" | "t"),
+            _ => false,
+        }
+    }
+}
 
 impl DiscourseClient {
     /// List every Upcoming Change the server exposes, in its own stable
@@ -110,6 +123,34 @@ impl DiscourseClient {
                      available)"
                 )
             })
+    }
+
+    /// Send the caller's explicit target state to the toggle endpoint. The
+    /// route is named `toggle` but takes an explicit boolean, so this is
+    /// idempotent server-side.
+    pub fn set_upcoming_change(&self, setting_name: &str, enabled: bool) -> Result<()> {
+        let params = [
+            ("setting_name", setting_name.to_string()),
+            ("enabled", enabled.to_string()),
+        ];
+        let response = self.send_retrying(|| {
+            Ok(self
+                .put(UPCOMING_CHANGES_TOGGLE_PATH)?
+                .header("X-Requested-With", "XMLHttpRequest")
+                .form(&params))
+        })?;
+        let status = response.status();
+        let text = response
+            .text_capped()
+            .context("reading upcoming change toggle response")?;
+        if !status.is_success() {
+            return Err(upcoming_changes_http_error(
+                "upcoming change toggle",
+                status,
+                &text,
+            ));
+        }
+        Ok(())
     }
 }
 
