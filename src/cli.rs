@@ -579,11 +579,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: BoardCommand,
     },
-    /// List and inspect Discourse's hidden Upcoming Changes.
+    /// List, inspect, enable, and disable Discourse's hidden Upcoming Changes.
     #[command(visible_alias = "upcoming")]
     #[command(after_help = "Examples:
   dsc upcoming-change list myforum
-  dsc upcoming-change show myforum enable_generated_llms_txt")]
+  dsc upcoming-change show myforum enable_generated_llms_txt
+  dsc --dry-run upcoming-change enable myforum enable_generated_llms_txt")]
     UpcomingChange {
         #[command(subcommand)]
         command: UpcomingChangeCommand,
@@ -1085,6 +1086,32 @@ pub enum UpcomingChangeCommand {
   dsc upcoming-change show myforum enable_generated_llms_txt
   dsc upcoming-change show myforum enable_generated_llms_txt --format yaml")]
     Show {
+        /// Discourse name.
+        discourse: String,
+        /// Exact setting name, as shown by `upcoming-change list`.
+        setting_name: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Enable one Upcoming Change (idempotent, post-verified).
+    #[command(after_help = "Examples:
+  dsc --dry-run upcoming-change enable myforum enable_generated_llms_txt
+  dsc upcoming-change enable myforum enable_generated_llms_txt")]
+    Enable {
+        /// Discourse name.
+        discourse: String,
+        /// Exact setting name, as shown by `upcoming-change list`.
+        setting_name: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Disable one Upcoming Change (idempotent, post-verified).
+    #[command(after_help = "Examples:
+  dsc --dry-run upcoming-change disable myforum enable_generated_llms_txt
+  dsc upcoming-change disable myforum enable_generated_llms_txt")]
+    Disable {
         /// Discourse name.
         discourse: String,
         /// Exact setting name, as shown by `upcoming-change list`.

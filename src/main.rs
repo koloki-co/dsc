@@ -1642,6 +1642,30 @@ fn main() -> Result<()> {
                 &setting_name,
                 format,
             ),
+            UpcomingChangeCommand::Enable {
+                discourse,
+                setting_name,
+                format,
+            } => commands::upcoming_change::upcoming_change_set(
+                &config,
+                &discourse,
+                &setting_name,
+                true,
+                format,
+                dry_run,
+            ),
+            UpcomingChangeCommand::Disable {
+                discourse,
+                setting_name,
+                format,
+            } => commands::upcoming_change::upcoming_change_set(
+                &config,
+                &discourse,
+                &setting_name,
+                false,
+                format,
+                dry_run,
+            ),
         },
 
         Commands::Upload {

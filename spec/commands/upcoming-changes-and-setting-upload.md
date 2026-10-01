@@ -1,6 +1,6 @@
 # `dsc upcoming-change` and `dsc setting upload`
 
-> **Status: R59 Phase 1 implemented on `main`.** Discovery completed on 3 September 2026 against current Discourse source and a 16-forum fleet audit, then revalidated on 6 September 2026 against Discourse commit [`a6ade3e`](https://github.com/discourse/discourse/commit/a6ade3e9915f427d115f082a2ddbc6c208c5f3c1). `dsc upcoming-change list/show` (read-only) is implemented against fixture/unit tests; Phases 2-4 (enable/disable, `setting upload`, live compatibility capture) remain.
+> **Status: R59 Phases 1-2 implemented on `main`.** Discovery completed on 3 September 2026 against current Discourse source and a 16-forum fleet audit, then revalidated on 6 September 2026 against Discourse commit [`a6ade3e`](https://github.com/discourse/discourse/commit/a6ade3e9915f427d115f082a2ddbc6c208c5f3c1). `dsc upcoming-change list/show` (read-only) is implemented against fixture/unit tests; Phase 2 (enable/disable) is also implemented against a stateful mock; Phases 3-4 (`setting upload`, live compatibility capture) remain.
 
 ## Problem
 

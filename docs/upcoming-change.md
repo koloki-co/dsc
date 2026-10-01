@@ -1,9 +1,9 @@
 # dsc upcoming-change
 
-List and inspect Discourse's hidden Upcoming Changes - features gated behind
+List, inspect, enable and disable Discourse's hidden Upcoming Changes - features gated behind
 `/admin/config/upcoming-changes.json` rather than the ordinary site-settings
-catalogue, so `dsc setting get` cannot see them. This phase is read-only;
-explicit `enable`/`disable` and `dsc setting upload` are a later phase. See
+catalogue, so `dsc setting get` cannot see them. `dsc setting upload` is a later
+phase. See
 [the implementation spec](https://github.com/koloki-co/dsc/blob/main/spec/commands/upcoming-changes-and-setting-upload.md)
 for the full design and the driver (core Discourse's `enable_generated_llms_txt`).
 
@@ -48,10 +48,42 @@ Fails clearly if the name is absent - it may not exist on this Discourse
 version, may already be a promoted ordinary setting, or the name may be
 misspelled; run `list` to see what is available.
 
+## Enable or disable one Upcoming Change
+
+```text
+dsc upcoming-change enable  <discourse> <setting-name> [--format text|json|yaml]
+dsc upcoming-change disable <discourse> <setting-name> [--format text|json|yaml]
+```
+
+Sends the explicit target state to `PUT /admin/config/upcoming-changes/toggle.json`
+(there is deliberately no relative `toggle` verb). The command:
+
+- fails if the name does not exist;
+- refuses to enable when `depends_on_met` is false (dependencies are never
+  enabled automatically);
+- makes no request and prints `no change` if the forum is already in the
+  target state;
+- under global `--dry-run`, reads current state and prints the plan without
+  sending the PUT;
+- re-fetches afterwards and exits non-zero if the forum does not report the
+  requested value.
+
+Existing group scope (`enabled_for`) is preserved by the server and reported
+in the output, along with the previous value for rollback.
+
+```bash
+dsc --dry-run upcoming-change enable myforum enable_generated_llms_txt
+dsc upcoming-change enable myforum enable_generated_llms_txt
+```
+
+Toggling creates durable audit records and affects live behaviour; try it on
+a canary forum first. Fleet mutation is intentionally not offered.
+
 ## Notes
 
 - Auth is the standard configured `apikey`/`api_username`; the acting user
   needs administrator access.
-- Both commands are read-only and permit global `--dry-run`.
-- `enable`/`disable` and `dsc setting upload` are planned but not yet
-  implemented - see the linked spec for phasing.
+- `list` and `show` are read-only; `enable`/`disable` honour global
+  `--dry-run`.
+- `dsc setting upload` is planned but not yet implemented - see the linked
+  spec for phasing.
