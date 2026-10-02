@@ -89,6 +89,20 @@ impl DiscourseClient {
         ))
     }
 
+    /// Fetch one API key (`GET /admin/api/keys/:id.json`) as the raw key object,
+    /// so fields such as `api_key_scopes` survive into structured output.
+    pub fn get_api_key(&self, key_id: u64) -> Result<Value> {
+        let path = format!("/admin/api/keys/{key_id}.json");
+        let response = self.get(&path)?;
+        let status = response.status();
+        let text = response.text_capped().context("reading api key response")?;
+        if !status.is_success() {
+            return Err(http_error("api key show request", status, &text));
+        }
+        let value: Value = serde_json::from_str(&text).context("parsing api key response json")?;
+        Ok(value.get("key").cloned().unwrap_or(value))
+    }
+
     /// Create a new API key. `username` of `None` makes a global all-users key.
     pub fn create_api_key(
         &self,
