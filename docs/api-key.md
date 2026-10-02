@@ -12,6 +12,14 @@ dsc api-key list <discourse> [--format text|json|yaml]
 
 Lists all keys with their id, description, the user they act as (or `(all-users)` for global keys), the last-used timestamp, and whether they're active or revoked.
 
+## dsc api-key show
+
+```text
+dsc api-key show <discourse> <key-id> [--format text|json|yaml]
+```
+
+Shows one key via `GET /admin/api/keys/:id.json`: description, acting user, truncated key, timestamps, status, and any scopes. JSON/YAML output is the key object exactly as Discourse returns it. The secret is never returned.
+
 ## dsc api-key create
 
 ```text

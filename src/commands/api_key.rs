@@ -53,6 +53,57 @@ pub fn api_key_list(config: &Config, discourse_name: &str, format: ListFormat) -
     Ok(())
 }
 
+pub fn api_key_show(
+    config: &Config,
+    discourse_name: &str,
+    key_id: u64,
+    format: ListFormat,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+    let key = client.get_api_key(key_id)?;
+
+    match format {
+        ListFormat::Text => {
+            let field = |name: &str| key.get(name).and_then(|v| v.as_str());
+            println!("id:            {}", key_id);
+            println!("description:   {}", field("description").unwrap_or("-"));
+            let user = field("user_username")
+                .or_else(|| field("username"))
+                .unwrap_or("(all-users)");
+            println!("username:      {user}");
+            if let Some(t) = field("truncated_key") {
+                println!("truncated_key: {t}");
+            }
+            println!("created_at:    {}", field("created_at").unwrap_or("-"));
+            println!(
+                "last_used_at:  {}",
+                field("last_used_at").unwrap_or("never")
+            );
+            println!(
+                "status:        {}",
+                if field("revoked_at").is_some() {
+                    "revoked"
+                } else {
+                    "active"
+                }
+            );
+            if let Some(scopes) = key.get("api_key_scopes").and_then(|v| v.as_array())
+                && !scopes.is_empty()
+            {
+                println!("scopes:");
+                for scope in scopes {
+                    println!("  {}", serde_json::to_string(scope)?);
+                }
+            }
+        }
+        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&key)?),
+        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&key)?),
+    }
+    Ok(())
+}
+
 pub fn api_key_create(
     config: &Config,
     discourse_name: &str,

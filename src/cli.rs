@@ -2437,6 +2437,17 @@ pub enum ApiKeyCommand {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
+    /// Show one API key's details (never the secret).
+    Show {
+        /// Discourse name.
+        discourse: String,
+        /// API key ID (from `dsc api-key list`).
+        #[arg(value_parser = clap::value_parser!(u64).range(1..))]
+        key_id: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
     /// Create a new API key. The secret is only shown at creation time —
     /// capture it from the output.
     #[command(visible_alias = "cr")]
