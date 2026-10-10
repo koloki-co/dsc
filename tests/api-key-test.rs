@@ -241,14 +241,14 @@ fn api_key_delete_dry_run_makes_no_request() {
 }
 
 #[test]
-fn api_key_mutations_reject_zero_id_before_network_access() {
+fn api_key_id_commands_reject_zero_id_before_network_access() {
     let dir = TempDir::new().expect("tempdir");
     let config_path = write_temp_config(
         &dir,
         "[[discourse]]\nname = \"mock\"\nbaseurl = \"http://127.0.0.1:1\"\napikey = \"key\"\napi_username = \"system\"\n",
     );
 
-    for command in ["revoke", "undo-revoke", "delete"] {
+    for command in ["show", "revoke", "undo-revoke", "delete"] {
         let output = run_dsc(&["api-key", command, "mock", "0"], &config_path);
         assert!(!output.status.success(), "{command} accepted key ID zero");
         assert!(
@@ -257,4 +257,32 @@ fn api_key_mutations_reject_zero_id_before_network_access() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn api_key_show_fetches_one_key_without_secret() {
+    let responses = vec![MockResponse {
+        status: "200 OK",
+        body: r#"{"key":{"id":42,"description":"bot","user_username":"system","truncated_key":"abcd","revoked_at":null}}"#,
+    }];
+    let (url, requests, handle) = start_mock(responses);
+    let dir = TempDir::new().expect("tempdir");
+    let output = run_dsc(
+        &["api-key", "show", "mock", "42", "--format", "json"],
+        &config_for(&url, &dir),
+    );
+    handle.join().expect("mock thread");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let key: serde_json::Value = serde_json::from_slice(&output.stdout).expect("parse key");
+    assert_eq!(key["id"], 42);
+    assert_eq!(key["description"], "bot");
+    assert_eq!(
+        requests.lock().expect("request log").as_slice(),
+        ["GET /admin/api/keys/42.json HTTP/1.1".to_string()]
+    );
 }

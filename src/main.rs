@@ -684,6 +684,11 @@ fn main() -> Result<()> {
             ApiKeyCommand::List { discourse, format } => {
                 commands::api_key::api_key_list(&config, &discourse, format)
             }
+            ApiKeyCommand::Show {
+                discourse,
+                key_id,
+                format,
+            } => commands::api_key::api_key_show(&config, &discourse, key_id, format),
             ApiKeyCommand::Create {
                 discourse,
                 description,
