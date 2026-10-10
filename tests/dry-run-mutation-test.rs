@@ -1008,6 +1008,7 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "add",
     "analytics",
     "api-key list",
+    "api-key show",
     "app env audit",
     "app env get",
     "app env list",
