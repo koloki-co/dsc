@@ -53,6 +53,35 @@ settings:
     value: whatever
 "#;
 
+/// Frozen server-side theme, as `GET /admin/themes/42.json` always returns it.
+/// `header_links` holds spaced JSON so the test also exercises the
+/// list-setting normalisation (file side is compact JSON, so it must plan as
+/// unchanged, not as a spurious change).
+const SERVER_THEME_JSON: &str = r#"{"theme":{"id":42,"name":"mock theme","settings":[
+    {"setting":"setting_a","value":"old_a","default":"old_a","type":"string"},
+    {"setting":"setting_b","value":"same_b","default":"same_b","type":"string"},
+    {"setting":"setting_c","value":"old_c","default":"old_c","type":"string"},
+    {"setting":"header_links","value":"[{\"id\": 1}]","default":"[]","type":"string"}
+]}}"#;
+
+/// Theme settings file: `setting_a`/`setting_c` change, `setting_b` and
+/// `header_links` match the server, `setting_d` is unknown (skipped).
+const THEME_SETTINGS_FILE: &str = r#"version: 1
+theme_id: 42
+settings:
+  - setting: setting_a
+    value: new_a
+  - setting: setting_b
+    value: same_b
+  - setting: setting_c
+    value: new_c
+  - setting: header_links
+    value:
+      - id: 1
+  - setting: setting_d
+    value: whatever
+"#;
+
 #[derive(Default)]
 struct Recorder {
     /// (setting name, value sent) for every PUT received, in arrival order.
@@ -98,6 +127,23 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
 
     let (status, out) = if method == "GET" && path == "/admin/site_settings.json" {
         ("HTTP/1.1 200 OK", SERVER_SETTINGS_JSON.to_string())
+    } else if method == "GET" && path == "/admin/themes/42.json" {
+        ("HTTP/1.1 200 OK", SERVER_THEME_JSON.to_string())
+    } else if method == "PUT" && path == "/admin/themes/42/setting.json" {
+        // Form-encoded `name=<setting>&value=<value>`.
+        let field = |key: &str| {
+            body.split('&')
+                .filter_map(|kv| kv.split_once('='))
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| urlencoding_decode(v))
+                .unwrap_or_default()
+        };
+        recorder
+            .lock()
+            .expect("recorder lock")
+            .puts
+            .push((field("name"), field("value")));
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
     } else if method == "PUT" {
         if let Some(name) = path
             .strip_prefix("/admin/site_settings/")
@@ -225,5 +271,87 @@ fn setting_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state(
         planned, actual,
         "the dry-run plan's stated changes must exactly match the real run's \
          PUT requests against the same frozen server state"
+    );
+}
+
+/// Parse `dsc theme setting push`'s `  name: from -> to` plan lines into
+/// `name -> to`. Same principle as `parse_planned_changes`: read the printed
+/// text a reviewer would read, not an internal structure.
+fn parse_theme_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        if !line.starts_with("  ") {
+            continue;
+        }
+        let Some((name, change)) = line.trim().split_once(": ") else {
+            continue;
+        };
+        let Some((_from, to)) = change.split_once(" -> ") else {
+            continue;
+        };
+        changes.insert(name.to_string(), to.to_string());
+    }
+    changes
+}
+
+#[test]
+fn theme_setting_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{url}\"\napikey = \"k\"\napi_username = \"tester\"\n"
+        ),
+    );
+    let file = dir.path().join("theme-settings.yaml");
+    std::fs::write(&file, THEME_SETTINGS_FILE).expect("write theme settings file");
+    let file = file.to_str().expect("utf-8 temp path");
+
+    let dry_run_output = run_dsc(
+        &["--dry-run", "theme", "setting", "push", "mock", "42", file],
+        &config_path,
+    );
+    assert!(
+        dry_run_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry_run_output.stderr)
+    );
+    assert!(
+        recorder.lock().expect("recorder lock").puts.is_empty(),
+        "dry-run must issue zero PUT requests"
+    );
+    let planned = parse_theme_planned_changes(&String::from_utf8_lossy(&dry_run_output.stdout));
+    assert_eq!(
+        planned,
+        BTreeMap::from([
+            ("setting_a".to_string(), "new_a".to_string()),
+            ("setting_c".to_string(), "new_c".to_string()),
+        ]),
+        "only setting_a/setting_c should be planned; setting_b and header_links \
+         match the server and setting_d is unknown"
+    );
+
+    let real_output = run_dsc(
+        &["theme", "setting", "push", "mock", "42", file],
+        &config_path,
+    );
+    assert!(
+        real_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&real_output.stderr)
+    );
+    let actual: BTreeMap<String, String> = recorder
+        .lock()
+        .expect("recorder lock")
+        .puts
+        .iter()
+        .cloned()
+        .collect();
+    assert_eq!(
+        planned, actual,
+        "the dry-run plan's stated changes must exactly match the real run's \
+         theme setting PUT requests against the same frozen server state"
     );
 }
