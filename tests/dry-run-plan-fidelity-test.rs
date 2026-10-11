@@ -25,6 +25,7 @@ use common::*;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
@@ -50,6 +51,35 @@ settings:
   - name: setting_c
     value: new_c
   - name: setting_d
+    value: whatever
+"#;
+
+/// Frozen server-side theme, as `GET /admin/themes/42.json` always returns it.
+/// `header_links` holds spaced JSON so the test also exercises the
+/// list-setting normalisation (file side is compact JSON, so it must plan as
+/// unchanged, not as a spurious change).
+const SERVER_THEME_JSON: &str = r#"{"theme":{"id":42,"name":"mock theme","settings":[
+    {"setting":"setting_a","value":"old_a","default":"old_a","type":"string"},
+    {"setting":"setting_b","value":"same_b","default":"same_b","type":"string"},
+    {"setting":"setting_c","value":"old_c","default":"old_c","type":"string"},
+    {"setting":"header_links","value":"[{\"id\": 1}]","default":"[]","type":"string"}
+]}}"#;
+
+/// Theme settings file: `setting_a`/`setting_c` change, `setting_b` and
+/// `header_links` match the server, `setting_d` is unknown (skipped).
+const THEME_SETTINGS_FILE: &str = r#"version: 1
+theme_id: 42
+settings:
+  - setting: setting_a
+    value: new_a
+  - setting: setting_b
+    value: same_b
+  - setting: setting_c
+    value: new_c
+  - setting: header_links
+    value:
+      - id: 1
+  - setting: setting_d
     value: whatever
 "#;
 
@@ -98,6 +128,23 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
 
     let (status, out) = if method == "GET" && path == "/admin/site_settings.json" {
         ("HTTP/1.1 200 OK", SERVER_SETTINGS_JSON.to_string())
+    } else if method == "GET" && path == "/admin/themes/42.json" {
+        ("HTTP/1.1 200 OK", SERVER_THEME_JSON.to_string())
+    } else if method == "PUT" && path == "/admin/themes/42/setting.json" {
+        // Form-encoded `name=<setting>&value=<value>`.
+        let field = |key: &str| {
+            body.split('&')
+                .filter_map(|kv| kv.split_once('='))
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| urlencoding_decode(v))
+                .unwrap_or_default()
+        };
+        recorder
+            .lock()
+            .expect("recorder lock")
+            .puts
+            .push((field("name"), field("value")));
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
     } else if method == "PUT" {
         if let Some(name) = path
             .strip_prefix("/admin/site_settings/")
@@ -131,6 +178,77 @@ fn urlencoding_decode(s: &str) -> String {
     s.replace('+', " ")
 }
 
+fn mock_config(dir: &TempDir, url: &str) -> PathBuf {
+    write_temp_config(
+        dir,
+        &format!(
+            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{url}\"\napikey = \"k\"\napi_username = \"tester\"\n"
+        ),
+    )
+}
+
+fn write_file(dir: &TempDir, name: &str, content: &str) -> PathBuf {
+    let path = dir.path().join(name);
+    std::fs::write(&path, content).expect("write temp file");
+    path
+}
+
+/// Run a declarative-push command twice against the same frozen mock state -
+/// once under `--dry-run`, once for real - and assert the dry-run plan's
+/// parsed `(name, value)` pairs exactly match the real run's PUT requests.
+/// This is R73's core check, factored out once a second declarative-push
+/// family (`theme setting push`, alongside `setting push`) needed the same
+/// shape; each family keeps its own frozen fixtures and plan-line parser,
+/// since those differ, but the two-phase run/compare logic does not.
+fn assert_dry_run_plan_matches_real_run(
+    config_path: &Path,
+    recorder: &Mutex<Recorder>,
+    dry_run_args: &[&str],
+    real_args: &[&str],
+    parse_plan: impl Fn(&str) -> BTreeMap<String, String>,
+    expected_plan: &BTreeMap<String, String>,
+) {
+    // Phase 1: dry-run. Capture the plan; the mock's GET response is frozen
+    // (constant regardless of PUT traffic), so phase 2 sees identical state.
+    let dry_run_output = run_dsc(dry_run_args, config_path);
+    assert!(
+        dry_run_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry_run_output.stderr)
+    );
+    assert!(
+        recorder.lock().expect("recorder lock").puts.is_empty(),
+        "dry-run must issue zero PUT requests"
+    );
+    let planned = parse_plan(&String::from_utf8_lossy(&dry_run_output.stdout));
+    assert_eq!(&planned, expected_plan, "unexpected dry-run plan");
+
+    // Phase 2: the real run, against the identical frozen GET response.
+    let real_output = run_dsc(real_args, config_path);
+    assert!(
+        real_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&real_output.stderr)
+    );
+    let actual: BTreeMap<String, String> = recorder
+        .lock()
+        .expect("recorder lock")
+        .puts
+        .iter()
+        .cloned()
+        .collect();
+
+    // The core R73 assertion: the plan's stated targets and values are
+    // exactly the requests the real run made against the same state - not a
+    // subset, not a superset, and not merely "the same names with some other
+    // value".
+    assert_eq!(
+        planned, actual,
+        "the dry-run plan's stated changes must exactly match the real run's \
+         PUT requests against the same frozen server state"
+    );
+}
+
 /// Parse `dsc setting push`'s plan output for its `~ name: "from" → "to"`
 /// change lines, returning `name -> to` for each. This is the "stated
 /// targets and values" half of R73's comparison - deliberately reading the
@@ -156,74 +274,72 @@ fn parse_planned_changes(stdout: &str) -> BTreeMap<String, String> {
     changes
 }
 
-fn write_settings_file(dir: &TempDir) -> std::path::PathBuf {
-    let path = dir.path().join("settings.yaml");
-    std::fs::write(&path, SETTINGS_FILE).expect("write settings file");
-    path
-}
-
 #[test]
 fn setting_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
     let recorder = Arc::new(Mutex::new(Recorder::default()));
     let url = start_mock(Arc::clone(&recorder));
     let dir = TempDir::new().expect("tempdir");
-    let config_path = write_temp_config(
-        &dir,
-        &format!(
-            "[[discourse]]\nname = \"mock\"\nbaseurl = \"{url}\"\napikey = \"k\"\napi_username = \"tester\"\n"
-        ),
-    );
-    let settings_path = write_settings_file(&dir);
+    let config_path = mock_config(&dir, &url);
+    let settings_path = write_file(&dir, "settings.yaml", SETTINGS_FILE);
     let settings_path = settings_path.to_str().expect("utf-8 temp path");
 
-    // Phase 1: dry-run. Capture the plan; the mock's GET response is frozen
-    // (constant regardless of PUT traffic), so phase 2 sees identical state.
-    let dry_run_output = run_dsc(
-        &["--dry-run", "setting", "push", "mock", settings_path],
+    assert_dry_run_plan_matches_real_run(
         &config_path,
-    );
-    assert!(
-        dry_run_output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&dry_run_output.stderr)
-    );
-    assert!(
-        recorder.lock().expect("recorder lock").puts.is_empty(),
-        "dry-run must issue zero PUT requests"
-    );
-    let planned = parse_planned_changes(&String::from_utf8_lossy(&dry_run_output.stdout));
-    assert_eq!(
-        planned,
-        BTreeMap::from([
+        &recorder,
+        &["--dry-run", "setting", "push", "mock", settings_path],
+        &["setting", "push", "mock", settings_path],
+        parse_planned_changes,
+        // setting_b is unchanged and setting_d is unknown on the server, so
+        // only setting_a/setting_c should be planned changes.
+        &BTreeMap::from([
             ("setting_a".to_string(), "new_a".to_string()),
             ("setting_c".to_string(), "new_c".to_string()),
         ]),
-        "unexpected dry-run plan; setting_b is unchanged and setting_d is unknown \
-         on the server, so only setting_a/setting_c should be planned changes"
     );
+}
 
-    // Phase 2: the real run, against the identical frozen GET response.
-    let real_output = run_dsc(&["setting", "push", "mock", settings_path], &config_path);
-    assert!(
-        real_output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&real_output.stderr)
-    );
-    let actual: BTreeMap<String, String> = recorder
-        .lock()
-        .expect("recorder lock")
-        .puts
-        .iter()
-        .cloned()
-        .collect();
+/// Parse `dsc theme setting push`'s `  name: from -> to` plan lines into
+/// `name -> to`. Same principle as `parse_planned_changes`: read the printed
+/// text a reviewer would read, not an internal structure.
+fn parse_theme_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        if !line.starts_with("  ") {
+            continue;
+        }
+        let Some((name, change)) = line.trim().split_once(": ") else {
+            continue;
+        };
+        let Some((_from, to)) = change.split_once(" -> ") else {
+            continue;
+        };
+        changes.insert(name.to_string(), to.to_string());
+    }
+    changes
+}
 
-    // The core R73 assertion: the plan's stated targets and values are
-    // exactly the requests the real run made against the same state - not a
-    // subset, not a superset, and not merely "the same names with some other
-    // value".
-    assert_eq!(
-        planned, actual,
-        "the dry-run plan's stated changes must exactly match the real run's \
-         PUT requests against the same frozen server state"
+#[test]
+fn theme_setting_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    let file = write_file(&dir, "theme-settings.yaml", THEME_SETTINGS_FILE);
+    let file = file.to_str().expect("utf-8 temp path");
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "theme", "setting", "push", "mock", "42", file],
+        &["theme", "setting", "push", "mock", "42", file],
+        parse_theme_planned_changes,
+        // setting_b and header_links match the server (one via a plain
+        // value, the other via JSON-list normalisation of spaced vs
+        // compact JSON) and setting_d is unknown, so only setting_a/
+        // setting_c should be planned changes.
+        &BTreeMap::from([
+            ("setting_a".to_string(), "new_a".to_string()),
+            ("setting_c".to_string(), "new_c".to_string()),
+        ]),
     );
 }
