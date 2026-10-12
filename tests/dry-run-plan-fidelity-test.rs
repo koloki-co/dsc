@@ -83,6 +83,21 @@ settings:
     value: whatever
 "#;
 
+/// Frozen server-side palette list, as `GET /admin/color_schemes.json` always
+/// returns it. Palette 19 is what the pushed file was pulled from.
+const SERVER_PALETTES_JSON: &str = r#"[{"id":19,"name":"Palette","colors":[
+    {"name":"primary","hex":"000000"},
+    {"name":"secondary","hex":"ffffff"},
+    {"name":"tertiary","hex":"0088cc"}
+]}]"#;
+
+/// Palette file: renamed, `primary`/`tertiary` edited against the pulled
+/// baseline, `secondary` untouched (planned no-op).
+const PALETTE_FILE: &str = r#"{"id":19,"name":"Renamed palette",
+"colors":{"primary":"111111","secondary":"ffffff","tertiary":"abcdef"},
+"pulled":{"name":"Palette","colors":{"primary":"000000","secondary":"ffffff","tertiary":"0088cc"}}}
+"#;
+
 #[derive(Default)]
 struct Recorder {
     /// (setting name, value sent) for every PUT received, in arrival order.
@@ -130,6 +145,24 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
         ("HTTP/1.1 200 OK", SERVER_SETTINGS_JSON.to_string())
     } else if method == "GET" && path == "/admin/themes/42.json" {
         ("HTTP/1.1 200 OK", SERVER_THEME_JSON.to_string())
+    } else if method == "GET" && path == "/admin/color_schemes.json" {
+        ("HTTP/1.1 200 OK", SERVER_PALETTES_JSON.to_string())
+    } else if method == "PUT" && path == "/admin/color_schemes/19.json" {
+        // JSON `{"color_scheme":{"name":?,"colors":[{"name","hex"}]}}`;
+        // recorded as `name -> new name` plus `color -> hex`.
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let scheme = &payload["color_scheme"];
+        let mut recorder = recorder.lock().expect("recorder lock");
+        if let Some(name) = scheme["name"].as_str() {
+            recorder.puts.push(("name".to_string(), name.to_string()));
+        }
+        for color in scheme["colors"].as_array().into_iter().flatten() {
+            recorder.puts.push((
+                color["name"].as_str().unwrap_or_default().to_string(),
+                color["hex"].as_str().unwrap_or_default().to_string(),
+            ));
+        }
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
     } else if method == "PUT" && path == "/admin/themes/42/setting.json" {
         // Form-encoded `name=<setting>&value=<value>`.
         let field = |key: &str| {
@@ -340,6 +373,54 @@ fn theme_setting_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_
         &BTreeMap::from([
             ("setting_a".to_string(), "new_a".to_string()),
             ("setting_c".to_string(), "new_c".to_string()),
+        ]),
+    );
+}
+
+/// Parse `dsc palette push`'s `  ~ name: "from" -> "to"` plan lines (palette
+/// rename and colour edits alike) into `name -> to`.
+fn parse_palette_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("~ ") else {
+            continue;
+        };
+        let Some((name, change)) = rest.split_once(": ") else {
+            continue;
+        };
+        let Some((_from, to)) = change.split_once(" -> ") else {
+            continue;
+        };
+        changes.insert(name.to_string(), to.trim_matches('"').to_string());
+    }
+    changes
+}
+
+#[test]
+fn palette_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    // A real run rewrites the file with a refreshed snapshot, so each phase
+    // gets its own identical copy.
+    let dry_file = write_file(&dir, "palette-dry.json", PALETTE_FILE);
+    let real_file = write_file(&dir, "palette-real.json", PALETTE_FILE);
+    let dry_file = dry_file.to_str().expect("utf-8 temp path");
+    let real_file = real_file.to_str().expect("utf-8 temp path");
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "palette", "push", "mock", dry_file],
+        &["palette", "push", "mock", real_file],
+        parse_palette_planned_changes,
+        // secondary is unchanged, so only the rename and the two edited
+        // colours should be planned.
+        &BTreeMap::from([
+            ("name".to_string(), "Renamed palette".to_string()),
+            ("primary".to_string(), "111111".to_string()),
+            ("tertiary".to_string(), "abcdef".to_string()),
         ]),
     );
 }
