@@ -10,6 +10,7 @@ Cross-cutting documents that sit above any single command:
 - [cli-design.md](cli-design.md) - the normative CLI design philosophy: output/formats, the `pull → edit → push → diff` sync loop, `--dry-run`, destructive-action guards, error/empty-list/flag conventions. Anything about *how commands behave* lives here.
 - [implementation.md](implementation.md) - the implementation plan and the working agreement for agents (commit discipline, keeping specs current, roadmap flow).
 - [live-compatibility-tests.md](live-compatibility-tests.md) - R36's explicit opt-in, disposable-forum, serialization, and cleanup contract for real-Discourse tests.
+- [guarantees.md](guarantees.md) - R72's named-guarantee index: every cross-cutting behavioural promise `dsc` makes, linked to the test(s) that enforce it.
 - [roadmap.md](roadmap.md) - the single list of planned and in-progress work, with stable `RXX` reference codes for each actionable item. Shipped history is in [CHANGELOG.md](../CHANGELOG.md).
 
 ## Per-command ([commands/](commands/))
