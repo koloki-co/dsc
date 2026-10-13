@@ -98,6 +98,34 @@ const PALETTE_FILE: &str = r#"{"id":19,"name":"Renamed palette",
 "pulled":{"name":"Palette","colors":{"primary":"000000","secondary":"ffffff","tertiary":"0088cc"}}}
 "#;
 
+/// Frozen server-side tags, as `GET /tags.json` always returns them. Both
+/// file tags already exist on the server, so this fixture stays clear of
+/// "groupless_missing" tags entirely: `tag_push`'s real-run apply path
+/// `bail!`s at the end if any file tag is in no group and absent from the
+/// server, even after successfully applying every achievable change, which
+/// would make the real run's exit status fail for reasons unrelated to
+/// what this test is checking.
+const SERVER_TAGS_JSON: &str = r#"{"tags":[
+    {"id":1,"text":"tag_a","description":"old description"},
+    {"id":2,"text":"tag_b","description":"same description"}
+]}"#;
+
+/// No tag groups on the server; the file declares none either, so the
+/// group-reconciliation half of `tag push` plans no changes and this test
+/// covers only the description-update path.
+const SERVER_TAG_GROUPS_JSON: &str = r#"{"tag_groups":[]}"#;
+
+/// Taxonomy file: `tag_a`'s description differs from the server (planned
+/// change), `tag_b`'s matches (planned no-op).
+const TAG_FILE: &str = r#"version: 1
+complete: true
+tags:
+  - name: tag_a
+    description: new description
+  - name: tag_b
+    description: same description
+"#;
+
 #[derive(Default)]
 struct Recorder {
     /// (setting name, value sent) for every PUT received, in arrival order.
@@ -147,6 +175,25 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
         ("HTTP/1.1 200 OK", SERVER_THEME_JSON.to_string())
     } else if method == "GET" && path == "/admin/color_schemes.json" {
         ("HTTP/1.1 200 OK", SERVER_PALETTES_JSON.to_string())
+    } else if method == "GET" && path == "/tags.json" {
+        ("HTTP/1.1 200 OK", SERVER_TAGS_JSON.to_string())
+    } else if method == "GET" && path == "/tag_groups.json" {
+        ("HTTP/1.1 200 OK", SERVER_TAG_GROUPS_JSON.to_string())
+    } else if method == "PUT" && path.starts_with("/tag/") && path.ends_with(".json") {
+        // JSON `{"tag":{"description":"..."}}`; recorded as `name -> desc`.
+        let name = path
+            .strip_prefix("/tag/")
+            .and_then(|p| p.strip_suffix(".json"))
+            .unwrap_or_default();
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        if let Some(desc) = payload["tag"]["description"].as_str() {
+            recorder
+                .lock()
+                .expect("recorder lock")
+                .puts
+                .push((name.to_string(), desc.to_string()));
+        }
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
     } else if method == "PUT" && path == "/admin/color_schemes/19.json" {
         // JSON `{"color_scheme":{"name":?,"colors":[{"name","hex"}]}}`;
         // recorded as `name -> new name` plus `color -> hex`.
@@ -422,5 +469,49 @@ fn palette_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state(
             ("primary".to_string(), "111111".to_string()),
             ("tertiary".to_string(), "abcdef".to_string()),
         ]),
+    );
+}
+
+/// Parse `dsc tag push`'s `  ~ set description: name ("desc")` plan lines
+/// into `name -> desc`. Scoped to the description-update path only - tag
+/// group create/update/delete and tag creation-via-group have their own
+/// differently-shaped plan lines, deliberately not covered here (see the
+/// roadmap's R73 entry for what's left).
+fn parse_tag_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("~ set description: ") else {
+            continue;
+        };
+        let Some((name, desc_part)) = rest.split_once(" (") else {
+            continue;
+        };
+        let desc = desc_part
+            .trim_end_matches(')')
+            .trim_matches('"')
+            .to_string();
+        changes.insert(name.to_string(), desc);
+    }
+    changes
+}
+
+#[test]
+fn tag_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    let file = write_file(&dir, "tags.yaml", TAG_FILE);
+    let file = file.to_str().expect("utf-8 temp path");
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "tag", "push", "mock", file],
+        &["tag", "push", "mock", file],
+        parse_tag_planned_changes,
+        // tag_b already matches the server, so only tag_a's description
+        // should be planned.
+        &BTreeMap::from([("tag_a".to_string(), "new description".to_string())]),
     );
 }
