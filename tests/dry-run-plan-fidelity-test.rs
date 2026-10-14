@@ -126,6 +126,20 @@ tags:
     description: same description
 "#;
 
+/// Frozen category 7: two existing topics. `alpha.md` routes to 101 by
+/// filename/slug, `beta.md` to 102; `gamma.md` matches neither (a create).
+const SERVER_CATEGORY_JSON: &str = r#"{"category":{"name":"Docs","slug":"docs"},
+"topic_list":{"topics":[
+    {"id":101,"title":"Alpha","slug":"alpha"},
+    {"id":102,"title":"Beta","slug":"beta"}
+]}}"#;
+
+const SERVER_TOPIC_101_JSON: &str = r#"{"id":101,"category_id":7,
+"post_stream":{"posts":[{"id":1001,"raw":"old alpha body"}]}}"#;
+
+const SERVER_TOPIC_102_JSON: &str = r#"{"id":102,"category_id":7,
+"post_stream":{"posts":[{"id":1002,"raw":"same beta body"}]}}"#;
+
 #[derive(Default)]
 struct Recorder {
     /// (setting name, value sent) for every PUT received, in arrival order.
@@ -179,6 +193,36 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
         ("HTTP/1.1 200 OK", SERVER_TAGS_JSON.to_string())
     } else if method == "GET" && path == "/tag_groups.json" {
         ("HTTP/1.1 200 OK", SERVER_TAG_GROUPS_JSON.to_string())
+    } else if method == "GET" && path == "/c/7.json" {
+        ("HTTP/1.1 200 OK", SERVER_CATEGORY_JSON.to_string())
+    } else if method == "GET" && path.starts_with("/t/101.json") {
+        ("HTTP/1.1 200 OK", SERVER_TOPIC_101_JSON.to_string())
+    } else if method == "GET" && path.starts_with("/t/102.json") {
+        ("HTTP/1.1 200 OK", SERVER_TOPIC_102_JSON.to_string())
+    } else if method == "PUT" && path == "/posts/1001.json" {
+        // Form `post[raw]=...`; recorded as `topic 101 -> raw byte length`
+        // (post 1001 is the OP of topic 101 in the frozen fixture).
+        let raw = form_field(&body, "post[raw]");
+        recorder
+            .lock()
+            .expect("recorder lock")
+            .puts
+            .push(("topic 101".to_string(), raw.len().to_string()));
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
+    } else if method == "POST" && path == "/posts.json" {
+        // Form `title=...&raw=...&category=7`; recorded as
+        // `new "<title>" -> raw byte length`.
+        let title = form_field(&body, "title");
+        let raw = form_field(&body, "raw");
+        recorder
+            .lock()
+            .expect("recorder lock")
+            .puts
+            .push((format!("new \"{title}\""), raw.len().to_string()));
+        (
+            "HTTP/1.1 200 OK",
+            r#"{"topic_id":900,"id":9000}"#.to_string(),
+        )
     } else if method == "PUT" && path.starts_with("/tag/") && path.ends_with(".json") {
         // JSON `{"tag":{"description":"..."}}`; recorded as `name -> desc`.
         let name = path
@@ -256,6 +300,38 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
 /// for the plain alphanumeric values this test sends (`new_a`, `new_c`).
 fn urlencoding_decode(s: &str) -> String {
     s.replace('+', " ")
+}
+
+/// Full `application/x-www-form-urlencoded` field lookup (percent-decoding
+/// multi-byte UTF-8 and newlines), for bodies where length matters.
+fn form_field(body: &str, key: &str) -> String {
+    let encoded = body
+        .split('&')
+        .filter_map(|kv| kv.split_once('='))
+        .find(|(k, _)| {
+            urlencoding_decode(k)
+                .replace("%5B", "[")
+                .replace("%5D", "]")
+                == key
+        })
+        .map(|(_, v)| v)
+        .unwrap_or_default();
+    let bytes = encoded.replace('+', " ").into_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(b) = u8::from_str_radix(&String::from_utf8_lossy(&bytes[i + 1..i + 3]), 16)
+        {
+            out.push(b);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
 }
 
 fn mock_config(dir: &TempDir, url: &str) -> PathBuf {
@@ -513,5 +589,64 @@ fn tag_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
         // tag_b already matches the server, so only tag_a's description
         // should be planned.
         &BTreeMap::from([("tag_a".to_string(), "new description".to_string())]),
+    );
+}
+
+/// Parse `dsc category push`'s plan lines into `target -> byte length`:
+/// `~ file → topic N (B bytes)` becomes `topic N -> B`, and
+/// `+ file → new topic "T" (B bytes)` becomes `new "T" -> B`. `=` lines are
+/// planned no-ops and are intentionally not collected.
+fn parse_category_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let line = line.trim_start();
+        let Some((_file, rest)) = line
+            .strip_prefix("~ ")
+            .or_else(|| line.strip_prefix("+ "))
+            .and_then(|r| r.split_once(" \u{2192} "))
+        else {
+            continue;
+        };
+        let Some((target, bytes)) = rest.rsplit_once(" (") else {
+            continue;
+        };
+        let bytes = bytes.trim_end_matches(" bytes)");
+        let target = match target.strip_prefix("new topic ") {
+            Some(title) => format!("new {title}"),
+            None => target.to_string(),
+        };
+        changes.insert(target, bytes.to_string());
+    }
+    changes
+}
+
+#[test]
+fn category_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    let docs = dir.path().join("docs");
+    std::fs::create_dir(&docs).expect("create docs dir");
+    // alpha differs from the remote OP (update), beta matches it (no-op),
+    // gamma has no remote topic (create, titled from its `# ` heading).
+    std::fs::write(docs.join("alpha.md"), "new alpha body, caf\u{e9}\n").expect("write alpha");
+    std::fs::write(docs.join("beta.md"), "same beta body\n").expect("write beta");
+    std::fs::write(docs.join("gamma.md"), "# Gamma\n\nbrand new\n").expect("write gamma");
+    let docs = docs.to_str().expect("utf-8 temp path");
+
+    let alpha_len = "new alpha body, caf\u{e9}\n".len().to_string();
+    let gamma_len = "# Gamma\n\nbrand new\n".len().to_string();
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "category", "push", "mock", "7", docs],
+        &["category", "push", "mock", "7", docs],
+        parse_category_planned_changes,
+        &BTreeMap::from([
+            ("topic 101".to_string(), alpha_len),
+            ("new \"Gamma\"".to_string(), gamma_len),
+        ]),
     );
 }
