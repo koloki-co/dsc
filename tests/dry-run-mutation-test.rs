@@ -334,6 +334,11 @@ const CASES: &[Case] = &[
     ("post push", &["post", "push", "mock", "1", "BODY"], true),
     ("post delete", &["post", "delete", "mock", "1"], true),
     (
+        "post revision revert",
+        &["post", "revision", "revert", "mock", "1", "2"],
+        true,
+    ),
+    (
         "post move",
         &["post", "move", "mock", "1", "--to-topic", "8"],
         true,
@@ -1048,6 +1053,8 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "plugin list",
     "pm list",
     "post info",
+    "post revision list",
+    "post revision show",
     "post pull",
     "render",
     "report",

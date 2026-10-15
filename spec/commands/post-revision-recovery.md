@@ -42,10 +42,10 @@ The routes are defined in `discourse/config/routes.rb`. `PostsController#revert`
 
 ### Phase 1 - blocking recovery
 
-- [ ] Add revision response models and bounded client methods for latest and named revisions.
-- [ ] Add `dsc post revision list` and `show` with text, JSON, and YAML output, including the 99-revision visibility limit.
-- [ ] Add `dsc post revision revert` with global `--dry-run`, mandatory `--yes` for a live mutation, current-state preflight, and post-write verification.
-- [ ] Add mock-server integration tests for linked revision traversal, inaccessible or missing revisions, revision 1 refusal, no-op reversion, dry-run zero writes, exact PUT path, and post-write verification.
+- [x] Add revision response models and bounded client methods for latest and named revisions.
+- [x] Add `dsc post revision list` and `show` with text, JSON, and YAML output, including the 99-revision visibility limit.
+- [x] Add `dsc post revision revert` with global `--dry-run`, mandatory `--yes` for a live mutation, current-state preflight, and post-write verification.
+- [x] Add mock-server integration tests for linked revision traversal, inaccessible or missing revisions, revision 1 refusal, no-op reversion, dry-run zero writes, exact PUT path, and post-write verification.
 
 ### Phase 2 - recovery ergonomics
 
