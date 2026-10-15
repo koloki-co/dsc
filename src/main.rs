@@ -1717,6 +1717,29 @@ fn main() -> Result<()> {
                 post_id,
                 format,
             } => commands::post::post_info(&config, &discourse, post_id, format),
+            PostCommand::Revision(cmd) => match cmd {
+                PostRevisionCommand::List {
+                    discourse,
+                    post_id,
+                    format,
+                } => commands::post::post_revision_list(&config, &discourse, post_id, format),
+                PostRevisionCommand::Show {
+                    discourse,
+                    post_id,
+                    revision,
+                    format,
+                } => commands::post::post_revision_show(
+                    &config, &discourse, post_id, revision, format,
+                ),
+                PostRevisionCommand::Revert {
+                    discourse,
+                    post_id,
+                    revision,
+                    yes,
+                } => commands::post::post_revision_revert(
+                    &config, &discourse, post_id, revision, yes, dry_run,
+                ),
+            },
             PostCommand::ChangeOwner {
                 discourse,
                 post_id,

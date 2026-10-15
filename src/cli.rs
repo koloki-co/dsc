@@ -370,7 +370,8 @@ pub enum Commands {
     #[command(visible_alias = "po")]
     #[command(after_help = "Examples:
   dsc post edit myforum 456 body.md
-  dsc post move myforum 456 789")]
+  dsc post move myforum 456 789
+  dsc post revision list myforum 456")]
     Post {
         #[command(subcommand)]
         command: PostCommand,
@@ -2887,6 +2888,48 @@ pub enum UserGroupsCommand {
 
 #[derive(Subcommand)]
 #[command(next_display_order = None)]
+pub enum PostRevisionCommand {
+    /// List a post's visible revisions, newest first (Discourse exposes at most the latest 99).
+    #[command(visible_alias = "ls")]
+    List {
+        /// Discourse name.
+        discourse: String,
+        /// Post ID.
+        post_id: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Show one revision with its field-level changes.
+    Show {
+        /// Discourse name.
+        discourse: String,
+        /// Post ID.
+        post_id: u64,
+        /// Revision number.
+        revision: u64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Ask Discourse to apply a revision's prior values (staff only). Honours `--dry-run`.
+    ///
+    /// Requires `--yes` for a live revert; preview first with `dsc -n`.
+    Revert {
+        /// Discourse name.
+        discourse: String,
+        /// Post ID.
+        post_id: u64,
+        /// Revision number (2 or higher).
+        revision: u64,
+        /// Confirm the live mutation.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(next_display_order = None)]
 pub enum PostCommand {
     /// Pull a post's raw Markdown to a local file.
     #[command(visible_alias = "pl")]
@@ -2943,6 +2986,9 @@ pub enum PostCommand {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
+    /// Inspect and revert a post's edit history.
+    #[command(subcommand)]
+    Revision(PostRevisionCommand),
     /// Reassign the visible author of a single post by ID. Honours `--dry-run`.
     ///
     /// A single-post alias for `topic change-owner --post`, for when you

@@ -75,6 +75,27 @@ dsc post change-owner myforum 61695 janedoe
 # post 61695 in topic 723 reassigned: opsadmin → janedoe
 ```
 
+## dsc post revision
+
+```text
+dsc post revision list   <discourse> <post-id> [--format text|json|yaml]
+dsc post revision show   <discourse> <post-id> <revision> [--format text|json|yaml]
+dsc post revision revert <discourse> <post-id> <revision> --yes
+```
+
+Inspect a post's edit history and recover from an accidental overwrite.
+
+- `list` follows Discourse's revision links from the latest revision and prints each visible revision newest-first: number, time, editor, changed fields and edit reason (no bodies). Discourse exposes at most the latest 99 revisions, so older history may not be listed. Edits made with `--skip-revision` leave no revision to recover.
+- `show` prints one revision's metadata and a raw-Markdown body diff (`{+added+}`, `[-removed-]`); JSON/YAML expose the structured API fields.
+- `revert` asks Discourse to apply the selected revision's prior values (body and, for an opening post, title, category and tags). Staff only; revision numbers below 2 are refused. A live revert requires `--yes`; `--dry-run` shows the exact `PUT` without sending it. After the write, `dsc` re-fetches the latest revision and fails if no new revision appeared.
+
+```bash
+dsc post revision list myforum 98765
+dsc post revision show myforum 98765 4
+dsc -n post revision revert myforum 98765 4
+dsc post revision revert myforum 98765 4 --yes
+```
+
 ## Notes
 
 - Post edits and deletes require either admin scope or that the API user owns the post.
