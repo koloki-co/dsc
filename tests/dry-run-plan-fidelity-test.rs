@@ -142,6 +142,9 @@ const SERVER_TOPIC_102_JSON: &str = r#"{"id":102,"category_id":7,
 
 #[derive(Default)]
 struct Recorder {
+    /// Overrides the `GET /tag_groups.json` body when set; the default is
+    /// `SERVER_TAG_GROUPS_JSON` (no groups). Frozen for the whole test.
+    tag_groups_json: Option<String>,
     /// (setting name, value sent) for every PUT received, in arrival order.
     puts: Vec<(String, String)>,
 }
@@ -192,7 +195,34 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
     } else if method == "GET" && path == "/tags.json" {
         ("HTTP/1.1 200 OK", SERVER_TAGS_JSON.to_string())
     } else if method == "GET" && path == "/tag_groups.json" {
-        ("HTTP/1.1 200 OK", SERVER_TAG_GROUPS_JSON.to_string())
+        let body = recorder
+            .lock()
+            .expect("recorder lock")
+            .tag_groups_json
+            .clone()
+            .unwrap_or_else(|| SERVER_TAG_GROUPS_JSON.to_string());
+        ("HTTP/1.1 200 OK", body)
+    } else if (method == "POST" && path == "/tag_groups.json")
+        || (method == "PUT" && path.starts_with("/tag_groups/") && path.ends_with(".json"))
+    {
+        // JSON `{"tag_group":{"name":..,"tag_names":[..]}}`; recorded as
+        // `group name -> tag names joined with ", "`.
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let group = &payload["tag_group"];
+        let tags: Vec<&str> = group["tag_names"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| t.as_str())
+            .collect();
+        recorder.lock().expect("recorder lock").puts.push((
+            group["name"].as_str().unwrap_or_default().to_string(),
+            tags.join(", "),
+        ));
+        (
+            "HTTP/1.1 200 OK",
+            r#"{"success":"OK","tag_group":{"id":77}}"#.to_string(),
+        )
     } else if method == "GET" && path == "/c/7.json" {
         ("HTTP/1.1 200 OK", SERVER_CATEGORY_JSON.to_string())
     } else if method == "GET" && path.starts_with("/t/101.json") {
@@ -589,6 +619,74 @@ fn tag_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
         // tag_b already matches the server, so only tag_a's description
         // should be planned.
         &BTreeMap::from([("tag_a".to_string(), "new description".to_string())]),
+    );
+}
+
+/// Frozen server tag groups: `colours` exists with a stale tag set (planned
+/// update), `sizes` is absent (planned create), `shapes` already matches the
+/// file (planned no-op).
+const SERVER_TAG_GROUPS_RECONCILE_JSON: &str = r#"{"tag_groups":[
+    {"id":5,"name":"colours","tag_names":["red","blue"]},
+    {"id":6,"name":"shapes","tag_names":["circle"]}
+]}"#;
+
+/// Taxonomy file for the group-reconciliation test. Every file tag lives in a
+/// group, so nothing is `groupless_missing` and the real run exits cleanly.
+const TAG_GROUP_FILE: &str = r#"version: 1
+complete: true
+tag_groups:
+  - name: colours
+    tags: [red, green]
+  - name: sizes
+    tags: [small, large]
+  - name: shapes
+    tags: [circle]
+"#;
+
+/// Parse `dsc tag push`'s `+ create group:` / `~ update group:` plan lines
+/// into `group -> "tag, tag"`, matching the recorded group payloads.
+fn parse_tag_group_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let line = line.trim_start();
+        let Some(rest) = line
+            .strip_prefix("+ create group: ")
+            .or_else(|| line.strip_prefix("~ update group: "))
+        else {
+            continue;
+        };
+        let Some((name, tags_part)) = rest.split_once(" (tags: [") else {
+            continue;
+        };
+        let tags = tags_part.trim_end_matches(')').trim_end_matches(']');
+        changes.insert(name.to_string(), tags.to_string());
+    }
+    changes
+}
+
+#[test]
+fn tag_push_group_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder {
+        tag_groups_json: Some(SERVER_TAG_GROUPS_RECONCILE_JSON.to_string()),
+        ..Recorder::default()
+    }));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    let file = write_file(&dir, "tag-groups.yaml", TAG_GROUP_FILE);
+    let file = file.to_str().expect("utf-8 temp path");
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "tag", "push", "mock", file],
+        &["tag", "push", "mock", file],
+        parse_tag_group_planned_changes,
+        // `shapes` matches the server, so only the update and the create.
+        &BTreeMap::from([
+            ("colours".to_string(), "red, green".to_string()),
+            ("sizes".to_string(), "small, large".to_string()),
+        ]),
     );
 }
 
