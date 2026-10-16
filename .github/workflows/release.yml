@@ -49,8 +49,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Pinned macOS runner labels (not `macos-latest`) so a GitHub-side
+        # default bump can't silently change the OS a release artifact is
+        # built on. GitHub retires each macOS runner image roughly a year
+        # after its successor ships; check
+        # https://github.com/actions/runner-images/issues for the next
+        # retirement notice and bump these every 6-12 months regardless.
+        # macos-14 -> macos-15: retiring 2026-11-02 (bumped 2026-10-16).
         include:
-          - runner: macos-14
+          - runner: macos-15
             target: aarch64-apple-darwin
           - runner: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
