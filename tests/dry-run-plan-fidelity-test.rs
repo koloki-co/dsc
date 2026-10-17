@@ -145,6 +145,9 @@ struct Recorder {
     /// Overrides the `GET /tag_groups.json` body when set; the default is
     /// `SERVER_TAG_GROUPS_JSON` (no groups). Frozen for the whole test.
     tag_groups_json: Option<String>,
+    /// Overrides the `GET /tags.json` body when set; the default is
+    /// `SERVER_TAGS_JSON`. Frozen for the whole test.
+    tags_json: Option<String>,
     /// (setting name, value sent) for every PUT received, in arrival order.
     puts: Vec<(String, String)>,
 }
@@ -193,7 +196,13 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
     } else if method == "GET" && path == "/admin/color_schemes.json" {
         ("HTTP/1.1 200 OK", SERVER_PALETTES_JSON.to_string())
     } else if method == "GET" && path == "/tags.json" {
-        ("HTTP/1.1 200 OK", SERVER_TAGS_JSON.to_string())
+        let body = recorder
+            .lock()
+            .expect("recorder lock")
+            .tags_json
+            .clone()
+            .unwrap_or_else(|| SERVER_TAGS_JSON.to_string());
+        ("HTTP/1.1 200 OK", body)
     } else if method == "GET" && path == "/tag_groups.json" {
         let body = recorder
             .lock()
@@ -223,6 +232,35 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
             "HTTP/1.1 200 OK",
             r#"{"success":"OK","tag_group":{"id":77}}"#.to_string(),
         )
+    } else if method == "DELETE" && path.starts_with("/tag/") && path.ends_with(".json") {
+        // Recorded as `delete tag <name> -> ""`, matching the plan parser.
+        let name = path
+            .strip_prefix("/tag/")
+            .and_then(|p| p.strip_suffix(".json"))
+            .unwrap_or_default();
+        recorder
+            .lock()
+            .expect("recorder lock")
+            .puts
+            .push((format!("delete tag {name}"), String::new()));
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
+    } else if method == "DELETE" && path.starts_with("/tag_groups/") && path.ends_with(".json") {
+        // The real run deletes by ID; map it back to the frozen fixture's
+        // group name so it is comparable with the plan's name-based line.
+        let id = path
+            .strip_prefix("/tag_groups/")
+            .and_then(|p| p.strip_suffix(".json"))
+            .unwrap_or_default();
+        let name = match id {
+            "6" => "stale",
+            other => other,
+        };
+        recorder
+            .lock()
+            .expect("recorder lock")
+            .puts
+            .push((format!("delete group {name}"), String::new()));
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
     } else if method == "GET" && path == "/c/7.json" {
         ("HTTP/1.1 200 OK", SERVER_CATEGORY_JSON.to_string())
     } else if method == "GET" && path.starts_with("/t/101.json") {
@@ -686,6 +724,68 @@ fn tag_push_group_plan_matches_the_real_run_against_the_same_frozen_state() {
         &BTreeMap::from([
             ("colours".to_string(), "red, green".to_string()),
             ("sizes".to_string(), "small, large".to_string()),
+        ]),
+    );
+}
+
+/// Frozen server state for the `--prune` test: `tag_old` is in no desired
+/// group and not in the file (planned tag delete); group `stale` (id 6) is
+/// absent from the file (planned group delete); group `keep` matches.
+const SERVER_TAGS_PRUNE_JSON: &str = r#"{"tags":[
+    {"id":1,"text":"tag_a"},
+    {"id":2,"text":"tag_old"}
+]}"#;
+
+const SERVER_TAG_GROUPS_PRUNE_JSON: &str = r#"{"tag_groups":[
+    {"id":5,"name":"keep","tag_names":["tag_a"]},
+    {"id":6,"name":"stale","tag_names":["tag_old"]}
+]}"#;
+
+const TAG_PRUNE_FILE: &str = r#"version: 1
+complete: true
+tag_groups:
+  - name: keep
+    tags: [tag_a]
+"#;
+
+/// Parse `dsc tag push --prune`'s `- delete tag:` / `- delete group:` plan
+/// lines into `delete tag <name>` / `delete group <name>` keys with empty
+/// values, matching what the mock records for the DELETE requests.
+fn parse_tag_prune_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let line = line.trim_start();
+        if let Some(name) = line.strip_prefix("- delete tag: ") {
+            changes.insert(format!("delete tag {name}"), String::new());
+        } else if let Some(name) = line.strip_prefix("- delete group: ") {
+            changes.insert(format!("delete group {name}"), String::new());
+        }
+    }
+    changes
+}
+
+#[test]
+fn tag_push_prune_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder {
+        tags_json: Some(SERVER_TAGS_PRUNE_JSON.to_string()),
+        tag_groups_json: Some(SERVER_TAG_GROUPS_PRUNE_JSON.to_string()),
+        ..Recorder::default()
+    }));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    let file = write_file(&dir, "tag-prune.yaml", TAG_PRUNE_FILE);
+    let file = file.to_str().expect("utf-8 temp path");
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "tag", "push", "mock", file, "--prune"],
+        &["tag", "push", "mock", file, "--prune", "--yes"],
+        parse_tag_prune_planned_changes,
+        &BTreeMap::from([
+            ("delete tag tag_old".to_string(), String::new()),
+            ("delete group stale".to_string(), String::new()),
         ]),
     );
 }
