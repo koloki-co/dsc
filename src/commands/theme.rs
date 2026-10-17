@@ -354,7 +354,7 @@ pub fn theme_push(
             );
             return Ok(());
         }
-        let new_id = client.create_theme(&push_data)?;
+        let new_id = create_theme_preserving_dark_palette(&client, &push_data)?;
         println!("{}", new_id);
     }
 
@@ -386,8 +386,29 @@ pub fn theme_duplicate(
     // Never copy the default status to the duplicate
     push_data["default"] = Value::Bool(false);
 
-    let new_id = client.create_theme(&push_data)?;
+    let new_id = create_theme_preserving_dark_palette(&client, &push_data)?;
     emit_result(format, &json!({ "id": new_id }), &new_id.to_string())
+}
+
+fn create_theme_preserving_dark_palette(
+    client: &DiscourseClient,
+    push_data: &Value,
+) -> Result<u64> {
+    let new_id = client.create_theme(push_data)?;
+    if let Some(dark_color_scheme_id) = push_data
+        .get("dark_color_scheme_id")
+        .filter(|value| !value.is_null())
+    {
+        client
+            .update_theme(
+                new_id as i64,
+                &json!({ "dark_color_scheme_id": dark_color_scheme_id }),
+            )
+            .with_context(|| {
+                format!("theme {new_id} was created, but assigning its dark color scheme failed")
+            })?;
+    }
+    Ok(new_id)
 }
 
 /// Build a payload suitable for creating or updating a theme.
@@ -399,6 +420,7 @@ fn build_push_payload(theme: &Value) -> Value {
         "enabled",
         "user_selectable",
         "color_scheme_id",
+        "dark_color_scheme_id",
         "theme_fields",
         "component",
     ] {
@@ -1468,6 +1490,7 @@ struct ThemeShow {
     default: bool,
     user_selectable: bool,
     color_scheme_id: Option<i64>,
+    dark_color_scheme_id: Option<i64>,
     parent_themes: Vec<ThemeRelation>,
     child_themes: Vec<ThemeRelation>,
     settings_count: usize,
@@ -1550,6 +1573,7 @@ fn build_theme_show(theme: &Value, theme_id: i64) -> ThemeShow {
         // A theme's colour scheme can legitimately be a built-in palette
         // (negative ID, e.g. -1 "Light") - see `dsc theme palette list`.
         color_scheme_id: theme.get("color_scheme_id").and_then(Value::as_i64),
+        dark_color_scheme_id: theme.get("dark_color_scheme_id").and_then(Value::as_i64),
         parent_themes: theme_relations(theme, "parent_themes"),
         child_themes: theme_relations(theme, "child_themes"),
         settings_count: theme_setting_entries(theme).len(),
@@ -1597,6 +1621,9 @@ pub fn theme_show(
             println!("  user-selectable: {}", show.user_selectable);
             if let Some(cs) = show.color_scheme_id {
                 println!("  color scheme:    {}", cs);
+            }
+            if let Some(cs) = show.dark_color_scheme_id {
+                println!("  dark scheme:     {}", cs);
             }
             println!(
                 "  parents:         {}",
@@ -1929,6 +1956,8 @@ mod tests {
             "enabled": true,
             "default": false,
             "user_selectable": true,
+            "color_scheme_id": 21,
+            "dark_color_scheme_id": 22,
             "child_themes": [{ "id": 14, "name": "Dropdown Header" }],
             "settings": [{ "setting": "links_position", "value": "left" }],
             "theme_fields": [{ "target": "common", "name": "scss", "value": "x" }]
@@ -1937,9 +1966,29 @@ mod tests {
         assert_eq!(show.id, 11);
         assert!(!show.component);
         assert!(show.enabled);
+        assert_eq!(show.color_scheme_id, Some(21));
+        assert_eq!(show.dark_color_scheme_id, Some(22));
         assert_eq!(show.child_themes.len(), 1);
         assert_eq!(show.settings_count, 1);
         assert_eq!(show.fields, vec!["common/scss"]);
+    }
+
+    #[test]
+    fn build_push_payload_preserves_light_and_dark_color_schemes() {
+        let theme = json!({
+            "id": 2,
+            "name": "Review theme",
+            "color_scheme_id": 21,
+            "dark_color_scheme_id": 22,
+            "updated_at": "2026-10-17T00:00:00Z"
+        });
+
+        let payload = build_push_payload(&theme);
+
+        assert_eq!(payload["color_scheme_id"], 21);
+        assert_eq!(payload["dark_color_scheme_id"], 22);
+        assert!(payload.get("id").is_none());
+        assert!(payload.get("updated_at").is_none());
     }
 
     #[test]
