@@ -5,6 +5,84 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.23.0] - 2026-10-18
+
+### Bug fixes
+
+- **theme**: Preserve dark palette on push and duplicate (R75) ([399f754](https://github.com/koloki-co/dsc/commit/399f754dbcb162ad0b8f12bb8224f1dc3bf968e1))
+
+- **api-key**: Register show in dry-run coverage, extend zero-id test ([93721c6](https://github.com/koloki-co/dsc/commit/93721c628dc7d37abd3e4c51dc8856cf19309ada))
+
+- **upcoming-change**: Use shared emit_result, fix stale read-only docs ([3844d15](https://github.com/koloki-co/dsc/commit/3844d15a48d99f91effb6ece13e219418761b617))
+
+### Build
+
+- **deps**: Bump zensical ([ce2a1dc](https://github.com/koloki-co/dsc/commit/ce2a1dcac56a130e6a93e369758668eb2f1b1b14))
+
+- **deps**: Bump the routine-minor-and-patch group across 1 directory with 2 updates ([434ea66](https://github.com/koloki-co/dsc/commit/434ea66b8ba3ed0844783c1f8b1efbc52c729e53))
+
+- **deps**: Bump the routine-minor-and-patch group with 3 updates ([6c04d69](https://github.com/koloki-co/dsc/commit/6c04d697f065127bb14160b9813f247542fc0162))
+
+- **deps**: Bump taiki-e/install-action ([#165](https://github.com/koloki-co/dsc/issues/165)) ([ffa7fd9](https://github.com/koloki-co/dsc/commit/ffa7fd9c11b6be688ff0fb0ca144e243875373c0))
+
+- **deps**: Bump zensical ([#166](https://github.com/koloki-co/dsc/issues/166)) ([08ecf09](https://github.com/koloki-co/dsc/commit/08ecf090b5dc54bddd595638edfe5cb2a81e1eeb))
+
+### CI
+
+- **release**: Move aarch64-apple-darwin off the retiring macos-14 runner ([7909c36](https://github.com/koloki-co/dsc/commit/7909c369b66ba0348b592d1c1e56ce33a5705d72))
+
+### CI / dependencies
+
+- **deps**: Clear rustls RUSTSEC advisories ([328b0fe](https://github.com/koloki-co/dsc/commit/328b0fe149145f363d81d9f5de8a342953eab182))
+
+- **deps**: Clear quinn-proto RUSTSEC advisories ([f90235c](https://github.com/koloki-co/dsc/commit/f90235cb88a6921d68b9ef5be27936cf7e5f94a1))
+
+### Documentation
+
+- **guarantees**: Stop re-listing R73 families, point at the test file ([f750ed9](https://github.com/koloki-co/dsc/commit/f750ed9e1e250d1f255e272d87c9f34114f04605))
+
+- **guarantees**: Note tag push's second R73 sub-path ([1d61c2c](https://github.com/koloki-co/dsc/commit/1d61c2ca22665fc92a206e7e4c9758e3bc96a4c3))
+
+- **roadmap**: Fix R74 entry wording to match file convention ([a3ad3cb](https://github.com/koloki-co/dsc/commit/a3ad3cb7327371d5882a8deec23f9b422860cfea))
+
+- **guarantees**: Update R73 row for tag push and category push ([1b69943](https://github.com/koloki-co/dsc/commit/1b699437545ff21599681c94abcaa12c420517b1))
+
+- **roadmap**: File R74, dsc post revision inspection and recovery ([575275a](https://github.com/koloki-co/dsc/commit/575275ac70460e26ae252e0c0c0494f40c0ddcd8))
+
+- **roadmap**: File R71-R73, patterns worth adopting from ods ([21f9a08](https://github.com/koloki-co/dsc/commit/21f9a08c67e964da11fee5d213930ba1cecdf5df))
+
+### Features
+
+- **post**: Add post revision list/show/revert (R74 Phase 1) ([a7af7bb](https://github.com/koloki-co/dsc/commit/a7af7bb55a2dcdb7250af1d4107b00d443598430))
+
+- **test**: Add named guarantee index and hostile-config coverage (R72) ([381869f](https://github.com/koloki-co/dsc/commit/381869f0f1a6fb4a7e1308030275d7355b91e2fe))
+
+- **api-key**: Add show command (R70 partial) ([1209071](https://github.com/koloki-co/dsc/commit/12090711b65adb1d893482aa6efe6d4d7fbbb254))
+
+- **upcoming-change**: Add enable/disable (R59 Phase 2) ([4d07e72](https://github.com/koloki-co/dsc/commit/4d07e72f7ce291f0908ffbd08bf021ccf81f475d))
+
+### Refactor
+
+- **test**: Extract shared dry-run/real-run harness, run full gate ([51761f2](https://github.com/koloki-co/dsc/commit/51761f24cccf3d7aea10b075a8df1ec70e62ce72))
+
+### Tests
+
+- Cover tag creation via group plan fidelity (R73) ([a2db4fb](https://github.com/koloki-co/dsc/commit/a2db4fb53972d45072a9d87e1217e658634b4f4f))
+
+- Cover tag push --prune plan fidelity (R73) ([9286b22](https://github.com/koloki-co/dsc/commit/9286b22b9883147fe3016621eb0de08e7a317e89))
+
+- **tag**: Check tag push group plan against real run (R73) ([1117959](https://github.com/koloki-co/dsc/commit/11179594034c965d8b73c7f810dddfcacf7d2988))
+
+- **category**: Verify category push dry-run plan fidelity against a real run (R73) ([f436bfa](https://github.com/koloki-co/dsc/commit/f436bfa69af9f3c6df1cfae2895129766e06e934))
+
+- **tag**: Verify tag push dry-run plan fidelity against a real run (R73) ([1033d15](https://github.com/koloki-co/dsc/commit/1033d156c4be11ab63eca29ec022854bb59103fd))
+
+- **palette**: Verify palette push dry-run plan fidelity against a real run (R73) ([28a0324](https://github.com/koloki-co/dsc/commit/28a0324b1bd2ed3c9276d21d1aa16ae5b468c471))
+
+- **theme**: Verify theme setting push dry-run plan fidelity (R73) ([3d6dd68](https://github.com/koloki-co/dsc/commit/3d6dd68594e1cdf501a0a926a831b91daecb18e0))
+
+- **setting**: Verify dry-run plan fidelity against a real run (R73) ([3af35a3](https://github.com/koloki-co/dsc/commit/3af35a35bbbfb17b9f4fa2f200e5be519b92cc3d))
+
 ## [0.22.0] - 2026-09-30
 
 ### Bug fixes
