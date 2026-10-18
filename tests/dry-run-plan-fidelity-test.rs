@@ -22,7 +22,7 @@
 
 mod common;
 use common::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
@@ -618,7 +618,7 @@ fn palette_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state(
 
 /// Parse `dsc tag push`'s `  ~ set description: name ("desc")` plan lines
 /// into `name -> desc`. Scoped to the description-update path only - tag
-/// group create/update/delete and tag creation-via-group have their own
+/// group create/update/delete have their own
 /// differently-shaped plan lines, deliberately not covered here (see the
 /// roadmap's R73 entry for what's left).
 fn parse_tag_planned_changes(stdout: &str) -> BTreeMap<String, String> {
@@ -725,6 +725,76 @@ fn tag_push_group_plan_matches_the_real_run_against_the_same_frozen_state() {
             ("colours".to_string(), "red, green".to_string()),
             ("sizes".to_string(), "small, large".to_string()),
         ]),
+    );
+}
+
+/// Server tags for the creation-via-group test: `red`, `blue` and `circle`
+/// already exist, so only the file tags absent from here (`green`, `small`,
+/// `large`) can be planned as created.
+const SERVER_TAGS_VIA_GROUP_JSON: &str = r#"{"tags":[
+    {"id":1,"text":"red"},
+    {"id":2,"text":"blue"},
+    {"id":3,"text":"circle"}
+]}"#;
+
+#[test]
+fn tag_push_creation_via_group_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder {
+        tags_json: Some(SERVER_TAGS_VIA_GROUP_JSON.to_string()),
+        tag_groups_json: Some(SERVER_TAG_GROUPS_RECONCILE_JSON.to_string()),
+        ..Recorder::default()
+    }));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    let file = write_file(&dir, "tag-groups.yaml", TAG_GROUP_FILE);
+    let file = file.to_str().expect("utf-8 temp path");
+
+    let dry_run_output = run_dsc(&["--dry-run", "tag", "push", "mock", file], &config_path);
+    assert!(
+        dry_run_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry_run_output.stderr)
+    );
+    assert!(
+        recorder.lock().expect("recorder lock").puts.is_empty(),
+        "dry-run must issue zero requests"
+    );
+    let planned: BTreeSet<String> = String::from_utf8_lossy(&dry_run_output.stdout)
+        .lines()
+        .filter_map(|l| l.trim_start().strip_prefix("+ create tag: "))
+        .filter_map(|rest| rest.split_once(" (via its tag group)"))
+        .map(|(name, _)| name.to_string())
+        .collect();
+    assert_eq!(
+        planned,
+        ["green", "large", "small"].map(String::from).into(),
+        "unexpected dry-run tag-creation plan"
+    );
+
+    let real_output = run_dsc(&["tag", "push", "mock", file], &config_path);
+    assert!(
+        real_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&real_output.stderr)
+    );
+    // The only way Discourse materialises a tag is a group payload naming
+    // it, so the tags the real run creates are those in a POSTed/PUT group
+    // that the frozen server did not already have.
+    let existing: BTreeSet<&str> = ["red", "blue", "circle"].into();
+    let created: BTreeSet<String> = recorder
+        .lock()
+        .expect("recorder lock")
+        .puts
+        .iter()
+        .flat_map(|(_group, tags)| tags.split(", "))
+        .filter(|t| !t.is_empty() && !existing.contains(t))
+        .map(String::from)
+        .collect();
+    assert_eq!(
+        planned, created,
+        "the plan's `+ create tag` lines must exactly match the new tags \
+         carried by the real run's tag group requests"
     );
 }
 
