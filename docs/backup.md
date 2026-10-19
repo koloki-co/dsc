@@ -30,9 +30,9 @@ Requires the [`aws` CLI](https://docs.aws.amazon.com/cli/). Bucket, region, opti
 ## dsc backup create
 
 ```
-dsc backup create <discourse>
-dsc backup create --all
-dsc backup create --tags <tag1,tag2,...>
+dsc backup create <discourse> [--format text|json|yaml|csv]
+dsc backup create --all [--format text|json|yaml|csv]
+dsc backup create --tags <tag1,tag2,...> [--format text|json|yaml|csv]
 ```
 
 Triggers a backup on the specified Discourse. The backup is created server-side; it is not downloaded locally.
@@ -42,6 +42,7 @@ Use `--all` to trigger a backup on every configured forum, or `--tags` to select
 ```bash
 dsc backup create --all
 dsc backup create --tags production
+dsc backup create --tags production --format json
 ```
 
 Continues past a forum that fails (missing credentials, unreachable) so one bad entry doesn't stop the rest of the fleet; exits non-zero if any forum failed.
@@ -49,22 +50,23 @@ Continues past a forum that fails (missing credentials, unreachable) so one bad 
 ## dsc backup list
 
 ```
-dsc backup list <discourse> [--format text|markdown|markdown-table|json|yaml|csv|urls] [--verbose]
+dsc backup list <discourse> [--format text|markdown|markdown-table|json|yaml|csv] [--verbose]
 ```
 
-Lists all backups on the specified Discourse. Supports the same formats as `dsc list`. `-v`/`--verbose` includes additional fields where supported.
+Lists all backups on the specified Discourse. `-v`/`--verbose` includes additional fields where supported. `--format urls` is accepted by `dsc list` but not here - it is rejected at runtime since a backup archive has no browsable URL - so it is omitted above.
 
 ## dsc backup pull
 
 ```text
-dsc backup pull <discourse> <backup-filename> [<local-path>]
+dsc backup pull <discourse> <backup-filename> [<local-path>] [--force]
 ```
 
-Downloads a backup archive to the local filesystem. `<backup-filename>` is the name shown by `dsc backup list`. If `<local-path>` is omitted, the file is saved in the current directory with the same name.
+Downloads a backup archive to the local filesystem. `<backup-filename>` is the name shown by `dsc backup list`. If `<local-path>` is omitted, the file is saved in the current directory with the same name. Refuses to overwrite an existing file unless `--force` is given.
 
 ```bash
 dsc backup pull myforum discourse-2026-04-17-230000.tar.gz
 dsc backup pull myforum discourse-2026-04-17-230000.tar.gz ./backups/
+dsc backup pull myforum discourse-2026-04-17-230000.tar.gz --force
 ```
 
 ## dsc backup push
@@ -117,6 +119,9 @@ dsc backup setup-s3 myforum --use-iam-profile
 # 4) Preview across the whole fleet before provisioning for real
 dsc backup setup-s3 -n --all
 dsc backup setup-s3 --tags production --use-iam-profile
+
+# 5) Re-run idempotently, rotating the access key on an existing user
+dsc backup setup-s3 myforum --reuse-user
 ```
 
-> Phase 1 covers the create-everything flow; `--use-iam-profile` and `--all`/`--tags` are implemented on `main`. `--reuse-user` (idempotent re-runs / key rotation) is planned - see the [backup S3 setup spec](https://github.com/koloki-co/dsc/blob/main/spec/commands/backup-s3-setup.md).
+`--reuse-user` makes re-running against an existing setup idempotent: it reuses the existing bucket/policy/user instead of failing on "already exists", and rotates the access key (deleting the old one once the new one is confirmed working). See the [backup S3 setup spec](https://github.com/koloki-co/dsc/blob/main/spec/commands/backup-s3-setup.md) for the full phase history.

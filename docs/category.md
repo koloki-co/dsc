@@ -23,10 +23,10 @@ Flags:
 ## dsc category pull
 
 ```
-dsc category pull <discourse> <category-id-or-slug> [<local-path>] [--convert-admonitions <style>] [--rewrite-links]
+dsc category pull <discourse> <category-id-or-slug> [<local-path>] [--convert-admonitions <style>] [--rewrite-links] [--force]
 ```
 
-Pulls the category into a directory of Markdown files. If `<local-path>` is omitted, writes to a new folder in the current directory (named from the category slug/name). Files are named from topic titles.
+Pulls the category into a directory of Markdown files. If `<local-path>` is omitted, writes to a new folder in the current directory (named from the category slug/name). Files are named from topic titles. Refuses to overwrite an existing file unless `--force` is given.
 
 Each file gets YAML front matter binding it to its remote topic:
 
@@ -124,9 +124,11 @@ Copies the specified category. If `--target` is omitted, copies within the same 
 Version-control a forum's category structure the way `tag pull/push` handles the tag taxonomy.
 
 ```
-dsc category def pull <discourse> [categories.yaml]   # snapshot every definition to a file
-dsc category def push <discourse> <categories.yaml>   # apply the file (upsert; never deletes)
+dsc category def pull <discourse> [categories.yaml] [--force]   # snapshot every definition to a file
+dsc category def push <discourse> <categories.yaml>              # apply the file (upsert; never deletes)
 ```
+
+`def pull` refuses to overwrite an existing file unless `--force` is given.
 
 - `def pull` writes one `categories.yaml` (or `.json` by extension) holding every category's definition - name, slug, colour, position, parent, `read_restricted`, description, topic template, permissions, tag rules, category types, custom fields, and display knobs. Usage counts and other volatile fields are dropped so re-pulls diff cleanly.
 - `def push` reconciles the server toward the file: it **creates** missing categories and **updates** changed ones, matching by `id` (stable), then by parent-scoped `slug`, then by parent-scoped `name`. Discourse permits the same slug or name under different parents; `parent` disambiguates those aliases when possible, while any remaining ambiguity requires an `id`. It never deletes. `--dry-run` prints the plan with `+` (create), `~` (update), `=` (unchanged) sigils and names each field that would change. A file entry with no `id` that matches nothing is flagged loudly - it would create a new category, so if you meant to rename an existing one, keep its `id` in the file to preserve its topics, or use `dsc category rename` below.

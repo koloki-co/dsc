@@ -5,14 +5,15 @@ Operations on individual posts (not whole topics). Complements `dsc topic pull/p
 ## dsc post pull
 
 ```text
-dsc post pull <discourse> <post-id> [<local-path>]
+dsc post pull <discourse> <post-id> [<local-path>] [--force]
 ```
 
-Downloads the raw Markdown body of the specified post. Writes to `<local-path>` if given, otherwise to stdout.
+Downloads the raw Markdown body of the specified post. Writes to `<local-path>` if given, otherwise to stdout. When writing to a file, refuses to overwrite an existing one unless `--force` is given.
 
 ```bash
 dsc post pull myforum 98765 ./post-98765.md
 dsc post pull myforum 98765 > post.md
+dsc post pull myforum 98765 ./post-98765.md --force
 ```
 
 ## dsc post push

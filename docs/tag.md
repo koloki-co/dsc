@@ -13,7 +13,7 @@ Lists all tags visible to the authenticated user, with the topic count beside ea
 ## dsc tag pull
 
 ```text
-dsc tag pull <discourse> [path]
+dsc tag pull <discourse> [path] [--force]
 ```
 
 Serialises the full tag taxonomy (tags and tag groups) to a single file. Default path: `tags.yaml`. Format is inferred from the file extension (`.yaml`/`.yml` or `.json`).
@@ -22,9 +22,12 @@ Only definitions are emitted — usage counts and read-only fields are excluded 
 
 Tag groups require an admin API key. If the key lacks admin scope, groups are omitted with a warning.
 
+Refuses to overwrite an existing file unless `--force` is given.
+
 ```bash
 dsc tag pull myforum
 dsc tag pull myforum tags.json
+dsc tag pull myforum tags.yaml --force
 ```
 
 ### File schema (version 1)

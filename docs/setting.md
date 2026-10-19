@@ -40,7 +40,7 @@ dsc -n setting set --tags staging max_invites_per_day 50   # preview
 ## dsc setting pull
 
 ```
-dsc setting pull <discourse> [path] [--changed-only] [--category <cat>]
+dsc setting pull <discourse> [path] [--changed-only] [--category <cat>] [--force]
 ```
 
 Snapshot all site settings to a local YAML (or JSON, by extension) file with full metadata: `default`, `type`, `category`, `description`. The file is self-documenting and stable-sorted by category then name.
@@ -48,6 +48,7 @@ Snapshot all site settings to a local YAML (or JSON, by extension) file with ful
 - Default path: `settings.yaml`.
 - `--changed-only` (`-c`): only include settings whose value differs from default. Produces a manageable file (~50-100 entries) suitable for version control.
 - `--category <cat>`: limit to a single category (e.g. `required`, `email`, `security`).
+- `--force`: overwrite an existing destination file. Refused by default.
 
 See [spec/commands/setting-sync.md](https://github.com/koloki-co/dsc/blob/main/spec/commands/setting-sync.md) for the schema and intended workflow.
 

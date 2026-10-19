@@ -1862,7 +1862,7 @@ pub enum AppEnvCommand {
         #[arg(long)]
         rebuild: bool,
         /// Skip the timestamped remote backup. Backups are enabled by default.
-        #[arg(long, action = ArgAction::SetFalse, default_value_t = true)]
+        #[arg(long = "no-backup", action = ArgAction::SetFalse, default_value_t = true)]
         backup: bool,
         /// Confirm a live write and optional rebuild.
         #[arg(long, short = 'y')]
@@ -1878,7 +1878,7 @@ pub enum AppEnvCommand {
         #[arg(long)]
         rebuild: bool,
         /// Skip the timestamped remote backup. Backups are enabled by default.
-        #[arg(long, action = ArgAction::SetFalse, default_value_t = true)]
+        #[arg(long = "no-backup", action = ArgAction::SetFalse, default_value_t = true)]
         backup: bool,
         /// Confirm a live write and optional rebuild.
         #[arg(long, short = 'y')]

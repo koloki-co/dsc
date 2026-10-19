@@ -18,10 +18,10 @@ Lists available colour palettes on the specified Discourse, including built-in p
 ## dsc theme palette pull
 
 ```
-dsc theme palette pull <discourse> <palette-id> [<local-path>]
+dsc theme palette pull <discourse> <palette-id> [<local-path>] [--force]
 ```
 
-Exports the specified palette to a local JSON file. If `<local-path>` is omitted, writes `palette-<id>.json` in the current directory. Discourse returns effective resolved colours rather than identifying which values are stored overrides, so the file is an editable effective-colour snapshot. The `pulled` block records the original name and effective colours used to identify intentional edits; do not edit it. Built-in negative-ID palettes can be pulled but not updated.
+Exports the specified palette to a local JSON file. If `<local-path>` is omitted, writes `palette-<id>.json` in the current directory. Discourse returns effective resolved colours rather than identifying which values are stored overrides, so the file is an editable effective-colour snapshot. The `pulled` block records the original name and effective colours used to identify intentional edits; do not edit it. Built-in negative-ID palettes can be pulled but not updated. Refuses to overwrite an existing file unless `--force` is given.
 
 ## dsc theme palette push
 

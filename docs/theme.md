@@ -48,12 +48,12 @@ Legacy SSH removal by name, using the command template in `DSC_SSH_THEME_REMOVE_
 ## dsc theme pull
 
 ```
-dsc theme pull <discourse> <theme-id> [<local-path>]
+dsc theme pull <discourse> <theme-id> [<local-path>] [--force]
 ```
 
 Pulls the specified theme into a local JSON file. `<theme-id>` can be found using `dsc theme list`.
 
-If `<local-path>` is omitted, the file is written to the current directory named from the theme name (slugified). The path to the written file is printed to stdout.
+If `<local-path>` is omitted, the file is written to the current directory named from the theme name (slugified). The path to the written file is printed to stdout. Refuses to overwrite an existing file unless `--force` is given.
 
 ## dsc theme push
 
@@ -112,11 +112,11 @@ dsc theme setting set accm 14 header_links '[{"id":1,"title":"Education","url":"
 For a whole component - and especially for the big JSON-list settings like a nav component's `header_links` / `dropdown_links` - snapshot the settings to a file, edit, and push back. The same pull → edit → push loop `dsc setting pull/push` gives site settings.
 
 ```
-dsc theme setting pull <discourse> <theme-id> [<local-path>]
+dsc theme setting pull <discourse> <theme-id> [<local-path>] [--force]
 dsc theme setting push <discourse> <theme-id> <local-path>   [--dry-run]
 ```
 
-- `pull` writes every setting to a file (YAML by default; a `.json` path writes JSON). **JSON-list settings are expanded to real arrays** - `header_links` becomes an editable list of entries, not one escaped string on a line. If `<local-path>` is omitted it writes `<theme-name>-settings.yml` in the current directory.
+- `pull` writes every setting to a file (YAML by default; a `.json` path writes JSON). **JSON-list settings are expanded to real arrays** - `header_links` becomes an editable list of entries, not one escaped string on a line. If `<local-path>` is omitted it writes `<theme-name>-settings.yml` in the current directory. Refuses to overwrite an existing file unless `--force` is given.
 - `push` re-serialises each list back to the JSON-string form Discourse expects and **PUTs only the settings that changed** (compared semantically, so reformatting and key-order don't count as edits - an untouched pull → push is a clean no-op). Settings in the file that no longer exist on the component are skipped with a warning. `--dry-run` prints the plan, summarising long list values by length so the terminal isn't flooded.
 
 This replaces the read-whole-array → change-one-field → PUT-it-back scripting that editing a header menu by hand otherwise needs.
@@ -135,12 +135,12 @@ Read and write a theme's individual **fields** - the raw source entries a theme 
 
 ```
 dsc theme field list <discourse> <theme-id> [--format text|json|yaml]
-dsc theme field pull <discourse> <theme-id> <target/name> [<local-path>]
+dsc theme field pull <discourse> <theme-id> <target/name> [<local-path>] [--force]
 dsc theme field push <discourse> <theme-id> <target/name> <local-path>   [--dry-run]
 ```
 
 - `list` shows each field as `target/name` with its type (`scss`/`html`/`js`/`yaml`/`upload`) and size.
-- `pull` writes one field's body to a file (default name derived from the field, e.g. `common-scss.scss`). Upload-var fields have no text body - use `dsc theme asset` for those.
+- `pull` writes one field's body to a file (default name derived from the field, e.g. `common-scss.scss`). Upload-var fields have no text body - use `dsc theme asset` for those. Refuses to overwrite an existing file unless `--force` is given.
 - `push` PUTs just that one field back (a single-entry `theme_fields` upsert; other fields are untouched). Unchanged content is a no-op; `--dry-run` shows the byte delta.
 - **`push` refuses a git-backed remote component** - its fields are owned by the upstream repo, not the site. Edit upstream and `dsc theme update`, or `dsc theme duplicate` it first for an editable copy.
 
@@ -197,6 +197,10 @@ dsc theme attach accm 2 14
 # Retire it again
 dsc theme detach accm 2 14
 ```
+
+## dsc theme palette
+
+List, pull, and push colour palettes (color schemes) for a theme. See [palette.md](palette.md) for the full command reference.
 
 ## dsc theme update
 
