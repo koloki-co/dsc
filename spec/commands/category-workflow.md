@@ -1,6 +1,6 @@
 # `dsc category` pull/push workflow — gaps + admonition/URL conversion + silent push
 
-> **Status: Gaps 1–5 implemented (unreleased).**
+> **Status: Gaps 1–5 implemented (v0.10.16).**
 > Surfaced from a real-world offline playbook sync workflow against
 > `forum.rcpch.tech`. Gaps 1–3 affect the `category pull` / `category push`
 > command pair. Gap 4 is content transformation for a single-source workflow.

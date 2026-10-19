@@ -1,6 +1,6 @@
 # `dsc explorer` - inspect and run Discourse Data Explorer queries
 
-> **Status: Phases 1 and 2 implemented (unreleased); R65 fleet execution in progress.** `list`, `show`, and `run` use the canonical bundled-plugin routes with safe pagination, typed structured output, parameter files, exact query export, CSV download, explain, limits, filtering, and sorting. R65 adds exact query-name resolution and fleet execution as the first report-evidence primitive. Managed query mutation remains deliberately separate.
+> **Status: Phases 1 and 2 implemented (v0.13.0); R65 fleet execution in progress.** `list`, `show`, and `run` use the canonical bundled-plugin routes with safe pagination, typed structured output, parameter files, exact query export, CSV download, explain, limits, filtering, and sorting. R65 adds exact query-name resolution and fleet execution as the first report-evidence primitive. Managed query mutation remains deliberately separate.
 
 Spec for the core Discourse Data Explorer plugin. Goal: let an agent or administrator safely discover, inspect, and run existing trusted SQL reports without manually driving the admin UI or leaking the database-wide power of arbitrary SQL authoring. Driver: Data Explorer is now bundled with Discourse and is the practical read-only diagnostic surface for questions that ordinary admin APIs cannot answer, including notification forensics.
 

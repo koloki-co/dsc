@@ -1,6 +1,6 @@
 # `dsc topic` - title and tag editing
 
-> **Status: Implemented (unreleased).** `dsc topic title` and `dsc topic tags`
+> **Status: Implemented (v0.10.18).** `dsc topic title` and `dsc topic tags`
 > ship, both honouring `--dry-run`; the reserved-slug `403` is surfaced with a
 > clear message. The "Future" front-matter-title enhancement is already
 > satisfied - `dsc category push` prefers the `title` field in a file's YAML

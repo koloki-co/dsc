@@ -1,6 +1,6 @@
 # `dsc update` - leaner parallelism flag + don't collide with an in-flight rebuild
 
-> **Status: implemented (unreleased).** Two refinements to `dsc update`
+> **Status: implemented (v0.10.28).** Two refinements to `dsc update`
 > surfaced during a fleet update (`dsc update all -p -m 2 -y`): a cleaner parallel
 > flag (`-p [N]`, `-m` removed), and - more importantly - a pre-flight that stops
 > `dsc` from stomping a rebuild already running on a host. Both verified on

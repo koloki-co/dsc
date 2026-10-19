@@ -1,6 +1,6 @@
 # `dsc backup setup-s3` - provision an S3 backup bucket + scoped IAM user and point Discourse at it
 
-> **Status: Phase 1 and Phase 2 implemented (unreleased).** `dsc backup
+> **Status: Phase 1 (v0.10.22) and Phase 2 (v0.15.0-v0.16.0) implemented.** `dsc backup
 > setup-s3 <discourse>` creates a
 > bucket + single-bucket policy + user + key (via `aws` CLI), sets the
 > Discourse S3 settings (using the fixed `update_site_setting` path), runs an

@@ -1,6 +1,6 @@
 # `dsc topic delete` - delete, purge, and restore topics by topic ID
 
-> **Status: implemented (unreleased).** `dsc topic delete` / `rm` soft-deletes one or more topics by topic ID, honours global `--dry-run`, and supports `--purge` / `--permanent` for eligible permanent deletion. `dsc topic restore` restores a soft-deleted topic via `PUT /t/{id}/recover`. `dsc topic list --deleted [query]` discovers restorable topic IDs via Discourse's deleted topic-list filter.
+> **Status: implemented (v0.10.31).** `dsc topic delete` / `rm` soft-deletes one or more topics by topic ID, honours global `--dry-run`, and supports `--purge` / `--permanent` for eligible permanent deletion. `dsc topic restore` restores a soft-deleted topic via `PUT /t/{id}/recover`. `dsc topic list --deleted [query]` discovers restorable topic IDs via Discourse's deleted topic-list filter.
 
 Spec for deleting a topic by its topic ID. Driver: real-world use archiving house-property records out of a private Discourse - two topics were pulled locally with `dsc topic pull --full` and then needed to be deleted from the forum.
 

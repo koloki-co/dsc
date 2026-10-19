@@ -72,7 +72,7 @@ tag_groups:
 
 ## Fixed bugs (observed 2026-07-01, yorkmusic.org, Discourse 2026.7.0-latest)
 
-> **Status: all fixed (unreleased).** `delete_tag` now uses the singular
+> **Status: all fixed (v0.10.29).** `delete_tag` now uses the singular
 > `/tag/{name}.json` endpoint; `tag_push` reconciles tag **groups first** (which
 > materialise their tags) and only then sets descriptions, and a desired tag
 > that belongs to no group and does not exist is reported (no silent 404 abort).

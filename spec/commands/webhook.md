@@ -1,6 +1,6 @@
 # `dsc webhook list|create|delete|ping` - basic webhook administration
 
-> **Status: implemented on main (unreleased).** Basic admin-scope CRUD-plus-ping over Discourse's
+> **Status: implemented (v0.13.1).** Basic admin-scope CRUD-plus-ping over Discourse's
 > outbound webhook admin API (`/admin/api/web_hooks.json`). Roadmap item R17.
 
 Driver: `dsc` already administers API keys (`dsc api-key`) via the same

@@ -1,6 +1,6 @@
 # `dsc update` - an append-only update log + skip-recently-updated
 
-> **Status: implemented (unreleased).** A register of what `dsc update` did to
+> **Status: implemented (v0.10.29).** A register of what `dsc update` did to
 > each forum and when, so a fleet round is auditable and re-runnable without
 > repeating the day's work. Extends the `UpdateOutcome` skip model from
 > [update-concurrency.md](update-concurrency.md). Log write/render + skip-recent

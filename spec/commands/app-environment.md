@@ -1,6 +1,6 @@
 # `dsc app env` - inspect and safely manage Docker `app.yml` environment
 
-> **Status: Phases 1 and 2 implemented (unreleased).** `dsc app env list|get|audit|set|unset` reads and safely edits a constrained scalar `env:` mapping over SSH, uses an optional per-forum `app_yml_path`, and applies conservative secret redaction.
+> **Status: Phases 1 and 2 implemented (v0.13.0).** `dsc app env list|get|audit|set|unset` reads and safely edits a constrained scalar `env:` mapping over SSH, uses an optional per-forum `app_yml_path`, and applies conservative secret redaction.
 
 Spec for reading, auditing, and eventually changing the `env:` section of a self-hosted Discourse Docker install's `containers/app.yml` over SSH. Goal: make fleet configuration observable and controlled without manually logging into every host. Driver: Digital Health Discourse hit an admin API rate limit while `dsc tag pull` ran; the immediate setting to inspect or raise is `DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE`.
 

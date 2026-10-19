@@ -1,6 +1,6 @@
 # `dsc theme` - management gaps spec
 
-> **Status: Phases 1-3 implemented (setting pull/push in v0.10.25; field/asset/update unreleased).**
+> **Status: Phases 1-3 implemented (setting pull/push in v0.10.25; field/asset/update in v0.10.26).**
 > All specced commands now ship: `theme setting list/get/set/pull/push`,
 > `theme field list/pull/push`, `theme asset list/set`, `theme enable/disable`,
 > `theme attach/detach`, `theme show`, and `theme update` (git-backed remote
@@ -70,7 +70,7 @@ dsc theme detach   <discourse> <parent-id> <component-id>     [--dry-run]
 
 ## Phase 2 - iteration ergonomics
 
-### `dsc theme setting pull/push` (field-required) — implemented (unreleased)
+### `dsc theme setting pull/push` (field-required) — implemented (v0.10.25)
 
 Snapshot a component's settings to a local file, edit, push back - the pull -> edit -> push pattern `dsc setting pull/push` already gives site settings.
 
@@ -85,7 +85,7 @@ dsc theme setting push <discourse> <theme-id> <file>   [--dry-run]
 
 **Confirmed shape (2026-06-29, against Dropdown Header id 17 on ACCM, Discourse 2026.6.0):** the JSON-list settings report `"type": "string"` - same as plain string settings like `main_link_color` - and carry their value as a string of escaped JSON (`"[{\"id\": 1, ...}]"`). So `type` can't flag them; detection is "parse the string; if it yields an array/object, expand it." Push serialises the edited array back to compact JSON text (NOT the site-settings pipe-join, which would corrupt it) and compares **semantically** (parsed JSON, not raw strings) so the compact-vs-spaced and key-order differences between file and server don't register as spurious edits - an untouched `pull -> push` is a verified no-op. `--dry-run` summarises long list values by length rather than dumping the whole array.
 
-### `dsc theme field` — implemented (unreleased)
+### `dsc theme field` — implemented (v0.10.26)
 
 Edit one `theme_field` without a whole-theme round-trip.
 
@@ -99,7 +99,7 @@ dsc theme field push <discourse> <theme-id> <target/name> <local-path>   [--dry-
 - `pull` writes the raw field body (e.g. the SCSS) to a file with a sensible default name; `push` PUTs just that field back via `PUT /admin/themes/:id.json` with a single-entry `theme_fields` array.
 - Refuse (with a clear message) to push to a field on a git-backed remote component, where the DB value is not the source of truth.
 
-### `dsc theme asset` — implemented (unreleased)
+### `dsc theme asset` — implemented (v0.10.26)
 
 Upload an image and bind it to a theme upload variable in one step, so SCSS/settings can reference `$name`. Confirmed live: `/uploads.json` accepts `type=theme`, and binding a `theme_upload_var` (`type_id: 2`) via a single-entry `theme_fields` PUT works.
 

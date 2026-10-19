@@ -371,7 +371,7 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 
 ### Phase 1 — blocking (unblocks yorkmusic.org config-as-code)
 
-> **Status: implemented (unreleased).** All Phase 1 items below, in
+> **Status: implemented (v0.15.0).** All Phase 1 items below, in
 > `src/commands/category_def.rs` + `src/api/categories.rs`/`models.rs`.
 > Verified end-to-end on koloki-demo: pull, show, get, reversible set, and def
 > push (create with rename-warning, update, and idempotent `= unchanged` on a
@@ -420,27 +420,27 @@ also accepted; the form form is simpler and matches `create_category`'s existing
 
 - [x] `dsc category rename <discourse> <category> <new-name>` — safe rename via
   `PUT /categories/{id}` (preserves topics); mirrors `tag rename`. The
-  recommended path for no-`id` files. **Status: implemented (unreleased).**
+  recommended path for no-`id` files. **Status: implemented (v0.15.0).**
   Resolves `<category>` by id/slug/name (same as `show`/`get`/`set`); rejects
   an unresolvable category, an empty/identical new name, and a new name
   already used by a different category; `--dry-run` prints the planned
   rename. `src/commands/category_def.rs` (`plan_rename`, `category_rename`);
   unit-tested (no live test, matching `tag rename`'s coverage).
 - [x] `--append` / `--remove` for list fields on `category set` (`allowed_tags`,
-  `allowed_tag_groups`). **Status: implemented (unreleased).** Mutually
+  `allowed_tag_groups`). **Status: implemented (v0.15.0).** Mutually
   exclusive flags on `category set`; merge against the field's current
   server-side value (dedupe on append, no-op on removing an absent item) and
   send the resulting list as the field's `PUT` params, same as a full
   replace. `src/commands/category_def.rs` (`merge_list_field`,
   `list_field_edit_params`); unit-tested (no live test needed - pure list
   merge logic).
-- [x] `required_tag_groups` round-trip (list of `{name, min_count}`). **Status: implemented (unreleased).** Reads the category-list response and writes `required_tag_groups[][name]` / `required_tag_groups[][min_count]` form parameters. `category set` accepts `group:min_count,...` and an empty value clears the rules.
-- [x] `category_types` round-trip. **Status: implemented (unreleased).** Reads the stable type IDs beyond the built-in `discussion` type from the category-list response and writes `category_types[]` form parameters. `category set` accepts a comma-separated type list. The modern Discourse support category type is
+- [x] `required_tag_groups` round-trip (list of `{name, min_count}`). **Status: implemented (v0.15.0).** Reads the category-list response and writes `required_tag_groups[][name]` / `required_tag_groups[][min_count]` form parameters. `category set` accepts `group:min_count,...` and an empty value clears the rules.
+- [x] `category_types` round-trip. **Status: implemented (v0.15.0).** Reads the stable type IDs beyond the built-in `discussion` type from the category-list response and writes `category_types[]` form parameters. `category set` accepts a comma-separated type list. The modern Discourse support category type is
   needed to enable accepted answers for York Music's Marketplace; it supersedes
   the invalid category-level `solved_enabled` field.
 - [x] `parent` resolution by name as well as slug; validation that the parent
   exists before push (clear error instead of a 4xx from the API). **Status:
-  implemented (unreleased).** `def push` (including `--dry-run`) now
+  implemented (v0.15.0).** `def push` (including `--dry-run`) now
   validates every file entry's `parent` reference against the desired file
   entries and the server's current categories, by existing ID, slug, then name,
   before any writes happen; an unresolvable reference fails with one error
@@ -450,11 +450,11 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   an existing parent ID is also accepted when scoped aliases collide.
   `category set parent` resolves the same way. `src/commands/category_def.rs`
   (`resolve_parent_id`, `resolve_parent_targets`); unit-tested.
-- [x] `custom_fields` round-trip. **Status: implemented (unreleased).** Reads each category's complete custom-field map from `/c/{id}/show.json`; applies changes via JSON `PUT /categories/{id}.json`, using nulls to remove keys omitted from a specified file map. `category set` accepts a complete scalar-valued JSON object. Object and array values are rejected because Discourse stringifies them. Verified reversibly on koloki-demo.
-- [x] `topic_title_placeholder` round-trip. **Status: implemented (unreleased).** Reads the category-list response and writes the `topic_title_placeholder` form parameter, exactly mirroring `topic_template`. `category get`/`set`/`show`, `def pull`/`push`, and `category diff` all support the field. Unit-tested (entry round-trip and `set` params); no live test needed - same request shape as `topic_template`.
-- [x] `style_type`/`icon`/`emoji` round-trip. **Status: implemented (unreleased).** `style_type` (`square`/`icon`/`emoji`), `icon` (FontAwesome name), and `emoji` (shortcode) are plain scalar fields on the category object, not asset uploads, so they follow the same read/write path as `topic_title_placeholder`: `def pull`/`push`, `category show`/`get`/`set` all support them. Push and dry-run reject unknown style types or an active icon/emoji style without its companion value. For imperative edits, set the icon/emoji first and then activate its style; change to another style before clearing the active companion. Logo/background image assets remain out of scope pending an asset-upload path.
+- [x] `custom_fields` round-trip. **Status: implemented (v0.15.0).** Reads each category's complete custom-field map from `/c/{id}/show.json`; applies changes via JSON `PUT /categories/{id}.json`, using nulls to remove keys omitted from a specified file map. `category set` accepts a complete scalar-valued JSON object. Object and array values are rejected because Discourse stringifies them. Verified reversibly on koloki-demo.
+- [x] `topic_title_placeholder` round-trip. **Status: implemented (v0.15.0).** Reads the category-list response and writes the `topic_title_placeholder` form parameter, exactly mirroring `topic_template`. `category get`/`set`/`show`, `def pull`/`push`, and `category diff` all support the field. Unit-tested (entry round-trip and `set` params); no live test needed - same request shape as `topic_template`.
+- [x] `style_type`/`icon`/`emoji` round-trip. **Status: implemented (v0.19.0).** `style_type` (`square`/`icon`/`emoji`), `icon` (FontAwesome name), and `emoji` (shortcode) are plain scalar fields on the category object, not asset uploads, so they follow the same read/write path as `topic_title_placeholder`: `def pull`/`push`, `category show`/`get`/`set` all support them. Push and dry-run reject unknown style types or an active icon/emoji style without its companion value. For imperative edits, set the icon/emoji first and then activate its style; change to another style before clearing the active companion. Logo/background image assets remain out of scope pending an asset-upload path.
 - [x] Same-file parent/child creation with cycle detection. **Status:
-  implemented (unreleased).** Resolves the Phase 1 "parent-in-same-push
+  implemented (v0.19.0).** Resolves the Phase 1 "parent-in-same-push
   limitation" above: `def push` now resolves each parent to a stable existing
   category ID or a same-file entry, then topologically orders file entries so
   every new parent is created before its children and occupied aliases are
@@ -485,7 +485,7 @@ also accepted; the form form is simpler and matches `create_category`'s existing
   if a real need appears.
 - [x] `dsc category diff <discourse-a> <category-a> <discourse-b> <category-b>`
   — compare two explicitly selected live category definitions. **Status:
-  implemented (unreleased).** Each category resolves independently by
+  implemented (v0.12.1).** Each category resolves independently by
   id/slug/name, so no cross-forum identity inference is needed and categories
   with different names/slugs can be compared deliberately. Reports only
   differing stable definition fields; excludes server-specific IDs and
