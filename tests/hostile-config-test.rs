@@ -302,3 +302,66 @@ fn malformed_file_at_the_winning_discovered_path_errors_without_trying_the_next_
          including rewriting the malformed file itself"
     );
 }
+
+#[test]
+fn malformed_explicit_config_flag_errors_without_falling_through_to_valid_env_or_discoverable_files()
+ {
+    let mock_url = start_about_mock();
+    let (sandbox, home, cwd) = hostile_sandbox();
+
+    // Every lower-precedence source is valid and reachable: $DSC_CONFIG
+    // points at a working config and both discoverable locations hold
+    // decoys. The explicit `--config` file is garbage, so a correct
+    // implementation must refuse rather than use any of them.
+    let decoy = discourse_toml(UNREACHABLE_BASEURL);
+    fs::write(home_config_path(&home), &decoy).expect("write home decoy");
+    fs::write(cwd.join("dsc.toml"), &decoy).expect("write cwd decoy");
+    let env_config = sandbox.path().join("env.toml");
+    fs::write(&env_config, discourse_toml(&mock_url)).expect("write env config");
+    let malformed = sandbox.path().join("malformed.toml");
+    fs::write(&malformed, "this is not [[[ valid toml").expect("write malformed config");
+
+    let before_home = snapshot_dir(&home);
+    let before_cwd = snapshot_dir(&cwd);
+    let before_malformed = fs::read(&malformed).expect("read malformed");
+
+    let env_config = env_config.to_str().expect("utf-8 path").to_string();
+    let malformed_arg = malformed.to_str().expect("utf-8 path").to_string();
+    let output = run_hostile(
+        &["--config", &malformed_arg, "config", "check", "--skip-ssh"],
+        &cwd,
+        &home,
+        &[("DSC_CONFIG", &env_config)],
+    );
+
+    assert!(
+        !output.status.success(),
+        "a malformed --config file must refuse, not silently use $DSC_CONFIG or a decoy"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("parsing config"),
+        "error must report a parse failure, not an unrelated one: {stderr}"
+    );
+    assert!(
+        output.stdout.is_empty(),
+        "nothing should be printed once the explicit --config fails to parse: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+
+    assert_eq!(
+        snapshot_dir(&home),
+        before_home,
+        "a refused command must not write inside $HOME"
+    );
+    assert_eq!(
+        snapshot_dir(&cwd),
+        before_cwd,
+        "a refused command must not write inside the working directory"
+    );
+    assert_eq!(
+        fs::read(&malformed).expect("read malformed"),
+        before_malformed,
+        "a refused command must not rewrite the malformed file itself"
+    );
+}
