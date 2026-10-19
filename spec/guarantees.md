@@ -40,6 +40,7 @@ Pure-function coverage calls `resolve_config_source_with_env` / `config_search_p
 | `$DSC_CONFIG_HOME` redirects step 2 of the search order; unset, it reproduces `$XDG_CONFIG_HOME/dsc` -> `~/.config/dsc` | `src/config.rs::dsc_config_home_redirects_step_4`, `unset_config_home_reproduces_home_config_dsc`, `xdg_config_home_default_used_when_dsc_config_home_unset`, `dsc_config_home_overrides_xdg_config_home` | - |
 | With nothing set, the search order is byte-for-byte the legacy order (regression guard) | `src/config.rs::unset_everything_resolution_matches_legacy_order`, `no_config_anywhere_returns_default` | - |
 | A higher-precedence discoverable file that exists but fails to parse is a hard error - it is never silently skipped in favour of a valid lower-precedence candidate | - | `tests/hostile-config-test.rs::malformed_file_at_the_winning_discovered_path_errors_without_trying_the_next_candidate` - `./dsc.toml` is garbage, `$HOME/.config/dsc/dsc.toml` is valid; the command must still refuse. |
+| A malformed explicit `--config` file is a hard error - it is never skipped in favour of a valid `$DSC_CONFIG` or discoverable config | - | `tests/hostile-config-test.rs::malformed_explicit_config_flag_errors_without_falling_through_to_valid_env_or_discoverable_files` - `--config` is garbage while `$DSC_CONFIG` and both discoverable files are valid; the command must refuse and rewrite nothing. |
 
 ## No unexpected writes
 
