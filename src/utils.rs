@@ -295,6 +295,15 @@ pub fn write_markdown_private(path: &Path, content: &str, overwrite: bool) -> Re
     atomic_write_private(path, content, overwrite)
 }
 
+/// Whether `p` has a `.json` extension (case-insensitive). Shared by every
+/// pull/push command that infers snapshot format from the file extension.
+pub fn is_json_path(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("json"))
+        .unwrap_or(false)
+}
+
 /// Quote a YAML scalar if it contains characters that would confuse the
 /// parser. Keeps simple values unquoted. Shared by every command that
 /// writes YAML front matter (`topic pull --full`, `category pull`).

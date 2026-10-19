@@ -12,7 +12,7 @@ use crate::api::{CategoryDefinition, DiscourseClient};
 use crate::cli::ListFormat;
 use crate::commands::common::{emit_result, ensure_api_credentials, not_found, select_discourse};
 use crate::config::Config;
-use crate::utils::atomic_write;
+use crate::utils::{atomic_write, is_json_path};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -1421,13 +1421,6 @@ fn plan_push(file: &[CategoryDefEntry], server: &[CategoryDefEntry]) -> Result<V
 }
 
 // ─── Commands: def pull / def push ────────────────────────────────────────────
-
-fn is_json_path(p: &Path) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("json"))
-        .unwrap_or(false)
-}
 
 fn contains_style_fields(value: &Value) -> bool {
     value

@@ -4,8 +4,8 @@
 
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    ensure_api_credentials, fleet_worker_count, run_fleet, select_discourse, selected_discourses,
-    shell_quote,
+    ensure_api_credentials, fleet_worker_count, require_yes, run_fleet, select_discourse,
+    selected_discourses, shell_quote,
 };
 use crate::commands::ssh::run_ssh_text;
 use crate::config::{Config, DiscourseConfig};
@@ -219,13 +219,11 @@ fn change_app_env(
         println!("Nothing was changed (--dry-run).");
         return Ok(());
     }
-    if !options.yes {
-        return Err(anyhow!(
-            "refusing to change {} on {} without --yes; review with --dry-run first",
-            key,
-            discourse.name
-        ));
-    }
+    require_yes(
+        options.yes,
+        format_args!("change {} on {}", key, discourse.name),
+        false,
+    )?;
     if options.rebuild && run_ssh_text(target, REBUILD_CHECK_CMD)?.contains("REBUILDING") {
         return Err(anyhow!(
             "a launcher rebuild is already running on {}; no changes were made",
@@ -561,5 +559,178 @@ env:
     #[test]
     fn rejects_multiline_values() {
         assert!(validate_env_value(Some("one\ntwo")).is_err());
+    }
+
+    /// End-to-end `app env set`/`unset` round trips against the real
+    /// `tests/fixtures/fake-ssh` stand-in (the same fixture
+    /// `commands::ssh`'s own and `commands::file`'s tests use), so these
+    /// exercise the actual SSH-transported read/edit/write/verify sequence
+    /// rather than just `edit_app_env`'s pure diffing logic.
+    #[cfg(unix)]
+    mod ssh_round_trip {
+        use super::*;
+        use crate::commands::ssh::fixture_tests::FakeSshPath;
+
+        fn mock_discourse(app_yml: &std::path::Path) -> DiscourseConfig {
+            DiscourseConfig {
+                name: "mock".to_string(),
+                ssh_host: Some("remote.invalid".to_string()),
+                app_yml_path: Some(app_yml.to_str().unwrap().to_string()),
+                ..DiscourseConfig::default()
+            }
+        }
+
+        fn mock_config(app_yml: &std::path::Path) -> Config {
+            Config {
+                discourse: vec![mock_discourse(app_yml)],
+                ..Config::default()
+            }
+        }
+
+        const INITIAL: &str = "templates:\n  - \"templates/web.template.yml\"\nenv:\n  DISCOURSE_HOSTNAME: forum.example.com\n  DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE: 60\n";
+
+        #[test]
+        fn set_writes_the_new_value_and_verifies_it() {
+            let _fake_ssh = FakeSshPath::install();
+            let dir = tempfile::tempdir().unwrap();
+            let app_yml = dir.path().join("app.yml");
+            std::fs::write(&app_yml, INITIAL).unwrap();
+            let config = mock_config(&app_yml);
+
+            app_env_set(
+                &config,
+                "mock",
+                "DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE",
+                "120",
+                AppEnvChangeOptions {
+                    rebuild: false,
+                    backup: false,
+                    dry_run: false,
+                    yes: true,
+                },
+            )
+            .unwrap();
+
+            let written = std::fs::read_to_string(&app_yml).unwrap();
+            assert!(written.contains("DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE: 120"));
+            assert!(written.contains("DISCOURSE_HOSTNAME: forum.example.com"));
+        }
+
+        #[test]
+        fn set_creates_a_timestamped_backup_by_default() {
+            let _fake_ssh = FakeSshPath::install();
+            let dir = tempfile::tempdir().unwrap();
+            let app_yml = dir.path().join("app.yml");
+            std::fs::write(&app_yml, INITIAL).unwrap();
+            let config = mock_config(&app_yml);
+
+            app_env_set(
+                &config,
+                "mock",
+                "DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE",
+                "120",
+                AppEnvChangeOptions {
+                    rebuild: false,
+                    backup: true,
+                    dry_run: false,
+                    yes: true,
+                },
+            )
+            .unwrap();
+
+            let backups: Vec<_> = std::fs::read_dir(dir.path())
+                .unwrap()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_name().to_string_lossy().ends_with(".bak"))
+                .collect();
+            assert_eq!(backups.len(), 1, "expected exactly one .bak file");
+            let backup_content = std::fs::read_to_string(backups[0].path()).unwrap();
+            assert_eq!(
+                backup_content, INITIAL,
+                "backup must hold the pre-edit content"
+            );
+        }
+
+        #[test]
+        fn unset_removes_an_existing_key() {
+            let _fake_ssh = FakeSshPath::install();
+            let dir = tempfile::tempdir().unwrap();
+            let app_yml = dir.path().join("app.yml");
+            std::fs::write(&app_yml, INITIAL).unwrap();
+            let config = mock_config(&app_yml);
+
+            app_env_unset(
+                &config,
+                "mock",
+                "DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE",
+                AppEnvChangeOptions {
+                    rebuild: false,
+                    backup: false,
+                    dry_run: false,
+                    yes: true,
+                },
+            )
+            .unwrap();
+
+            let written = std::fs::read_to_string(&app_yml).unwrap();
+            assert!(!written.contains("DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE"));
+            assert!(written.contains("DISCOURSE_HOSTNAME: forum.example.com"));
+        }
+
+        #[test]
+        fn set_under_dry_run_writes_nothing() {
+            let _fake_ssh = FakeSshPath::install();
+            let dir = tempfile::tempdir().unwrap();
+            let app_yml = dir.path().join("app.yml");
+            std::fs::write(&app_yml, INITIAL).unwrap();
+            let config = mock_config(&app_yml);
+
+            app_env_set(
+                &config,
+                "mock",
+                "DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE",
+                "120",
+                AppEnvChangeOptions {
+                    rebuild: false,
+                    backup: true,
+                    dry_run: true,
+                    yes: false,
+                },
+            )
+            .unwrap();
+
+            assert_eq!(std::fs::read_to_string(&app_yml).unwrap(), INITIAL);
+            assert_eq!(
+                std::fs::read_dir(dir.path()).unwrap().count(),
+                1,
+                "dry-run must not create a backup file either"
+            );
+        }
+
+        #[test]
+        fn set_without_yes_refuses_and_writes_nothing() {
+            let _fake_ssh = FakeSshPath::install();
+            let dir = tempfile::tempdir().unwrap();
+            let app_yml = dir.path().join("app.yml");
+            std::fs::write(&app_yml, INITIAL).unwrap();
+            let config = mock_config(&app_yml);
+
+            let error = app_env_set(
+                &config,
+                "mock",
+                "DISCOURSE_MAX_ADMIN_API_REQS_PER_MINUTE",
+                "120",
+                AppEnvChangeOptions {
+                    rebuild: false,
+                    backup: false,
+                    dry_run: false,
+                    yes: false,
+                },
+            )
+            .unwrap_err();
+
+            assert!(error.to_string().contains("--yes"));
+            assert_eq!(std::fs::read_to_string(&app_yml).unwrap(), INITIAL);
+        }
     }
 }

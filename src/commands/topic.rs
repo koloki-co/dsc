@@ -6,7 +6,9 @@ use crate::api::DiscourseClient;
 use crate::api::PostEditOptions;
 use crate::api::TopicResponse;
 use crate::cli::ListFormat;
-use crate::commands::common::{emit_result, ensure_api_credentials, select_discourse};
+use crate::commands::common::{
+    emit_result, ensure_api_credentials, read_path_or_stdin, select_discourse,
+};
 use crate::config::Config;
 use crate::utils::{
     current_utc_iso8601, read_markdown, resolve_topic_path, slugify, strip_frontmatter,
@@ -15,7 +17,7 @@ use crate::utils::{
 use anyhow::{Context, Result, anyhow};
 use serde_json::json;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::path::Path;
 
 pub fn topic_pull(
@@ -704,20 +706,7 @@ fn change_owner_targets(
 }
 
 fn read_reply_input(local_path: Option<&Path>) -> Result<String> {
-    let from_stdin = match local_path {
-        None => true,
-        Some(p) => p.as_os_str() == "-",
-    };
-    if from_stdin {
-        let mut buf = String::new();
-        io::stdin()
-            .read_to_string(&mut buf)
-            .context("reading reply from stdin")?;
-        Ok(buf)
-    } else {
-        let path = local_path.unwrap();
-        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
-    }
+    read_path_or_stdin(local_path, "reply")
 }
 
 #[cfg(test)]

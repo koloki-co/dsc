@@ -4,7 +4,7 @@
 
 use crate::cli::{FileCommand, ListFormat};
 use crate::commands::common::{
-    fleet_worker_count, run_fleet, select_discourse, selected_discourses, shell_quote,
+    fleet_worker_count, require_yes, run_fleet, select_discourse, selected_discourses, shell_quote,
 };
 use crate::commands::ssh::{
     ReplaceOptions, build_fetch_script, build_replace_script, effective_host_key_checking,
@@ -370,11 +370,12 @@ fn file_push(
 
     // A fleet push is a mutation across many hosts: require --yes, and keep
     // the operator in control of parallelism (serial by default).
-    if fleet && !yes {
-        return Err(anyhow!(
-            "refusing to push to {} forum(s) without --yes; review with --dry-run first",
-            discourses.len()
-        ));
+    if fleet {
+        require_yes(
+            yes,
+            format_args!("push to {} forum(s)", discourses.len()),
+            false,
+        )?;
     }
 
     let workers = if fleet && parallel {

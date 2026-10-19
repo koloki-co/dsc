@@ -6,7 +6,7 @@ use crate::api::{Board, BoardAssignee, BoardCard, BoardDetail, DiscourseClient};
 use crate::cli::ListFormat;
 use crate::commands::common::{ensure_api_credentials, select_discourse};
 use crate::config::Config;
-use crate::utils::{atomic_write, ensure_output_available};
+use crate::utils::{atomic_write, ensure_output_available, is_json_path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -241,13 +241,6 @@ pub fn board_pull(
         local_path.display()
     );
     Ok(())
-}
-
-fn is_json_path(p: &Path) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("json"))
-        .unwrap_or(false)
 }
 
 // ─── Text rendering ─────────────────────────────────────────────────────────

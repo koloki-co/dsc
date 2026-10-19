@@ -5,11 +5,12 @@
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    emit_result, ensure_api_credentials, not_found, render_shell_template, select_discourse,
+    emit_result, ensure_api_credentials, not_found, render_shell_template, require_yes,
+    select_discourse,
 };
 use crate::commands::ssh::run_ssh_text;
 use crate::config::{Config, DiscourseConfig};
-use crate::utils::{atomic_write_private, slugify};
+use crate::utils::{atomic_write_private, is_json_path, slugify};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -315,13 +316,11 @@ pub fn theme_push(
             );
             return Ok(());
         }
-        if !assume_yes {
-            return Err(anyhow!(
-                "refusing to update live theme {} (\"{}\") without --yes; review with --dry-run first",
-                id,
-                name
-            ));
-        }
+        require_yes(
+            assume_yes,
+            format_args!("update live theme {} (\"{}\")", id, name),
+            false,
+        )?;
         client.update_theme(id, &push_data)?;
         println!("{}", id);
     } else {
@@ -587,13 +586,6 @@ fn normalize_for_display(s: &str) -> String {
         Ok(v) if v.is_array() || v.is_object() => v.to_string(),
         _ => s.to_string(),
     }
-}
-
-fn is_json_path(p: &Path) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("json"))
-        .unwrap_or(false)
 }
 
 /// List a theme/component's settings (distinct from site settings).
@@ -1124,13 +1116,11 @@ pub fn theme_field_push(
         );
         return Ok(());
     }
-    if !assume_yes {
-        return Err(anyhow!(
-            "refusing to update live theme {} field {} without --yes; review with --dry-run first",
-            theme_id,
-            field_spec
-        ));
-    }
+    require_yes(
+        assume_yes,
+        format_args!("update live theme {} field {}", theme_id, field_spec),
+        false,
+    )?;
 
     // A single-entry `theme_fields` array upserts just this field, leaving the
     // theme's other fields untouched.

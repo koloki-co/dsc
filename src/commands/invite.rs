@@ -3,12 +3,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::api::DiscourseClient;
-use crate::commands::common::{ensure_api_credentials, parse_emails, select_discourse};
+use crate::commands::common::{
+    ensure_api_credentials, parse_emails, read_path_or_stdin, select_discourse,
+};
 use crate::config::Config;
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::fs;
-use std::io::{self, Read};
 use std::path::Path;
 
 pub fn invite_one(
@@ -150,18 +150,5 @@ fn describe_groups(group_ids: &[u64]) -> String {
 }
 
 fn read_email_source(local_path: Option<&Path>) -> Result<String> {
-    let from_stdin = match local_path {
-        None => true,
-        Some(p) => p.as_os_str() == "-",
-    };
-    if from_stdin {
-        let mut buf = String::new();
-        io::stdin()
-            .read_to_string(&mut buf)
-            .context("reading emails from stdin")?;
-        Ok(buf)
-    } else {
-        let path = local_path.unwrap();
-        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
-    }
+    read_path_or_stdin(local_path, "emails")
 }

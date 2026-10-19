@@ -6,14 +6,13 @@ use crate::api::DiscourseClient;
 use crate::api::GroupSummary;
 use crate::cli::{ListFormat, StructuredFormat};
 use crate::commands::common::{
-    emit_result, ensure_api_credentials, not_found, parse_emails, select_discourse,
+    emit_result, ensure_api_credentials, not_found, parse_emails, read_path_or_stdin,
+    select_discourse,
 };
 use crate::config::Config;
 use crate::utils::{normalize_baseurl, slugify};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use serde::Serialize;
-use std::fs;
-use std::io::{self, Read};
 use std::path::Path;
 
 pub fn group_list(
@@ -300,18 +299,5 @@ pub fn group_add(
 }
 
 fn read_email_source(local_path: Option<&Path>) -> Result<String> {
-    let from_stdin = match local_path {
-        None => true,
-        Some(p) => p.as_os_str() == "-",
-    };
-    if from_stdin {
-        let mut buf = String::new();
-        io::stdin()
-            .read_to_string(&mut buf)
-            .context("reading emails from stdin")?;
-        Ok(buf)
-    } else {
-        let path = local_path.unwrap();
-        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
-    }
+    read_path_or_stdin(local_path, "emails")
 }

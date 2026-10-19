@@ -5,11 +5,11 @@
 use crate::api::{DiscourseClient, SiteSettingDetail};
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    emit_result, ensure_api_credentials, fleet_worker_count, parse_tags, run_fleet,
+    emit_result, ensure_api_credentials, fleet_worker_count, parse_tags, require_yes, run_fleet,
     select_discourse, selected_discourses,
 };
 use crate::config::{Config, DiscourseConfig};
-use crate::utils::atomic_write_private;
+use crate::utils::{atomic_write_private, is_json_path};
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -408,13 +408,6 @@ fn values_equal(a: &serde_json::Value, b: &serde_json::Value) -> bool {
     a == b
 }
 
-fn is_json_path(p: &Path) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("json"))
-        .unwrap_or(false)
-}
-
 // ─── Push (apply) ─────────────────────────────────────────────────────────────
 
 /// Apply a settings snapshot file to a Discourse.
@@ -517,12 +510,16 @@ pub fn push_settings(
         .iter()
         .filter(|action| matches!(action, PushAction::Reset { .. }))
         .count();
-    if reset_count > 0 && !assume_yes {
-        return Err(anyhow!(
-            "refusing to reset {} unlisted setting{} without --yes; review the plan with --dry-run first",
-            reset_count,
-            if reset_count == 1 { "" } else { "s" }
-        ));
+    if reset_count > 0 {
+        require_yes(
+            assume_yes,
+            format_args!(
+                "reset {} unlisted setting{}",
+                reset_count,
+                if reset_count == 1 { "" } else { "s" }
+            ),
+            true,
+        )?;
     }
 
     // Apply.

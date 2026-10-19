@@ -4,11 +4,9 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{ensure_api_credentials, read_path_or_stdin, select_discourse};
 use crate::config::Config;
-use anyhow::{Context, Result, anyhow};
-use std::fs;
-use std::io::{self, Read};
+use anyhow::{Result, anyhow};
 use std::path::Path;
 
 pub fn pm_send(
@@ -108,20 +106,7 @@ fn parse_recipients(input: &str) -> Vec<String> {
 }
 
 fn read_body(local_path: Option<&Path>) -> Result<String> {
-    let from_stdin = match local_path {
-        None => true,
-        Some(p) => p.as_os_str() == "-",
-    };
-    if from_stdin {
-        let mut buf = String::new();
-        io::stdin()
-            .read_to_string(&mut buf)
-            .context("reading PM body from stdin")?;
-        Ok(buf)
-    } else {
-        let path = local_path.unwrap();
-        fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
-    }
+    read_path_or_stdin(local_path, "PM body")
 }
 
 #[cfg(test)]

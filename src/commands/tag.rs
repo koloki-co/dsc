@@ -4,9 +4,9 @@
 
 use crate::api::{DiscourseClient, TagGroupInfo};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, not_found, select_discourse};
+use crate::commands::common::{ensure_api_credentials, not_found, require_yes, select_discourse};
 use crate::config::Config;
-use crate::utils::atomic_write;
+use crate::utils::{atomic_write, is_json_path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -405,13 +405,6 @@ fn parse_tag_group_permissions(
     Ok(Some(map))
 }
 
-fn is_json_path(p: &Path) -> bool {
-    p.extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("json"))
-        .unwrap_or(false)
-}
-
 // ─── Push ─────────────────────────────────────────────────────────────────────
 
 /// The reconciliation plan for tags (not groups), computed before any writes so
@@ -685,12 +678,16 @@ pub fn tag_push(
     }
 
     let deletion_count = tag_plan.to_delete.len() + groups_to_delete.len();
-    if deletion_count > 0 && !assume_yes {
-        anyhow::bail!(
-            "refusing to delete {} tag/tag-group object{} without --yes; review the plan with --dry-run first",
-            deletion_count,
-            if deletion_count == 1 { "" } else { "s" }
-        );
+    if deletion_count > 0 {
+        require_yes(
+            assume_yes,
+            format_args!(
+                "delete {} tag/tag-group object{}",
+                deletion_count,
+                if deletion_count == 1 { "" } else { "s" }
+            ),
+            true,
+        )?;
     }
 
     // ── Apply, groups first so their tags are materialised ────────────────────

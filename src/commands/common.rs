@@ -35,6 +35,43 @@ pub fn emit_result<T: Serialize>(format: ListFormat, value: &T, text: &str) -> R
     Ok(())
 }
 
+/// Read `path` from disk, or from stdin when `path` is `None` or `-`. `what`
+/// names the content being read, for the stdin-read error context.
+pub fn read_path_or_stdin(path: Option<&std::path::Path>, what: &str) -> Result<String> {
+    let from_stdin = match path {
+        None => true,
+        Some(p) => p.as_os_str() == "-",
+    };
+    if from_stdin {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+            .with_context(|| format!("reading {what} from stdin"))?;
+        Ok(buf)
+    } else {
+        let path = path.unwrap();
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))
+    }
+}
+
+/// Standard confirmation gate before a destructive non-dry-run action: bail
+/// with the shared `--yes`/`--dry-run` wording unless `assume_yes` is set.
+/// `review_plan` selects "review the plan with --dry-run first" over the
+/// shorter "review with --dry-run first", matching each site's existing
+/// wording.
+pub fn require_yes(assume_yes: bool, action: impl Display, review_plan: bool) -> Result<()> {
+    if assume_yes {
+        return Ok(());
+    }
+    let review = if review_plan {
+        "review the plan"
+    } else {
+        "review"
+    };
+    Err(anyhow!(
+        "refusing to {action} without --yes; {review} with --dry-run first"
+    ))
+}
+
 pub fn select_discourse<'a>(
     config: &'a Config,
     discourse_name: Option<&str>,
