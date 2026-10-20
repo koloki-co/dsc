@@ -5,7 +5,8 @@
 use crate::api::{DiscourseClient, SearchHit};
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    ensure_api_credentials, fleet_worker_count, run_fleet, select_discourse, selected_discourses,
+    emit_with, ensure_api_credentials, fleet_worker_count, run_fleet, select_discourse,
+    selected_discourses,
 };
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
@@ -20,35 +21,26 @@ pub fn search(
     let discourse = select_discourse(config, Some(discourse_name))?;
     let hits = search_one(discourse, query)?;
 
-    match format {
-        ListFormat::Text => {
-            if hits.is_empty() {
-                println!("No search results found.");
-                return Ok(());
-            }
-            let id_width = hits
-                .iter()
-                .map(|h| h.id.to_string().len())
-                .max()
-                .unwrap_or(2);
-            for hit in &hits {
-                println!(
-                    "{:>width$}  {}",
-                    hit.id,
-                    display_title(hit),
-                    width = id_width
-                );
-            }
+    emit_with(format, &hits, || {
+        if hits.is_empty() {
+            println!("No search results found.");
+            return Ok(());
         }
-        ListFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&hits)?);
+        let id_width = hits
+            .iter()
+            .map(|h| h.id.to_string().len())
+            .max()
+            .unwrap_or(2);
+        for hit in &hits {
+            println!(
+                "{:>width$}  {}",
+                hit.id,
+                display_title(hit),
+                width = id_width
+            );
         }
-        ListFormat::Yaml => {
-            println!("{}", serde_yaml::to_string(&hits)?);
-        }
-    }
-
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Merged fan-out search: query every configured forum and print one combined,

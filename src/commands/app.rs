@@ -4,8 +4,8 @@
 
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    ensure_api_credentials, fleet_worker_count, require_yes, run_fleet, select_discourse,
-    selected_discourses, shell_quote,
+    emit_with, ensure_api_credentials, fleet_worker_count, require_yes, run_fleet,
+    select_discourse, selected_discourses, shell_quote,
 };
 use crate::commands::ssh::run_ssh_text;
 use crate::config::{Config, DiscourseConfig};
@@ -57,20 +57,16 @@ pub fn app_env_list(config: &Config, discourse_name: &str, format: ListFormat) -
             redacted: None,
         })
         .collect();
-    match format {
-        ListFormat::Text => {
-            if entries.is_empty() {
-                println!("No non-secret app environment variables found.");
-            } else {
-                for entry in entries {
-                    println!("{}", entry.key);
-                }
+    emit_with(format, &entries, || {
+        if entries.is_empty() {
+            println!("No non-secret app environment variables found.");
+        } else {
+            for entry in &entries {
+                println!("{}", entry.key);
             }
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&entries)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&entries)?),
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Read one app.yml environment variable, redacting likely secrets unless the
@@ -94,18 +90,14 @@ pub fn app_env_get(
         value: (!secret || show_secret).then(|| value.clone()),
         redacted: secret.then_some(true),
     };
-    match format {
-        ListFormat::Text => {
-            if secret && !show_secret {
-                println!("{} = [REDACTED] (use --show-secret to reveal)", entry.key);
-            } else {
-                println!("{} = {}", entry.key, value);
-            }
+    emit_with(format, &entry, || {
+        if secret && !show_secret {
+            println!("{} = [REDACTED] (use --show-secret to reveal)", entry.key);
+        } else {
+            println!("{} = {}", entry.key, value);
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&entry)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&entry)?),
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Compare one environment variable across matching forums. Secret values are
@@ -144,27 +136,23 @@ pub fn app_env_audit(
         |_| {},
     );
 
-    match format {
-        ListFormat::Text => {
-            if rows.is_empty() {
-                println!("No Discourses selected.");
-            } else {
-                for row in &rows {
-                    let state = if let Some(error) = &row.error {
-                        format!("ERROR: {error}")
-                    } else if row.redacted == Some(true) {
-                        "[REDACTED]".to_string()
-                    } else {
-                        row.value.clone().unwrap_or_else(|| "[UNSET]".to_string())
-                    };
-                    println!("{}: {}", row.discourse, state);
-                }
+    emit_with(format, &rows, || {
+        if rows.is_empty() {
+            println!("No Discourses selected.");
+        } else {
+            for row in &rows {
+                let state = if let Some(error) = &row.error {
+                    format!("ERROR: {error}")
+                } else if row.redacted == Some(true) {
+                    "[REDACTED]".to_string()
+                } else {
+                    row.value.clone().unwrap_or_else(|| "[UNSET]".to_string())
+                };
+                println!("{}: {}", row.discourse, state);
             }
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&rows)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&rows)?),
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Set a single scalar value in a plain `env:` mapping without reserialising

@@ -4,7 +4,9 @@
 
 use crate::api::{DiscourseClient, PostEditOptions, PostRevision, REVISION_VISIBILITY_LIMIT};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, read_path_or_stdin, select_discourse};
+use crate::commands::common::{
+    emit_with, ensure_api_credentials, read_path_or_stdin, select_discourse,
+};
 use crate::commands::topic::topic_change_owner;
 use crate::config::Config;
 use crate::utils::{atomic_write, normalize_baseurl};
@@ -184,33 +186,28 @@ pub fn post_info(
         deleted_at: post.deleted_at,
     };
 
-    match format {
-        ListFormat::Text => {
-            println!("id:          {}", output.id);
-            println!("topic_id:    {}", output.topic.id);
-            if let Some(title) = &output.topic.title {
-                println!("title:       {}", title);
-            }
-            if let Some(slug) = &output.topic.slug {
-                println!("slug:        {}", slug);
-            }
-            if let Some(category_id) = output.topic.category_id {
-                println!("category_id: {}", category_id);
-            }
-            println!("post_number: {}", output.post_number);
-            println!("url:         {}", output.url);
-            if let Some(deleted_at) = &output.deleted_at {
-                println!("deleted_at:  {}", deleted_at);
-            }
-            if let Some(topic_deleted_at) = &output.topic.deleted_at {
-                println!("topic_deleted_at: {}", topic_deleted_at);
-            }
+    emit_with(format, &output, || {
+        println!("id:          {}", output.id);
+        println!("topic_id:    {}", output.topic.id);
+        if let Some(title) = &output.topic.title {
+            println!("title:       {}", title);
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&output)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&output)?),
-    }
-
-    Ok(())
+        if let Some(slug) = &output.topic.slug {
+            println!("slug:        {}", slug);
+        }
+        if let Some(category_id) = output.topic.category_id {
+            println!("category_id: {}", category_id);
+        }
+        println!("post_number: {}", output.post_number);
+        println!("url:         {}", output.url);
+        if let Some(deleted_at) = &output.deleted_at {
+            println!("deleted_at:  {}", deleted_at);
+        }
+        if let Some(topic_deleted_at) = &output.topic.deleted_at {
+            println!("topic_deleted_at: {}", topic_deleted_at);
+        }
+        Ok(())
+    })
 }
 
 /// Reassign the visible author of a single post by ID, without needing its
@@ -288,29 +285,25 @@ pub fn post_revision_list(
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
     let revisions = collect_revisions(&client, post_id)?;
-    match format {
-        ListFormat::Text => {
-            for r in &revisions {
-                println!(
-                    "r{:<4} {}  {}  [{}]{}",
-                    r.revision,
-                    r.created_at.as_deref().unwrap_or("-"),
-                    r.editor.as_deref().unwrap_or("-"),
-                    r.changed_fields.join(","),
-                    r.edit_reason
-                        .as_ref()
-                        .map(|e| format!("  reason: {e}"))
-                        .unwrap_or_default()
-                );
-            }
-            eprintln!(
-                "note: Discourse exposes at most the latest {REVISION_VISIBILITY_LIMIT} revisions of a post; older history may not be listed"
+    emit_with(format, &revisions, || {
+        for r in &revisions {
+            println!(
+                "r{:<4} {}  {}  [{}]{}",
+                r.revision,
+                r.created_at.as_deref().unwrap_or("-"),
+                r.editor.as_deref().unwrap_or("-"),
+                r.changed_fields.join(","),
+                r.edit_reason
+                    .as_ref()
+                    .map(|e| format!("  reason: {e}"))
+                    .unwrap_or_default()
             );
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&revisions)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&revisions)?),
-    }
-    Ok(())
+        eprintln!(
+            "note: Discourse exposes at most the latest {REVISION_VISIBILITY_LIMIT} revisions of a post; older history may not be listed"
+        );
+        Ok(())
+    })
 }
 
 /// Reduce Discourse's HTML diff of raw Markdown to plain text, marking
@@ -358,30 +351,26 @@ pub fn post_revision_show(
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
     let rev = client.fetch_post_revision(post_id, revision)?;
-    match format {
-        ListFormat::Text => {
-            let s = summarize(&rev, revision);
-            println!("post:        {post_id}");
-            println!("revision:    {revision}");
-            println!("created_at:  {}", s.created_at.as_deref().unwrap_or("-"));
-            println!("editor:      {}", s.editor.as_deref().unwrap_or("-"));
-            if let Some(reason) = &s.edit_reason {
-                println!("edit_reason: {reason}");
-            }
-            println!("changed:     {}", s.changed_fields.join(", "));
-            if let Some(body) = rev.body_changes.as_ref().and_then(|b| {
-                b.get("side_by_side_markdown")
-                    .or_else(|| b.get("inline"))
-                    .and_then(|v| v.as_str())
-            }) {
-                println!("\nbody diff (markdown; {{+added+}} [-removed-]):");
-                println!("{}", markdown_diff_text(body).trim());
-            }
+    emit_with(format, &rev, || {
+        let s = summarize(&rev, revision);
+        println!("post:        {post_id}");
+        println!("revision:    {revision}");
+        println!("created_at:  {}", s.created_at.as_deref().unwrap_or("-"));
+        println!("editor:      {}", s.editor.as_deref().unwrap_or("-"));
+        if let Some(reason) = &s.edit_reason {
+            println!("edit_reason: {reason}");
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&rev)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&rev)?),
-    }
-    Ok(())
+        println!("changed:     {}", s.changed_fields.join(", "));
+        if let Some(body) = rev.body_changes.as_ref().and_then(|b| {
+            b.get("side_by_side_markdown")
+                .or_else(|| b.get("inline"))
+                .and_then(|v| v.as_str())
+        }) {
+            println!("\nbody diff (markdown; {{+added+}} [-removed-]):");
+            println!("{}", markdown_diff_text(body).trim());
+        }
+        Ok(())
+    })
 }
 
 pub fn post_revision_revert(

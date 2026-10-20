@@ -8,8 +8,8 @@ use crate::api::{
 };
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    emit_result, ensure_api_credentials, fleet_worker_count, run_fleet, select_discourse,
-    selected_discourses,
+    emit_result, emit_with, ensure_api_credentials, fleet_worker_count, run_fleet,
+    select_discourse, selected_discourses,
 };
 use crate::config::{Config, DiscourseConfig};
 use crate::utils::{atomic_write_private, create_atomic_output};
@@ -58,12 +58,10 @@ pub fn explorer_list(
     let catalogue =
         client.list_explorer_queries(options.filter, options.order, options.ascending)?;
 
-    match options.format {
-        ListFormat::Text => print_query_list(&catalogue.queries),
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&catalogue)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&catalogue)?),
-    }
-    Ok(())
+    emit_with(options.format, &catalogue, || {
+        print_query_list(&catalogue.queries);
+        Ok(())
+    })
 }
 
 /// Show or export one saved Data Explorer query definition.
@@ -86,12 +84,10 @@ pub fn explorer_show(
     }
 
     let query = client.show_explorer_query(query_id)?;
-    match format {
-        ListFormat::Text => print_query_details(&query),
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&query)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&query)?),
-    }
-    Ok(())
+    emit_with(format, &query, || {
+        print_query_details(&query);
+        Ok(())
+    })
 }
 
 /// Run one saved Data Explorer query, rendering JSON/YAML/text or writing CSV.
@@ -180,12 +176,10 @@ pub fn explorer_run(
     }
 
     let result = client.run_explorer_query(query_id, &params, options.explain, options.limit)?;
-    match options.format {
-        ListFormat::Text => print_run_result(&result),
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&result)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&result)?),
-    }
-    Ok(())
+    emit_with(options.format, &result, || {
+        print_run_result(&result);
+        Ok(())
+    })
 }
 
 fn explorer_run_fleet(

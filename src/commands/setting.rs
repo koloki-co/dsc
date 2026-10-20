@@ -5,8 +5,8 @@
 use crate::api::{DiscourseClient, SiteSettingDetail};
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    emit_result, ensure_api_credentials, fleet_worker_count, parse_tags, require_yes, run_fleet,
-    select_discourse, selected_discourses,
+    emit_result, emit_with, ensure_api_credentials, fleet_worker_count, parse_tags, require_yes,
+    run_fleet, select_discourse, selected_discourses,
 };
 use crate::config::{Config, DiscourseConfig};
 use crate::utils::{atomic_write_private, is_json_path};
@@ -146,12 +146,10 @@ pub fn audit_site_setting(
         |_| {},
     );
 
-    match format {
-        ListFormat::Text => print!("{}", render_audit_text(setting, &rows)),
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&rows)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&rows)?),
-    }
-    Ok(())
+    emit_with(format, &rows, || {
+        print!("{}", render_audit_text(setting, &rows));
+        Ok(())
+    })
 }
 
 fn fetch_one_setting(discourse: &DiscourseConfig, setting: &str) -> Result<String> {
@@ -251,25 +249,16 @@ pub fn list_site_settings(
         })
         .collect();
 
-    match format {
-        ListFormat::Text => {
-            if entries.is_empty() && !verbose {
-                println!("No settings found.");
-                return Ok(());
-            }
-            for e in &entries {
-                println!("{} = {}", e.setting, e.value);
-            }
+    emit_with(format, &entries, || {
+        if entries.is_empty() && !verbose {
+            println!("No settings found.");
+            return Ok(());
         }
-        ListFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&entries)?);
+        for e in &entries {
+            println!("{} = {}", e.setting, e.value);
         }
-        ListFormat::Yaml => {
-            print!("{}", serde_yaml::to_string(&entries)?);
-        }
-    }
-
-    Ok(())
+        Ok(())
+    })
 }
 
 // ─── Pull (snapshot) ──────────────────────────────────────────────────────────
@@ -792,43 +781,30 @@ fn load_diff_source(config: &Config, src: &str) -> Result<DiffSource> {
 }
 
 fn print_diff(rows: &[DiffRow], label_a: &str, label_b: &str, format: ListFormat) -> Result<()> {
-    match format {
-        ListFormat::Text => {
-            if rows.is_empty() {
-                println!("{} and {}: no differences.", label_a, label_b);
-                return Ok(());
-            }
-            println!(
-                "{} differing setting{} between {} and {}:",
-                rows.len(),
-                if rows.len() == 1 { "" } else { "s" },
-                label_a,
-                label_b
-            );
-            for row in rows {
-                println!("  {}", row.name);
-                println!("    {}: {}", label_a, fmt_diff_value(&row.value_a));
-                println!("    {}: {}", label_b, fmt_diff_value(&row.value_b));
-            }
+    let payload = serde_json::json!({
+        "a": label_a,
+        "b": label_b,
+        "differences": rows,
+    });
+    emit_with(format, &payload, || {
+        if rows.is_empty() {
+            println!("{} and {}: no differences.", label_a, label_b);
+            return Ok(());
         }
-        ListFormat::Json => {
-            let payload = serde_json::json!({
-                "a": label_a,
-                "b": label_b,
-                "differences": rows,
-            });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+        println!(
+            "{} differing setting{} between {} and {}:",
+            rows.len(),
+            if rows.len() == 1 { "" } else { "s" },
+            label_a,
+            label_b
+        );
+        for row in rows {
+            println!("  {}", row.name);
+            println!("    {}: {}", label_a, fmt_diff_value(&row.value_a));
+            println!("    {}: {}", label_b, fmt_diff_value(&row.value_b));
         }
-        ListFormat::Yaml => {
-            let payload = serde_json::json!({
-                "a": label_a,
-                "b": label_b,
-                "differences": rows,
-            });
-            print!("{}", serde_yaml::to_string(&payload)?);
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn fmt_diff_value(v: &Option<String>) -> String {

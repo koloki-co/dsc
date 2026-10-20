@@ -4,7 +4,9 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, read_path_or_stdin, select_discourse};
+use crate::commands::common::{
+    emit_with, ensure_api_credentials, read_path_or_stdin, select_discourse,
+};
 use crate::config::Config;
 use anyhow::{Result, anyhow};
 use std::path::Path;
@@ -66,35 +68,31 @@ pub fn pm_list(
     let client = DiscourseClient::new(discourse)?;
     let topics = client.list_private_messages(username, direction)?;
 
-    match format {
-        ListFormat::Text => {
-            if topics.is_empty() {
-                println!("No PMs found in {}.", direction);
-                return Ok(());
-            }
-            let id_width = topics
-                .iter()
-                .map(|t| t.id.to_string().len())
-                .max()
-                .unwrap_or(2);
-            for t in &topics {
-                let title = t.title.as_deref().unwrap_or("(untitled)");
-                let last = t.last_posted_at.as_deref().unwrap_or("");
-                let from = t.last_poster_username.as_deref().unwrap_or("");
-                println!(
-                    "{:>width$}  {}  [{} by {}]",
-                    t.id,
-                    title,
-                    last,
-                    from,
-                    width = id_width
-                );
-            }
+    emit_with(format, &topics, || {
+        if topics.is_empty() {
+            println!("No PMs found in {}.", direction);
+            return Ok(());
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&topics)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&topics)?),
-    }
-    Ok(())
+        let id_width = topics
+            .iter()
+            .map(|t| t.id.to_string().len())
+            .max()
+            .unwrap_or(2);
+        for t in &topics {
+            let title = t.title.as_deref().unwrap_or("(untitled)");
+            let last = t.last_posted_at.as_deref().unwrap_or("");
+            let from = t.last_poster_username.as_deref().unwrap_or("");
+            println!(
+                "{:>width$}  {}  [{} by {}]",
+                t.id,
+                title,
+                last,
+                from,
+                width = id_width
+            );
+        }
+        Ok(())
+    })
 }
 
 fn parse_recipients(input: &str) -> Vec<String> {

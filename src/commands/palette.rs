@@ -11,7 +11,7 @@ use std::path::Path;
 
 use crate::api::{DiscourseClient, color_schemes};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use crate::utils::{atomic_write, normalize_baseurl};
 
@@ -65,26 +65,16 @@ pub fn palette_list(
         })
         .collect::<Result<_>>()?;
 
-    match format {
-        ListFormat::Text => {
-            if entries.is_empty() && !verbose {
-                println!("No palettes found.");
-                return Ok(());
-            }
-            for entry in entries {
-                println!("{} - {}", entry.id, entry.name);
-            }
+    emit_with(format, &entries, || {
+        if entries.is_empty() && !verbose {
+            println!("No palettes found.");
+            return Ok(());
         }
-        ListFormat::Json => {
-            let raw = serde_json::to_string_pretty(&entries)?;
-            println!("{}", raw);
+        for entry in &entries {
+            println!("{} - {}", entry.id, entry.name);
         }
-        ListFormat::Yaml => {
-            let raw = serde_yaml::to_string(&entries)?;
-            println!("{}", raw);
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn palette_pull(

@@ -6,7 +6,7 @@ use crate::api::DiscourseClient;
 use crate::api::GroupSummary;
 use crate::cli::{ListFormat, StructuredFormat};
 use crate::commands::common::{
-    emit_result, ensure_api_credentials, not_found, parse_emails, read_path_or_stdin,
+    emit_result, emit_with, ensure_api_credentials, not_found, parse_emails, read_path_or_stdin,
     select_discourse,
 };
 use crate::config::Config;
@@ -25,27 +25,17 @@ pub fn group_list(
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
     let groups = client.fetch_groups()?;
-    match format {
-        ListFormat::Text => {
-            if groups.is_empty() && !verbose {
-                println!("No groups found.");
-                return Ok(());
-            }
-            for group in groups {
-                let full_name = group.full_name.unwrap_or_else(|| "-".to_string());
-                println!("{} - {} ({})", group.id, group.name, full_name);
-            }
+    emit_with(format, &groups, || {
+        if groups.is_empty() && !verbose {
+            println!("No groups found.");
+            return Ok(());
         }
-        ListFormat::Json => {
-            let raw = serde_json::to_string_pretty(&groups)?;
-            println!("{}", raw);
+        for group in &groups {
+            let full_name = group.full_name.as_deref().unwrap_or("-");
+            println!("{} - {} ({})", group.id, group.name, full_name);
         }
-        ListFormat::Yaml => {
-            let raw = serde_yaml::to_string(&groups)?;
-            println!("{}", raw);
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn group_info(
@@ -99,27 +89,17 @@ pub fn group_members(
             client.fetch_group_members(group_summary.id, Some(&group_summary.name))?
         }
     };
-    match format {
-        ListFormat::Text => {
-            if members.is_empty() {
-                println!("No group members found.");
-                return Ok(());
-            }
-            for member in members {
-                let name = member.name.unwrap_or_else(|| "-".to_string());
-                println!("{} - {} ({})", member.id, member.username, name);
-            }
+    emit_with(format, &members, || {
+        if members.is_empty() {
+            println!("No group members found.");
+            return Ok(());
         }
-        ListFormat::Json => {
-            let raw = serde_json::to_string_pretty(&members)?;
-            println!("{}", raw);
+        for member in &members {
+            let name = member.name.as_deref().unwrap_or("-");
+            println!("{} - {} ({})", member.id, member.username, name);
         }
-        ListFormat::Yaml => {
-            let raw = serde_yaml::to_string(&members)?;
-            println!("{}", raw);
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn group_copy(

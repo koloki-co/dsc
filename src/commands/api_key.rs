@@ -4,7 +4,7 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::{emit_result, ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_result, emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use anyhow::Result;
 use serde::Serialize;
@@ -15,42 +15,38 @@ pub fn api_key_list(config: &Config, discourse_name: &str, format: ListFormat) -
     let client = DiscourseClient::new(discourse)?;
     let keys = client.list_api_keys()?;
 
-    match format {
-        ListFormat::Text => {
-            if keys.is_empty() {
-                println!("No API keys found.");
-                return Ok(());
-            }
-            let desc_width = keys
-                .iter()
-                .map(|k| k.description.as_deref().unwrap_or("-").len())
-                .max()
-                .unwrap_or(0)
-                .max(11);
-            for k in &keys {
-                let desc = k.description.as_deref().unwrap_or("-");
-                let user = k.username.as_deref().unwrap_or("(all-users)");
-                let last = k.last_used_at.as_deref().unwrap_or("never");
-                let status = if k.revoked_at.is_some() {
-                    "revoked"
-                } else {
-                    "active"
-                };
-                println!(
-                    "id:{:<5} {:<width$}  user:{:<20}  last:{:<25}  {}",
-                    k.id,
-                    desc,
-                    user,
-                    last,
-                    status,
-                    width = desc_width
-                );
-            }
+    emit_with(format, &keys, || {
+        if keys.is_empty() {
+            println!("No API keys found.");
+            return Ok(());
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&keys)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&keys)?),
-    }
-    Ok(())
+        let desc_width = keys
+            .iter()
+            .map(|k| k.description.as_deref().unwrap_or("-").len())
+            .max()
+            .unwrap_or(0)
+            .max(11);
+        for k in &keys {
+            let desc = k.description.as_deref().unwrap_or("-");
+            let user = k.username.as_deref().unwrap_or("(all-users)");
+            let last = k.last_used_at.as_deref().unwrap_or("never");
+            let status = if k.revoked_at.is_some() {
+                "revoked"
+            } else {
+                "active"
+            };
+            println!(
+                "id:{:<5} {:<width$}  user:{:<20}  last:{:<25}  {}",
+                k.id,
+                desc,
+                user,
+                last,
+                status,
+                width = desc_width
+            );
+        }
+        Ok(())
+    })
 }
 
 pub fn api_key_show(
@@ -64,44 +60,40 @@ pub fn api_key_show(
     let client = DiscourseClient::new(discourse)?;
     let key = client.get_api_key(key_id)?;
 
-    match format {
-        ListFormat::Text => {
-            let field = |name: &str| key.get(name).and_then(|v| v.as_str());
-            println!("id:            {}", key_id);
-            println!("description:   {}", field("description").unwrap_or("-"));
-            let user = field("user_username")
-                .or_else(|| field("username"))
-                .unwrap_or("(all-users)");
-            println!("username:      {user}");
-            if let Some(t) = field("truncated_key") {
-                println!("truncated_key: {t}");
+    emit_with(format, &key, || {
+        let field = |name: &str| key.get(name).and_then(|v| v.as_str());
+        println!("id:            {}", key_id);
+        println!("description:   {}", field("description").unwrap_or("-"));
+        let user = field("user_username")
+            .or_else(|| field("username"))
+            .unwrap_or("(all-users)");
+        println!("username:      {user}");
+        if let Some(t) = field("truncated_key") {
+            println!("truncated_key: {t}");
+        }
+        println!("created_at:    {}", field("created_at").unwrap_or("-"));
+        println!(
+            "last_used_at:  {}",
+            field("last_used_at").unwrap_or("never")
+        );
+        println!(
+            "status:        {}",
+            if field("revoked_at").is_some() {
+                "revoked"
+            } else {
+                "active"
             }
-            println!("created_at:    {}", field("created_at").unwrap_or("-"));
-            println!(
-                "last_used_at:  {}",
-                field("last_used_at").unwrap_or("never")
-            );
-            println!(
-                "status:        {}",
-                if field("revoked_at").is_some() {
-                    "revoked"
-                } else {
-                    "active"
-                }
-            );
-            if let Some(scopes) = key.get("api_key_scopes").and_then(|v| v.as_array())
-                && !scopes.is_empty()
-            {
-                println!("scopes:");
-                for scope in scopes {
-                    println!("  {}", serde_json::to_string(scope)?);
-                }
+        );
+        if let Some(scopes) = key.get("api_key_scopes").and_then(|v| v.as_array())
+            && !scopes.is_empty()
+        {
+            println!("scopes:");
+            for scope in scopes {
+                println!("  {}", serde_json::to_string(scope)?);
             }
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&key)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&key)?),
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn api_key_create(
@@ -128,28 +120,24 @@ pub fn api_key_create(
 
     let created = client.create_api_key(description, username)?;
 
-    match format {
-        ListFormat::Text => {
-            println!("New API key (shown only this once — copy it now):");
-            println!();
-            println!("  {}", created.key);
-            println!();
-            println!("id:          {}", created.id);
-            if let Some(d) = &created.description {
-                println!("description: {}", d);
-            }
-            println!(
-                "username:    {}",
-                created.username.as_deref().unwrap_or("(all-users)")
-            );
-            if let Some(c) = &created.created_at {
-                println!("created_at:  {}", c);
-            }
+    emit_with(format, &created, || {
+        println!("New API key (shown only this once — copy it now):");
+        println!();
+        println!("  {}", created.key);
+        println!();
+        println!("id:          {}", created.id);
+        if let Some(d) = &created.description {
+            println!("description: {}", d);
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&created)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&created)?),
-    }
-    Ok(())
+        println!(
+            "username:    {}",
+            created.username.as_deref().unwrap_or("(all-users)")
+        );
+        if let Some(c) = &created.created_at {
+            println!("created_at:  {}", c);
+        }
+        Ok(())
+    })
 }
 
 pub fn api_key_revoke(

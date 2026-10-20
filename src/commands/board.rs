@@ -4,7 +4,7 @@
 
 use crate::api::{Board, BoardAssignee, BoardCard, BoardDetail, DiscourseClient};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use crate::utils::{atomic_write, ensure_output_available, is_json_path};
 use anyhow::{Context, Result};
@@ -20,12 +20,10 @@ pub fn board_list(config: &Config, discourse_name: &str, format: ListFormat) -> 
     let mut boards = client.list_boards()?;
     boards.sort_by(|a, b| a.name.cmp(&b.name));
 
-    match format {
-        ListFormat::Text => print_board_list(&boards),
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&boards)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&boards)?),
-    }
-    Ok(())
+    emit_with(format, &boards, || {
+        print_board_list(&boards);
+        Ok(())
+    })
 }
 
 /// Show one board's full definition: metadata, columns, and cards.
@@ -40,12 +38,10 @@ pub fn board_show(
     let client = DiscourseClient::new(discourse)?;
 
     let detail = client.show_board(board_id)?;
-    match format {
-        ListFormat::Text => print_board_detail(&detail),
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&detail)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&detail)?),
-    }
-    Ok(())
+    emit_with(format, &detail, || {
+        print_board_detail(&detail);
+        Ok(())
+    })
 }
 
 // ─── Pull (snapshot) ────────────────────────────────────────────────────────

@@ -7,7 +7,7 @@
 
 use crate::api::{DiscourseClient, StaffActionLogFilter};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use crate::utils::parse_since_cutoff;
 use anyhow::{Result, anyhow};
@@ -181,34 +181,30 @@ pub fn log_staff(config: &Config, discourse_name: &str, options: StaffLogOptions
         );
     }
 
-    match options.format {
-        ListFormat::Text => {
-            if entries.is_empty() {
-                println!("No staff action log entries found.");
-                return Ok(());
-            }
-            for entry in &entries {
-                let actor = entry
-                    .acting_user
-                    .as_ref()
-                    .map(|user| user.username.as_str())
-                    .unwrap_or("-");
-                let target = entry
-                    .target_user
-                    .as_ref()
-                    .map(|user| user.username.as_str())
-                    .unwrap_or("-");
-                let subject = entry.subject.as_deref().unwrap_or("");
-                println!(
-                    "{}  {:<28}  actor={:<16}  target={:<16}  {}",
-                    entry.created_at, entry.action_name, actor, target, subject
-                );
-            }
+    emit_with(options.format, &entries, || {
+        if entries.is_empty() {
+            println!("No staff action log entries found.");
+            return Ok(());
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&entries)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&entries)?),
-    }
-    Ok(())
+        for entry in &entries {
+            let actor = entry
+                .acting_user
+                .as_ref()
+                .map(|user| user.username.as_str())
+                .unwrap_or("-");
+            let target = entry
+                .target_user
+                .as_ref()
+                .map(|user| user.username.as_str())
+                .unwrap_or("-");
+            let subject = entry.subject.as_deref().unwrap_or("");
+            println!(
+                "{}  {:<28}  actor={:<16}  target={:<16}  {}",
+                entry.created_at, entry.action_name, actor, target, subject
+            );
+        }
+        Ok(())
+    })
 }
 
 fn validate_core_action(action: Option<&str>) -> Result<Option<&str>> {

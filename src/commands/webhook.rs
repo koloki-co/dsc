@@ -7,7 +7,7 @@
 
 use crate::api::{DiscourseClient, WebhookSummary, redact_webhook_url};
 use crate::cli::ListFormat;
-use crate::commands::common::{emit_result, ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_result, emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use anyhow::{Context, Result, anyhow};
 use serde::Serialize;
@@ -27,44 +27,40 @@ pub fn webhook_list(config: &Config, discourse_name: &str, format: ListFormat) -
     let client = DiscourseClient::new(discourse)?;
     let hooks = client.list_webhooks()?;
 
-    match format {
-        ListFormat::Text => {
-            if hooks.is_empty() {
-                println!("No webhooks found.");
-                return Ok(());
-            }
-            let url_width = hooks
-                .iter()
-                .map(|h| webhook_url(h).len())
-                .max()
-                .unwrap_or(0)
-                .max(11);
-            for h in &hooks {
-                let url = webhook_url(h);
-                let active = match h.active {
-                    Some(true) => "active",
-                    Some(false) => "inactive",
-                    None => "unknown",
-                };
-                let events = match h.wildcard_web_hook {
-                    Some(true) => "all",
-                    Some(false) => "selected",
-                    None => "-",
-                };
-                println!(
-                    "id:{:<5} {:<width$}  events:{:<9}  {}",
-                    h.id,
-                    url,
-                    events,
-                    active,
-                    width = url_width
-                );
-            }
+    emit_with(format, &hooks, || {
+        if hooks.is_empty() {
+            println!("No webhooks found.");
+            return Ok(());
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&hooks)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&hooks)?),
-    }
-    Ok(())
+        let url_width = hooks
+            .iter()
+            .map(|h| webhook_url(h).len())
+            .max()
+            .unwrap_or(0)
+            .max(11);
+        for h in &hooks {
+            let url = webhook_url(h);
+            let active = match h.active {
+                Some(true) => "active",
+                Some(false) => "inactive",
+                None => "unknown",
+            };
+            let events = match h.wildcard_web_hook {
+                Some(true) => "all",
+                Some(false) => "selected",
+                None => "-",
+            };
+            println!(
+                "id:{:<5} {:<width$}  events:{:<9}  {}",
+                h.id,
+                url,
+                events,
+                active,
+                width = url_width
+            );
+        }
+        Ok(())
+    })
 }
 
 pub struct WebhookCreateOptions<'a> {
@@ -114,24 +110,20 @@ pub fn webhook_create(
         &event_type_ids,
     )?;
 
-    match options.format {
-        ListFormat::Text => {
-            println!("Created webhook id:{}", created.id);
-            println!("payload_url:        {}", webhook_url(&created));
-            println!("active:             {}", bool_str(created.active));
-            println!(
-                "wildcard_web_hook:  {}",
-                bool_str(created.wildcard_web_hook)
-            );
-            println!(
-                "verify_certificate: {}",
-                bool_str(created.verify_certificate)
-            );
-        }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&created)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&created)?),
-    }
-    Ok(())
+    emit_with(options.format, &created, || {
+        println!("Created webhook id:{}", created.id);
+        println!("payload_url:        {}", webhook_url(&created));
+        println!("active:             {}", bool_str(created.active));
+        println!(
+            "wildcard_web_hook:  {}",
+            bool_str(created.wildcard_web_hook)
+        );
+        println!(
+            "verify_certificate: {}",
+            bool_str(created.verify_certificate)
+        );
+        Ok(())
+    })
 }
 
 pub fn webhook_delete(

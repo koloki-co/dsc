@@ -7,7 +7,7 @@ use crate::api::PostEditOptions;
 use crate::api::TopicResponse;
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    emit_result, ensure_api_credentials, read_path_or_stdin, select_discourse,
+    emit_result, emit_with, ensure_api_credentials, read_path_or_stdin, select_discourse,
 };
 use crate::config::Config;
 use crate::utils::{
@@ -391,36 +391,32 @@ pub fn topic_list(
     let client = DiscourseClient::new(discourse)?;
     let topics = client.list_deleted_topics(query)?;
 
-    match format {
-        ListFormat::Text => {
-            if topics.is_empty() {
-                println!("No deleted topics found.");
-                return Ok(());
-            }
-            let id_width = topics
-                .iter()
-                .map(|t| t.id.to_string().len())
-                .max()
-                .unwrap_or(2);
-            for topic in &topics {
-                let title = if topic.title.trim().is_empty() {
-                    topic.slug.as_str()
-                } else {
-                    topic.title.as_str()
-                };
-                println!(
-                    "{:>width$}  {:>4} posts  {}",
-                    topic.id,
-                    topic.posts_count,
-                    title,
-                    width = id_width
-                );
-            }
+    emit_with(format, &topics, || {
+        if topics.is_empty() {
+            println!("No deleted topics found.");
+            return Ok(());
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&topics)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&topics)?),
-    }
-    Ok(())
+        let id_width = topics
+            .iter()
+            .map(|t| t.id.to_string().len())
+            .max()
+            .unwrap_or(2);
+        for topic in &topics {
+            let title = if topic.title.trim().is_empty() {
+                topic.slug.as_str()
+            } else {
+                topic.title.as_str()
+            };
+            println!(
+                "{:>width$}  {:>4} posts  {}",
+                topic.id,
+                topic.posts_count,
+                title,
+                width = id_width
+            );
+        }
+        Ok(())
+    })
 }
 
 fn fetch_topic_brief(

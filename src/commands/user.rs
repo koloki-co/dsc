@@ -4,7 +4,9 @@
 
 use crate::api::{DiscourseClient, UserAction, UserSummary};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse, selected_discourses};
+use crate::commands::common::{
+    emit_with, ensure_api_credentials, select_discourse, selected_discourses,
+};
 use crate::config::{Config, DiscourseConfig};
 use crate::utils::{normalize_baseurl, parse_since_cutoff};
 use anyhow::{Context, Result, anyhow};
@@ -23,53 +25,44 @@ pub fn user_list(
     let client = DiscourseClient::new(discourse)?;
     let users = client.admin_list_users(listing, page)?;
 
-    match format {
-        ListFormat::Text => {
-            if users.is_empty() {
-                println!("No users found in listing '{}'.", listing);
-                return Ok(());
-            }
-            let name_width = users
-                .iter()
-                .map(|u| u.username.len())
-                .max()
-                .unwrap_or(0)
-                .max(8);
-            for u in &users {
-                let flag = if u.admin.unwrap_or(false) {
-                    "admin"
-                } else if u.moderator.unwrap_or(false) {
-                    "mod"
-                } else if u.suspended.unwrap_or(false) {
-                    "suspended"
-                } else if u.silenced.unwrap_or(false) {
-                    "silenced"
-                } else {
-                    "-"
-                };
-                let tl = u
-                    .trust_level
-                    .map(|t| t.to_string())
-                    .unwrap_or_else(|| "?".to_string());
-                println!(
-                    "{:<width$}  id:{}  tl:{}  {}",
-                    u.username,
-                    u.id,
-                    tl,
-                    flag,
-                    width = name_width
-                );
-            }
+    emit_with(format, &users, || {
+        if users.is_empty() {
+            println!("No users found in listing '{}'.", listing);
+            return Ok(());
         }
-        ListFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&users)?);
+        let name_width = users
+            .iter()
+            .map(|u| u.username.len())
+            .max()
+            .unwrap_or(0)
+            .max(8);
+        for u in &users {
+            let flag = if u.admin.unwrap_or(false) {
+                "admin"
+            } else if u.moderator.unwrap_or(false) {
+                "mod"
+            } else if u.suspended.unwrap_or(false) {
+                "suspended"
+            } else if u.silenced.unwrap_or(false) {
+                "silenced"
+            } else {
+                "-"
+            };
+            let tl = u
+                .trust_level
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            println!(
+                "{:<width$}  id:{}  tl:{}  {}",
+                u.username,
+                u.id,
+                tl,
+                flag,
+                width = name_width
+            );
         }
-        ListFormat::Yaml => {
-            println!("{}", serde_yaml::to_string(&users)?);
-        }
-    }
-
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn user_info(
@@ -83,51 +76,43 @@ pub fn user_info(
     let client = DiscourseClient::new(discourse)?;
     let detail = client.fetch_user_detail(username)?;
 
-    match format {
-        ListFormat::Text => {
-            println!("id:          {}", detail.id);
-            println!("username:    {}", detail.username);
-            if let Some(name) = &detail.name {
-                println!("name:        {}", name);
-            }
-            if let Some(email) = &detail.email {
-                println!("email:       {}", email);
-            }
-            if let Some(tl) = detail.trust_level {
-                println!("trust_level: {}", tl);
-            }
-            if detail.admin.unwrap_or(false) {
-                println!("role:        admin");
-            } else if detail.moderator.unwrap_or(false) {
-                println!("role:        moderator");
-            }
-            if let Some(until) = &detail.suspended_till {
-                println!("suspended:   until {}", until);
-            }
-            if let Some(until) = &detail.silenced_till {
-                println!("silenced:    until {}", until);
-            }
-            if let Some(last) = &detail.last_seen_at {
-                println!("last_seen:   {}", last);
-            }
-            if let Some(created) = &detail.created_at {
-                println!("created:     {}", created);
-            }
-            if let Some(posts) = detail.post_count {
-                println!("posts:       {}", posts);
-            }
-            if !detail.groups.is_empty() {
-                println!("groups:      {}", detail.groups.len());
-            }
+    emit_with(format, &detail, || {
+        println!("id:          {}", detail.id);
+        println!("username:    {}", detail.username);
+        if let Some(name) = &detail.name {
+            println!("name:        {}", name);
         }
-        ListFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&detail)?);
+        if let Some(email) = &detail.email {
+            println!("email:       {}", email);
         }
-        ListFormat::Yaml => {
-            println!("{}", serde_yaml::to_string(&detail)?);
+        if let Some(tl) = detail.trust_level {
+            println!("trust_level: {}", tl);
         }
-    }
-    Ok(())
+        if detail.admin.unwrap_or(false) {
+            println!("role:        admin");
+        } else if detail.moderator.unwrap_or(false) {
+            println!("role:        moderator");
+        }
+        if let Some(until) = &detail.suspended_till {
+            println!("suspended:   until {}", until);
+        }
+        if let Some(until) = &detail.silenced_till {
+            println!("silenced:    until {}", until);
+        }
+        if let Some(last) = &detail.last_seen_at {
+            println!("last_seen:   {}", last);
+        }
+        if let Some(created) = &detail.created_at {
+            println!("created:     {}", created);
+        }
+        if let Some(posts) = detail.post_count {
+            println!("posts:       {}", posts);
+        }
+        if !detail.groups.is_empty() {
+            println!("groups:      {}", detail.groups.len());
+        }
+        Ok(())
+    })
 }
 
 /// GDPR "which forum has this person" lookup: search every configured forum
@@ -426,31 +411,22 @@ pub fn user_groups_list(
     let mut groups = client.fetch_user_groups(username)?;
     groups.sort_by(|a, b| a.name.cmp(&b.name));
 
-    match format {
-        ListFormat::Text => {
-            if groups.is_empty() {
-                println!("{} is not in any groups.", username);
-                return Ok(());
-            }
-            let name_width = groups
-                .iter()
-                .map(|g| g.name.len())
-                .max()
-                .unwrap_or(0)
-                .max(4);
-            for g in &groups {
-                println!("{:<width$}  id:{}", g.name, g.id, width = name_width);
-            }
+    emit_with(format, &groups, || {
+        if groups.is_empty() {
+            println!("{} is not in any groups.", username);
+            return Ok(());
         }
-        ListFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&groups)?);
+        let name_width = groups
+            .iter()
+            .map(|g| g.name.len())
+            .max()
+            .unwrap_or(0)
+            .max(4);
+        for g in &groups {
+            println!("{:<width$}  id:{}", g.name, g.id, width = name_width);
         }
-        ListFormat::Yaml => {
-            println!("{}", serde_yaml::to_string(&groups)?);
-        }
-    }
-
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn user_groups_add(

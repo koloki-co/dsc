@@ -7,7 +7,7 @@
 
 use crate::api::{DiscourseClient, Notification, NotificationFilter};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use anyhow::{Result, anyhow};
 
@@ -216,31 +216,27 @@ pub fn notification_list(
         );
     }
 
-    match options.format {
-        ListFormat::Text => {
-            if notifications.is_empty() {
-                println!("No notifications found.");
-                return Ok(());
-            }
-            for n in &notifications {
-                let state = if n.read { "read" } else { "unread" };
-                let title = n.fancy_title.as_deref().unwrap_or("");
-                let actor = n.acting_user_name.as_deref().unwrap_or("-");
-                println!(
-                    "{}  id={:<8}  {:<7}  {:<28}  actor={:<16}  {}",
-                    n.created_at,
-                    n.id,
-                    state,
-                    type_name(n.notification_type),
-                    actor,
-                    title
-                );
-            }
+    emit_with(options.format, &notifications, || {
+        if notifications.is_empty() {
+            println!("No notifications found.");
+            return Ok(());
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&notifications)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&notifications)?),
-    }
-    Ok(())
+        for n in &notifications {
+            let state = if n.read { "read" } else { "unread" };
+            let title = n.fancy_title.as_deref().unwrap_or("");
+            let actor = n.acting_user_name.as_deref().unwrap_or("-");
+            println!(
+                "{}  id={:<8}  {:<7}  {:<28}  actor={:<16}  {}",
+                n.created_at,
+                n.id,
+                state,
+                type_name(n.notification_type),
+                actor,
+                title
+            );
+        }
+        Ok(())
+    })
 }
 
 /// What a `dsc notification read` invocation targets.

@@ -4,7 +4,9 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, render_shell_template, select_discourse};
+use crate::commands::common::{
+    emit_with, ensure_api_credentials, render_shell_template, select_discourse,
+};
 use crate::commands::update::run_ssh_command;
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
@@ -65,26 +67,16 @@ pub fn plugin_list(
         })
         .collect();
 
-    match format {
-        ListFormat::Text => {
-            if entries.is_empty() && !verbose {
-                println!("No plugins found.");
-                return Ok(());
-            }
-            for plugin in entries {
-                println!("{} - {} - {}", plugin.name, plugin.version, plugin.status);
-            }
+    emit_with(format, &entries, || {
+        if entries.is_empty() && !verbose {
+            println!("No plugins found.");
+            return Ok(());
         }
-        ListFormat::Json => {
-            let raw = serde_json::to_string_pretty(&entries)?;
-            println!("{}", raw);
+        for plugin in &entries {
+            println!("{} - {} - {}", plugin.name, plugin.version, plugin.status);
         }
-        ListFormat::Yaml => {
-            let raw = serde_yaml::to_string(&entries)?;
-            println!("{}", raw);
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn plugin_install(

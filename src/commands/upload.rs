@@ -4,7 +4,7 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use anyhow::{Result, anyhow};
 use std::path::Path;
@@ -26,30 +26,21 @@ pub fn upload(
 
     let info = client.upload_file(file_path, upload_type)?;
 
-    match format {
-        ListFormat::Text => {
-            // The short URL alone hides server-side filename changes;
-            // JSON/YAML output already carries `original_filename`.
-            if let Some(hint) = extension_change_hint(file_path, &info.original_filename) {
-                eprintln!("{hint}");
-            }
-            // Default text output prints just the short URL — that's what
-            // gets pasted into post bodies. Single line, pipe-friendly.
-            if let Some(short) = &info.short_url {
-                println!("{}", short);
-            } else {
-                println!("{}", info.url);
-            }
+    emit_with(format, &info, || {
+        // The short URL alone hides server-side filename changes;
+        // JSON/YAML output already carries `original_filename`.
+        if let Some(hint) = extension_change_hint(file_path, &info.original_filename) {
+            eprintln!("{hint}");
         }
-        ListFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&info)?);
+        // Default text output prints just the short URL — that's what
+        // gets pasted into post bodies. Single line, pipe-friendly.
+        if let Some(short) = &info.short_url {
+            println!("{}", short);
+        } else {
+            println!("{}", info.url);
         }
-        ListFormat::Yaml => {
-            println!("{}", serde_yaml::to_string(&info)?);
-        }
-    }
-
-    Ok(())
+        Ok(())
+    })
 }
 
 /// A note when the extension returned by Discourse differs from the local

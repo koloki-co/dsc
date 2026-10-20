@@ -5,7 +5,7 @@
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    emit_result, ensure_api_credentials, not_found, render_shell_template, require_yes,
+    emit_result, emit_with, ensure_api_credentials, not_found, render_shell_template, require_yes,
     select_discourse,
 };
 use crate::commands::ssh::run_ssh_text;
@@ -62,26 +62,16 @@ pub fn theme_list(
         })
         .collect();
 
-    match format {
-        ListFormat::Text => {
-            if entries.is_empty() && !verbose {
-                println!("No themes found.");
-                return Ok(());
-            }
-            for theme in entries {
-                println!("{} - {} - {}", theme.id, theme.name, theme.status);
-            }
+    emit_with(format, &entries, || {
+        if entries.is_empty() && !verbose {
+            println!("No themes found.");
+            return Ok(());
         }
-        ListFormat::Json => {
-            let raw = serde_json::to_string_pretty(&entries)?;
-            println!("{}", raw);
+        for theme in &entries {
+            println!("{} - {} - {}", theme.id, theme.name, theme.status);
         }
-        ListFormat::Yaml => {
-            let raw = serde_yaml::to_string(&entries)?;
-            println!("{}", raw);
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Install a theme/component via the admin import API, from either a git repo
@@ -601,20 +591,16 @@ pub fn theme_setting_list(
     let response = client.fetch_theme(theme_id)?;
     let theme = extract_theme(&response);
     let entries = theme_setting_entries(theme);
-    match format {
-        ListFormat::Text => {
-            if entries.is_empty() {
-                println!("No settings found for theme {}.", theme_id);
-                return Ok(());
-            }
-            for entry in &entries {
-                println!("{} = {}", entry.setting, value_display(&entry.value));
-            }
+    emit_with(format, &entries, || {
+        if entries.is_empty() {
+            println!("No settings found for theme {}.", theme_id);
+            return Ok(());
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&entries)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&entries)?),
-    }
-    Ok(())
+        for entry in &entries {
+            println!("{} = {}", entry.setting, value_display(&entry.value));
+        }
+        Ok(())
+    })
 }
 
 /// Print a single theme/component setting's current value.
@@ -976,23 +962,19 @@ pub fn theme_field_list(
     let response = client.fetch_theme(theme_id)?;
     let theme = extract_theme(&response);
     let entries = theme_field_entries(theme);
-    match format {
-        ListFormat::Text => {
-            if entries.is_empty() {
-                println!("No editable fields for theme {}.", theme_id);
-                return Ok(());
-            }
-            for e in &entries {
-                match &e.upload_url {
-                    Some(url) => println!("{}  ({}, upload -> {})", e.field, e.kind, url),
-                    None => println!("{}  ({}, {} bytes)", e.field, e.kind, e.bytes),
-                }
+    emit_with(format, &entries, || {
+        if entries.is_empty() {
+            println!("No editable fields for theme {}.", theme_id);
+            return Ok(());
+        }
+        for e in &entries {
+            match &e.upload_url {
+                Some(url) => println!("{}  ({}, upload -> {})", e.field, e.kind, url),
+                None => println!("{}  ({}, {} bytes)", e.field, e.kind, e.bytes),
             }
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&entries)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&entries)?),
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Pull one field's body (e.g. `common/scss`) to a local file.
@@ -1181,25 +1163,21 @@ pub fn theme_asset_list(
                 .collect()
         })
         .unwrap_or_default();
-    match format {
-        ListFormat::Text => {
-            if assets.is_empty() {
-                println!("No upload assets bound to theme {}.", theme_id);
-                return Ok(());
-            }
-            for a in &assets {
-                println!(
-                    "${}  {}  {}",
-                    a.name,
-                    a.filename.as_deref().unwrap_or(""),
-                    a.url.as_deref().unwrap_or("")
-                );
-            }
+    emit_with(format, &assets, || {
+        if assets.is_empty() {
+            println!("No upload assets bound to theme {}.", theme_id);
+            return Ok(());
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&assets)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&assets)?),
-    }
-    Ok(())
+        for a in &assets {
+            println!(
+                "${}  {}  {}",
+                a.name,
+                a.filename.as_deref().unwrap_or(""),
+                a.url.as_deref().unwrap_or("")
+            );
+        }
+        Ok(())
+    })
 }
 
 /// Upload a file and bind it to a theme upload var (`$name`) in one step.
@@ -1597,42 +1575,38 @@ pub fn theme_show(
     let response = client.fetch_theme(theme_id)?;
     let theme = extract_theme(&response);
     let show = build_theme_show(theme, theme_id);
-    match format {
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&show)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&show)?),
-        ListFormat::Text => {
-            println!("{} - {}", show.id, show.name);
-            println!(
-                "  type:            {}",
-                if show.component { "component" } else { "theme" }
-            );
-            println!("  enabled:         {}", show.enabled);
-            println!("  default:         {}", show.default);
-            println!("  user-selectable: {}", show.user_selectable);
-            if let Some(cs) = show.color_scheme_id {
-                println!("  color scheme:    {}", cs);
-            }
-            if let Some(cs) = show.dark_color_scheme_id {
-                println!("  dark scheme:     {}", cs);
-            }
-            println!(
-                "  parents:         {}",
-                format_relations(&show.parent_themes)
-            );
-            println!(
-                "  children:        {}",
-                format_relations(&show.child_themes)
-            );
-            println!("  settings:        {}", show.settings_count);
-            let fields = if show.fields.is_empty() {
-                "(none)".to_string()
-            } else {
-                show.fields.join(", ")
-            };
-            println!("  fields:          {}", fields);
+    emit_with(format, &show, || {
+        println!("{} - {}", show.id, show.name);
+        println!(
+            "  type:            {}",
+            if show.component { "component" } else { "theme" }
+        );
+        println!("  enabled:         {}", show.enabled);
+        println!("  default:         {}", show.default);
+        println!("  user-selectable: {}", show.user_selectable);
+        if let Some(cs) = show.color_scheme_id {
+            println!("  color scheme:    {}", cs);
         }
-    }
-    Ok(())
+        if let Some(cs) = show.dark_color_scheme_id {
+            println!("  dark scheme:     {}", cs);
+        }
+        println!(
+            "  parents:         {}",
+            format_relations(&show.parent_themes)
+        );
+        println!(
+            "  children:        {}",
+            format_relations(&show.child_themes)
+        );
+        println!("  settings:        {}", show.settings_count);
+        let fields = if show.fields.is_empty() {
+            "(none)".to_string()
+        } else {
+            show.fields.join(", ")
+        };
+        println!("  fields:          {}", fields);
+        Ok(())
+    })
 }
 
 #[cfg(test)]

@@ -10,7 +10,9 @@
 
 use crate::api::{CategoryDefinition, DiscourseClient};
 use crate::cli::ListFormat;
-use crate::commands::common::{emit_result, ensure_api_credentials, not_found, select_discourse};
+use crate::commands::common::{
+    emit_result, emit_with, ensure_api_credentials, not_found, select_discourse,
+};
 use crate::config::Config;
 use crate::utils::{atomic_write, is_json_path};
 use anyhow::{Context, Result, anyhow};
@@ -1731,43 +1733,30 @@ fn print_category_diff(
     label_b: &str,
     format: ListFormat,
 ) -> Result<()> {
-    match format {
-        ListFormat::Text => {
-            if rows.is_empty() {
-                println!("{} and {}: no differences.", label_a, label_b);
-                return Ok(());
-            }
-            println!(
-                "{} differing definition field{} between {} and {}:",
-                rows.len(),
-                if rows.len() == 1 { "" } else { "s" },
-                label_a,
-                label_b
-            );
-            for row in rows {
-                println!("  {}", row.field);
-                println!("    {}: {}", label_a, fmt_diff_value(&row.a));
-                println!("    {}: {}", label_b, fmt_diff_value(&row.b));
-            }
+    let payload = json!({
+        "a": label_a,
+        "b": label_b,
+        "differences": rows,
+    });
+    emit_with(format, &payload, || {
+        if rows.is_empty() {
+            println!("{} and {}: no differences.", label_a, label_b);
+            return Ok(());
         }
-        ListFormat::Json => {
-            let payload = json!({
-                "a": label_a,
-                "b": label_b,
-                "differences": rows,
-            });
-            println!("{}", serde_json::to_string_pretty(&payload)?);
+        println!(
+            "{} differing definition field{} between {} and {}:",
+            rows.len(),
+            if rows.len() == 1 { "" } else { "s" },
+            label_a,
+            label_b
+        );
+        for row in rows {
+            println!("  {}", row.field);
+            println!("    {}: {}", label_a, fmt_diff_value(&row.a));
+            println!("    {}: {}", label_b, fmt_diff_value(&row.b));
         }
-        ListFormat::Yaml => {
-            let payload = json!({
-                "a": label_a,
-                "b": label_b,
-                "differences": rows,
-            });
-            print!("{}", serde_yaml::to_string(&payload)?);
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Compare two explicitly selected live category definitions.

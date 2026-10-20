@@ -4,7 +4,9 @@
 
 use crate::api::{DiscourseClient, TagGroupInfo};
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, not_found, require_yes, select_discourse};
+use crate::commands::common::{
+    emit_with, ensure_api_credentials, not_found, require_yes, select_discourse,
+};
 use crate::config::Config;
 use crate::utils::{atomic_write, is_json_path};
 use anyhow::{Context, Result};
@@ -21,26 +23,17 @@ pub fn tag_list(config: &Config, discourse_name: &str, format: ListFormat) -> Re
     let mut tags = client.list_tags()?;
     tags.sort_by(|a, b| a.text.cmp(&b.text));
 
-    match format {
-        ListFormat::Text => {
-            if tags.is_empty() {
-                println!("No tags found.");
-                return Ok(());
-            }
-            let name_width = tags.iter().map(|t| t.text.len()).max().unwrap_or(0).max(4);
-            for tag in &tags {
-                println!("{:<width$}  {}", tag.text, tag.count, width = name_width);
-            }
+    emit_with(format, &tags, || {
+        if tags.is_empty() {
+            println!("No tags found.");
+            return Ok(());
         }
-        ListFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&tags)?);
+        let name_width = tags.iter().map(|t| t.text.len()).max().unwrap_or(0).max(4);
+        for tag in &tags {
+            println!("{:<width$}  {}", tag.text, tag.count, width = name_width);
         }
-        ListFormat::Yaml => {
-            println!("{}", serde_yaml::to_string(&tags)?);
-        }
-    }
-
-    Ok(())
+        Ok(())
+    })
 }
 
 pub fn tag_apply(
