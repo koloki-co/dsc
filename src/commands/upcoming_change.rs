@@ -4,7 +4,7 @@
 
 use crate::api::{DiscourseClient, UpcomingChange};
 use crate::cli::ListFormat;
-use crate::commands::common::{emit_result, ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_result, emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use anyhow::{Result, bail};
 use serde::Serialize;
@@ -20,12 +20,10 @@ pub fn upcoming_change_list(
     let client = DiscourseClient::new(discourse)?;
 
     let changes = client.list_upcoming_changes()?;
-    match format {
-        ListFormat::Text => print_list(&changes),
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&changes)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&changes)?),
-    }
-    Ok(())
+    emit_with(format, &changes, || {
+        print_list(&changes);
+        Ok(())
+    })
 }
 
 /// Show one Upcoming Change by its exact setting name.
@@ -40,12 +38,10 @@ pub fn upcoming_change_show(
     let client = DiscourseClient::new(discourse)?;
 
     let change = client.show_upcoming_change(setting_name)?;
-    match format {
-        ListFormat::Text => print_detail(&change),
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&change)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&change)?),
-    }
-    Ok(())
+    emit_with(format, &change, || {
+        print_detail(&change);
+        Ok(())
+    })
 }
 
 /// Enable or disable one Upcoming Change: explicit target state, idempotent,
