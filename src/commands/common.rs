@@ -35,6 +35,27 @@ pub fn emit_result<T: Serialize>(format: ListFormat, value: &T, text: &str) -> R
     Ok(())
 }
 
+/// Emit `value` as JSON or YAML, or run `text` for the bespoke `Text` rendering.
+/// For list/show commands whose text output is hand-formatted; the match must be
+/// the caller's last statement, since `text` cannot return early on its behalf.
+pub fn emit_with<T: Serialize>(
+    format: ListFormat,
+    value: &T,
+    text: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    match format {
+        ListFormat::Text => text(),
+        ListFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(value)?);
+            Ok(())
+        }
+        ListFormat::Yaml => {
+            println!("{}", serde_yaml::to_string(value)?);
+            Ok(())
+        }
+    }
+}
+
 /// Read `path` from disk, or from stdin when `path` is `None` or `-`. `what`
 /// names the content being read, for the stdin-read error context.
 pub fn read_path_or_stdin(path: Option<&std::path::Path>, what: &str) -> Result<String> {
