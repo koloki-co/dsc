@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::{DiscourseClient, MAX_PAGINATION_PAGES, ResponseBody};
+use super::client::{DiscourseClient, PageCursor, ResponseBody};
 use super::error::http_error;
 use super::models::{
     GroupDetail, GroupDetailResponse, GroupMember, GroupMembersResponse, GroupSummary,
@@ -11,7 +11,6 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
 
 /// Result of a bulk add-members call.
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -415,21 +414,11 @@ impl DiscourseClient {
 
     fn fetch_groups_paginated(&self, path: &str) -> Result<Vec<GroupSummary>> {
         let mut out = Vec::new();
-        let mut seen = HashSet::new();
+        let mut cursor = PageCursor::new("groups");
         let mut next_path = Some(path.to_string());
-        let mut pages = 0;
 
-        while let Some(path) = next_path.take() {
-            let path = self.normalize_groups_path(&path);
-            if !seen.insert(path.clone()) {
-                return Err(anyhow!("groups request loop detected at {}", path));
-            }
-            pages += 1;
-            if pages > MAX_PAGINATION_PAGES {
-                return Err(anyhow!(
-                    "groups pagination exceeded {MAX_PAGINATION_PAGES} pages"
-                ));
-            }
+        while let Some(raw_path) = next_path.take() {
+            let path = cursor.advance(&raw_path, |p| Ok(self.normalize_groups_path(p)))?;
             let response = self.get(&path)?;
             let status = response.status();
             let text = response

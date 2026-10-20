@@ -11,6 +11,7 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::blocking::{Client, RequestBuilder, Response};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{StatusCode, Url, redirect};
+use std::collections::HashSet;
 use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -454,6 +455,65 @@ fn same_origin(a: &Url, b: &Url) -> bool {
     a.scheme() == b.scheme()
         && a.host_str() == b.host_str()
         && a.port_or_known_default() == b.port_or_known_default()
+}
+
+/// Shared loop-detection and page-budget guard for every cursor-based "list
+/// everything" pagination loop (category topics, deleted topics, private
+/// messages, groups, Data Explorer). Each site normalises/validates its own
+/// raw continuation path differently (`json_page_path`, a groups-specific
+/// normaliser, Data Explorer's validate-in-place check), so `advance` takes
+/// that as a closure rather than assuming one shape.
+pub(super) struct PageCursor {
+    label: &'static str,
+    seen: HashSet<String>,
+    pages: usize,
+}
+
+impl PageCursor {
+    pub(super) fn new(label: &'static str) -> Self {
+        Self {
+            label,
+            seen: HashSet::new(),
+            pages: 0,
+        }
+    }
+
+    /// Like [`PageCursor::new`], but seeded with a path already fetched
+    /// outside the loop (e.g. a first page fetched before pagination
+    /// begins), so that page counts as seen and already-paid-for.
+    pub(super) fn seed(label: &'static str, first_path: String) -> Self {
+        let mut seen = HashSet::new();
+        seen.insert(first_path);
+        Self {
+            label,
+            seen,
+            pages: 1,
+        }
+    }
+
+    /// Validate/normalise `raw_path` via `normalize`, then enforce loop
+    /// detection and the page budget. Returns the normalised path to fetch.
+    pub(super) fn advance(
+        &mut self,
+        raw_path: &str,
+        normalize: impl FnOnce(&str) -> Result<String>,
+    ) -> Result<String> {
+        let path = normalize(raw_path)?;
+        if !self.seen.insert(path.clone()) {
+            return Err(anyhow!(
+                "{} pagination loop detected: {raw_path}",
+                self.label
+            ));
+        }
+        self.pages += 1;
+        if self.pages > MAX_PAGINATION_PAGES {
+            return Err(anyhow!(
+                "{} pagination exceeded {MAX_PAGINATION_PAGES} pages",
+                self.label
+            ));
+        }
+        Ok(path)
+    }
 }
 
 /// Convert Discourse's extensionless continuation URLs to JSON endpoints and

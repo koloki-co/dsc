@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::{DiscourseClient, ResponseBody};
+use super::client::{DiscourseClient, PageCursor, ResponseBody};
 use super::error::http_error;
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,6 @@ use serde_json::{Map, Value};
 use std::collections::{BTreeMap, HashSet};
 
 const QUERIES_PATH: &str = "/admin/plugins/discourse-data-explorer/queries.json";
-const MAX_PAGES: usize = 1_000;
 
 /// One saved Data Explorer query in list output.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -128,23 +127,16 @@ impl DiscourseClient {
         ascending: bool,
     ) -> Result<ExplorerQueryCatalogue> {
         let mut next = Some(build_list_path(filter, order, ascending)?);
-        let mut seen_paths = HashSet::new();
+        let mut cursor = PageCursor::new("Data Explorer");
         let mut seen_ids = HashSet::new();
         let mut queries = Vec::new();
         let mut total_rows_queries = 0;
-        let mut pages = 0;
 
-        while let Some(path) = next {
-            validate_page_path(&path)?;
-            if !seen_paths.insert(path.clone()) {
-                return Err(anyhow!("Data Explorer pagination loop at {path}"));
-            }
-            pages += 1;
-            if pages > MAX_PAGES {
-                return Err(anyhow!(
-                    "Data Explorer pagination exceeded {MAX_PAGES} pages"
-                ));
-            }
+        while let Some(raw_path) = next {
+            let path = cursor.advance(&raw_path, |p| {
+                validate_page_path(p)?;
+                Ok(p.to_string())
+            })?;
 
             let response = self.get(&path)?;
             let status = response.status();

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::client::{DiscourseClient, MAX_PAGINATION_PAGES, ResponseBody, json_page_path};
+use super::client::{DiscourseClient, PageCursor, ResponseBody, json_page_path};
 use super::error::http_error;
 use super::models::{CreatePostResponse, TopicResponse};
 use anyhow::{Context, Result, anyhow};
@@ -250,23 +250,11 @@ impl DiscourseClient {
         };
         let mut deleted = Vec::new();
         let mut seen_topics = HashSet::new();
-        let mut seen_paths = HashSet::new();
+        let mut cursor = PageCursor::new("deleted-topic");
         let mut next = Some(initial_path);
-        let mut pages = 0;
 
         while let Some(raw_path) = next {
-            let path = json_page_path(&raw_path)?;
-            if !seen_paths.insert(path.clone()) {
-                return Err(anyhow!(
-                    "deleted-topic pagination loop detected: {raw_path}"
-                ));
-            }
-            pages += 1;
-            if pages > MAX_PAGINATION_PAGES {
-                return Err(anyhow!(
-                    "deleted-topic pagination exceeded {MAX_PAGINATION_PAGES} pages"
-                ));
-            }
+            let path = cursor.advance(&raw_path, json_page_path)?;
             let response = self.get(&path)?;
             let status = response.status();
             let text = response
@@ -595,23 +583,10 @@ impl DiscourseClient {
         };
         let mut topics = Vec::new();
         let mut seen_topics = HashSet::new();
-        let mut seen_paths = HashSet::new();
+        let mut cursor = PageCursor::new("private-message");
         let mut next = Some(path);
-        let mut pages = 0;
-        while let Some(path) = next {
-            let path = json_page_path(&path)?;
-            if !seen_paths.insert(path.clone()) {
-                return Err(anyhow!(
-                    "private-message pagination loop detected: {}",
-                    path
-                ));
-            }
-            pages += 1;
-            if pages > MAX_PAGINATION_PAGES {
-                return Err(anyhow!(
-                    "private-message pagination exceeded {MAX_PAGINATION_PAGES} pages"
-                ));
-            }
+        while let Some(raw_path) = next {
+            let path = cursor.advance(&raw_path, json_page_path)?;
             let response = self.get(&path)?;
             let status = response.status();
             let text = response.text_capped().context("reading PM list response")?;
