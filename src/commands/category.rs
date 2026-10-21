@@ -4,7 +4,7 @@
 
 use crate::api::{CategoryInfo, DiscourseClient, PostEditOptions, TopicSummary};
 use crate::cli::{AdmonitionStyle, ListFormat};
-use crate::commands::common::{ensure_api_credentials, not_found, select_discourse};
+use crate::commands::common::{emit_with, ensure_api_credentials, not_found, select_discourse};
 use crate::config::Config;
 use crate::utils::{
     current_utc_iso8601, ensure_dir, ensure_output_available, normalize_baseurl, read_markdown,
@@ -30,44 +30,29 @@ pub fn category_list(
     for category in categories {
         flatten_categories(&category, &mut flat);
     }
-    match format {
-        ListFormat::Text => {
-            if tree {
-                if flat.is_empty() && !verbose {
-                    println!("No categories found.");
-                    return Ok(());
-                }
-                print_category_tree(&flat);
-            } else {
-                let unique = unique_categories(flat);
-                if unique.is_empty() && !verbose {
-                    println!("No categories found.");
-                    return Ok(());
-                }
-                for category in unique {
-                    let id = category.id.unwrap_or_default();
-                    println!("{} - {}", id, category.name);
-                }
-            }
+    if tree {
+        if !matches!(format, ListFormat::Text) {
+            return Err(anyhow!("--tree is only supported with --format text"));
         }
-        ListFormat::Json => {
-            if tree {
-                return Err(anyhow!("--tree is only supported with --format text"));
-            }
-            let unique = unique_categories(flat);
-            let raw = serde_json::to_string_pretty(&unique)?;
-            println!("{}", raw);
+        if flat.is_empty() && !verbose {
+            println!("No categories found.");
+            return Ok(());
         }
-        ListFormat::Yaml => {
-            if tree {
-                return Err(anyhow!("--tree is only supported with --format text"));
-            }
-            let unique = unique_categories(flat);
-            let raw = serde_yaml::to_string(&unique)?;
-            println!("{}", raw);
-        }
+        print_category_tree(&flat);
+        return Ok(());
     }
-    Ok(())
+    let unique = unique_categories(flat);
+    emit_with(format, &unique, || {
+        if unique.is_empty() && !verbose {
+            println!("No categories found.");
+            return Ok(());
+        }
+        for category in &unique {
+            let id = category.id.unwrap_or_default();
+            println!("{} - {}", id, category.name);
+        }
+        Ok(())
+    })
 }
 
 pub fn category_copy(
