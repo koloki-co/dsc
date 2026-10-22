@@ -155,26 +155,23 @@ pub fn user_find(
         }
     }
 
-    match format {
-        ListFormat::Text => {
-            if matches.is_empty() {
-                println!("No account found on any configured forum.");
-            } else {
-                let forum_width = matches.iter().map(|m| m.forum.len()).max().unwrap_or(4);
-                for m in &matches {
-                    println!(
-                        "{:<forum_width$}  {}  id:{}",
-                        m.forum,
-                        m.username,
-                        m.id,
-                        forum_width = forum_width
-                    );
-                }
+    emit_with(format, &matches, || {
+        if matches.is_empty() {
+            println!("No account found on any configured forum.");
+        } else {
+            let forum_width = matches.iter().map(|m| m.forum.len()).max().unwrap_or(4);
+            for m in &matches {
+                println!(
+                    "{:<forum_width$}  {}  id:{}",
+                    m.forum,
+                    m.username,
+                    m.id,
+                    forum_width = forum_width
+                );
             }
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&matches)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&matches)?),
-    }
+        Ok(())
+    })?;
 
     if failed > 0 {
         return Err(anyhow!(
