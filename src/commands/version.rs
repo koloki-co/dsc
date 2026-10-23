@@ -5,8 +5,8 @@
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    emit_result, ensure_api_credentials, fleet_worker_count, run_fleet, select_discourse,
-    selected_discourses,
+    emit_result, emit_with, ensure_api_credentials, fleet_worker_count, run_fleet,
+    select_discourse, selected_discourses,
 };
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
@@ -92,24 +92,21 @@ fn fleet_version(config: &Config, tags: Option<&str>, format: ListFormat) -> Res
         },
     );
 
-    match format {
-        ListFormat::Text => {
-            for row in &rows {
-                if let Some(error) = &row.error {
-                    println!("{}: ERROR: {error}", row.discourse);
-                } else {
-                    println!(
-                        "{}: Discourse {} ({})",
-                        row.discourse,
-                        row.version.as_deref().unwrap_or("(unknown)"),
-                        row.commit.as_deref().unwrap_or("(unknown)")
-                    );
-                }
+    emit_with(format, &rows, || {
+        for row in &rows {
+            if let Some(error) = &row.error {
+                println!("{}: ERROR: {error}", row.discourse);
+            } else {
+                println!(
+                    "{}: Discourse {} ({})",
+                    row.discourse,
+                    row.version.as_deref().unwrap_or("(unknown)"),
+                    row.commit.as_deref().unwrap_or("(unknown)")
+                );
             }
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&rows)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&rows)?),
-    }
+        Ok(())
+    })?;
 
     let failed = rows.iter().filter(|row| row.error.is_some()).count();
     if failed > 0 {
