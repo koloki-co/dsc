@@ -4,7 +4,7 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::MAX_FLEET_WORKERS;
+use crate::commands::common::{MAX_FLEET_WORKERS, emit_with};
 use crate::config::{Config, DiscourseConfig};
 use anyhow::{Result, anyhow};
 use serde::Serialize;
@@ -107,16 +107,15 @@ pub fn config_check(
         .filter(|r| !(r.api.ok && r.ssh.as_ref().map(|s| s.ok).unwrap_or(true)))
         .count();
 
-    match format {
-        ListFormat::Text => eprintln!(
+    emit_with(format, &reports, || {
+        eprintln!(
             "Done: {} ok, {} failed (of {}).",
             reports.len() - failed,
             failed,
             reports.len()
-        ),
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&reports)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&reports)?),
-    }
+        );
+        Ok(())
+    })?;
 
     if failed == 0 {
         Ok(())
