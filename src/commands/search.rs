@@ -86,32 +86,29 @@ pub fn search_all(
         }
     }
 
-    match format {
-        ListFormat::Text => {
-            if hits.is_empty() {
-                println!("No search results found.");
-            } else {
-                let forum_width = hits.iter().map(|h| h.forum.len()).max().unwrap_or(4);
-                let id_width = hits
-                    .iter()
-                    .map(|h| h.hit.id.to_string().len())
-                    .max()
-                    .unwrap_or(2);
-                for h in &hits {
-                    println!(
-                        "{:<forum_width$}  {:>id_width$}  {}",
-                        h.forum,
-                        h.hit.id,
-                        display_title(&h.hit),
-                        forum_width = forum_width,
-                        id_width = id_width
-                    );
-                }
+    emit_with(format, &hits, || {
+        if hits.is_empty() {
+            println!("No search results found.");
+        } else {
+            let forum_width = hits.iter().map(|h| h.forum.len()).max().unwrap_or(4);
+            let id_width = hits
+                .iter()
+                .map(|h| h.hit.id.to_string().len())
+                .max()
+                .unwrap_or(2);
+            for h in &hits {
+                println!(
+                    "{:<forum_width$}  {:>id_width$}  {}",
+                    h.forum,
+                    h.hit.id,
+                    display_title(&h.hit),
+                    forum_width = forum_width,
+                    id_width = id_width
+                );
             }
         }
-        ListFormat::Json => println!("{}", serde_json::to_string_pretty(&hits)?),
-        ListFormat::Yaml => println!("{}", serde_yaml::to_string(&hits)?),
-    }
+        Ok(())
+    })?;
 
     if failed > 0 {
         return Err(anyhow!(
