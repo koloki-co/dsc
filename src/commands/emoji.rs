@@ -4,7 +4,7 @@
 
 use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
-use crate::commands::common::{ensure_api_credentials, select_discourse};
+use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use crate::utils::{atomic_write, slugify};
 use anyhow::{Context, Result, anyhow};
@@ -432,45 +432,32 @@ pub fn list_emojis(
     verbose: bool,
     inline: bool,
 ) -> Result<()> {
+    if inline && !matches!(format, ListFormat::Text) {
+        return Err(anyhow!("--inline is only supported with --format text"));
+    }
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
     let mut emojis = client.list_custom_emojis()?;
     emojis.sort_by(|a, b| a.name.cmp(&b.name));
 
-    match format {
-        ListFormat::Text => {
-            if emojis.is_empty() && !verbose {
-                println!("No emojis found.");
-                return Ok(());
-            }
+    emit_with(format, &emojis, || {
+        if emojis.is_empty() && !verbose {
+            println!("No emojis found.");
+            return Ok(());
+        }
 
-            if inline {
-                if let Some(protocol) = detect_inline_protocol() {
-                    print_inline_emojis(&emojis, protocol)?;
-                } else {
-                    print_emojis_table(&emojis);
-                }
+        if inline {
+            if let Some(protocol) = detect_inline_protocol() {
+                print_inline_emojis(&emojis, protocol)?;
             } else {
                 print_emojis_table(&emojis);
             }
+        } else {
+            print_emojis_table(&emojis);
         }
-        ListFormat::Json => {
-            if inline {
-                return Err(anyhow!("--inline is only supported with --format text"));
-            }
-            let raw = serde_json::to_string_pretty(&emojis)?;
-            println!("{}", raw);
-        }
-        ListFormat::Yaml => {
-            if inline {
-                return Err(anyhow!("--inline is only supported with --format text"));
-            }
-            let raw = serde_yaml::to_string(&emojis)?;
-            println!("{}", raw);
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn print_emojis_table(emojis: &[crate::api::CustomEmoji]) {
