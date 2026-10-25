@@ -4,7 +4,8 @@
 
 use crate::cli::{FileCommand, ListFormat};
 use crate::commands::common::{
-    fleet_worker_count, require_yes, run_fleet, select_discourse, selected_discourses, shell_quote,
+    emit_with, fleet_worker_count, require_yes, run_fleet, select_discourse, selected_discourses,
+    shell_quote,
 };
 use crate::commands::ssh::{
     ReplaceOptions, build_fetch_script, build_replace_script, effective_host_key_checking,
@@ -254,40 +255,29 @@ fn file_audit(
     );
 
     let failed = outcomes.iter().filter(|o| o.failed).count();
+    let rows: Vec<AuditResult> = outcomes
+        .iter()
+        .map(|o| render_audit_row(o, &local_checksum, local_size))
+        .collect();
 
-    match format {
-        ListFormat::Json => {
-            let rows: Vec<AuditResult> = outcomes
-                .iter()
-                .map(|o| render_audit_row(o, &local_checksum, local_size))
-                .collect();
-            println!("{}", serde_json::to_string_pretty(&rows)?);
+    emit_with(format, &rows, || {
+        for o in &outcomes {
+            let status_display = if o.failed {
+                o.status.clone()
+            } else {
+                audit_text(
+                    &o.forum,
+                    &o.remote_path,
+                    &o.status,
+                    &local_checksum,
+                    local_size,
+                    o.checksum.as_deref(),
+                )
+            };
+            println!("{status_display}");
         }
-        ListFormat::Yaml => {
-            let rows: Vec<AuditResult> = outcomes
-                .iter()
-                .map(|o| render_audit_row(o, &local_checksum, local_size))
-                .collect();
-            println!("{}", serde_yaml::to_string(&rows)?);
-        }
-        ListFormat::Text => {
-            for o in &outcomes {
-                let status_display = if o.failed {
-                    o.status.clone()
-                } else {
-                    audit_text(
-                        &o.forum,
-                        &o.remote_path,
-                        &o.status,
-                        &local_checksum,
-                        local_size,
-                        o.checksum.as_deref(),
-                    )
-                };
-                println!("{status_display}");
-            }
-        }
-    }
+        Ok(())
+    })?;
 
     if failed > 0 {
         return Err(anyhow!("{failed} forum(s) failed audit"));
@@ -617,18 +607,11 @@ fn file_pull(
     );
 
     let failed = outcomes.iter().filter(|o| o.failed).count();
+    let rows: Vec<PullResult> = outcomes.iter().map(render_pull_row).collect();
 
-    match format {
-        ListFormat::Json => {
-            let rows: Vec<PullResult> = outcomes.iter().map(render_pull_row).collect();
-            println!("{}", serde_json::to_string_pretty(&rows)?);
-        }
-        ListFormat::Yaml => {
-            let rows: Vec<PullResult> = outcomes.iter().map(render_pull_row).collect();
-            println!("{}", serde_yaml::to_string(&rows)?);
-        }
-        ListFormat::Text => {}
-    }
+    // Text output is already streamed per-forum by the `on_done` callback
+    // above as each pull completes, so there is nothing left to print here.
+    emit_with(format, &rows, || Ok(()))?;
 
     if failed > 0 {
         return Err(anyhow!("{failed} forum(s) failed pull; see messages above"));

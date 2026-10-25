@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::cli::OutputFormat;
-use crate::commands::common::{fetch_fullnames, open_url_detached, parse_tags};
+use crate::commands::common::{emit_output_with, fetch_fullnames, open_url_detached, parse_tags};
 use crate::config::{Config, DiscourseConfig, save_config};
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -156,68 +156,61 @@ pub fn list_discourses(
         open_discourse_urls(&filtered)?;
     }
 
-    match format {
-        OutputFormat::Text => {
-            if filtered.is_empty() && !verbose {
-                println!("No discourses found.");
-                return Ok(());
-            }
-            for d in filtered.iter().copied() {
-                let fullname = d.fullname.as_deref().unwrap_or("");
-                if fullname.is_empty() {
-                    println!("{} - {}", d.name, d.baseurl);
-                } else {
-                    println!("{} - {} - {}", d.name, fullname, d.baseurl);
+    let entries: Vec<DiscourseListEntry<'_>> = filtered.iter().copied().map(Into::into).collect();
+
+    emit_output_with(format, &entries, |format| {
+        match format {
+            OutputFormat::Text => {
+                if filtered.is_empty() && !verbose {
+                    println!("No discourses found.");
+                    return Ok(());
+                }
+                for d in filtered.iter().copied() {
+                    let fullname = d.fullname.as_deref().unwrap_or("");
+                    if fullname.is_empty() {
+                        println!("{} - {}", d.name, d.baseurl);
+                    } else {
+                        println!("{} - {} - {}", d.name, fullname, d.baseurl);
+                    }
                 }
             }
-        }
-        OutputFormat::Markdown => {
-            for d in filtered.iter().copied() {
-                let fullname = d.fullname.as_deref().unwrap_or("");
-                if fullname.is_empty() {
-                    println!("- {} ({})", d.name, d.baseurl);
-                } else {
-                    println!("- {} ({}) - {}", d.name, fullname, d.baseurl);
+            OutputFormat::Markdown => {
+                for d in filtered.iter().copied() {
+                    let fullname = d.fullname.as_deref().unwrap_or("");
+                    if fullname.is_empty() {
+                        println!("- {} ({})", d.name, d.baseurl);
+                    } else {
+                        println!("- {} ({}) - {}", d.name, fullname, d.baseurl);
+                    }
                 }
             }
-        }
-        OutputFormat::MarkdownTable => {
-            println!("| Name | Full Name | Base URL |");
-            println!("| --- | --- | --- |");
-            for d in filtered.iter().copied() {
-                let fullname = d.fullname.as_deref().unwrap_or("");
-                println!("| {} | {} | {} |", d.name, fullname, d.baseurl);
+            OutputFormat::MarkdownTable => {
+                println!("| Name | Full Name | Base URL |");
+                println!("| --- | --- | --- |");
+                for d in filtered.iter().copied() {
+                    let fullname = d.fullname.as_deref().unwrap_or("");
+                    println!("| {} | {} | {} |", d.name, fullname, d.baseurl);
+                }
             }
-        }
-        OutputFormat::Json => {
-            let entries: Vec<DiscourseListEntry<'_>> =
-                filtered.iter().copied().map(Into::into).collect();
-            let raw = serde_json::to_string_pretty(&entries)?;
-            println!("{}", raw);
-        }
-        OutputFormat::Yaml => {
-            let entries: Vec<DiscourseListEntry<'_>> =
-                filtered.iter().copied().map(Into::into).collect();
-            let raw = serde_yaml::to_string(&entries)?;
-            println!("{}", raw);
-        }
-        OutputFormat::Csv => {
-            let mut writer = csv::Writer::from_writer(io::stdout());
-            writer.write_record(["name", "fullname", "baseurl", "tags"])?;
-            for d in filtered.iter().copied() {
-                let tags = d.tags.as_ref().map(|t| t.join(";")).unwrap_or_default();
-                let fullname = d.fullname.as_deref().unwrap_or("");
-                writer.write_record([d.name.as_str(), fullname, d.baseurl.as_str(), &tags])?;
+            OutputFormat::Csv => {
+                let mut writer = csv::Writer::from_writer(io::stdout());
+                writer.write_record(["name", "fullname", "baseurl", "tags"])?;
+                for d in filtered.iter().copied() {
+                    let tags = d.tags.as_ref().map(|t| t.join(";")).unwrap_or_default();
+                    let fullname = d.fullname.as_deref().unwrap_or("");
+                    writer.write_record([d.name.as_str(), fullname, d.baseurl.as_str(), &tags])?;
+                }
+                writer.flush()?;
             }
-            writer.flush()?;
-        }
-        OutputFormat::Urls => {
-            for d in filtered.iter().copied() {
-                println!("{}", d.baseurl);
+            OutputFormat::Urls => {
+                for d in filtered.iter().copied() {
+                    println!("{}", d.baseurl);
+                }
             }
+            OutputFormat::Json | OutputFormat::Yaml => unreachable!("handled by emit_output_with"),
         }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 fn open_discourse_urls(discourses: &[&DiscourseConfig]) -> Result<()> {

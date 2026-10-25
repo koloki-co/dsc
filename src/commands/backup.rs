@@ -5,7 +5,8 @@
 use crate::api::DiscourseClient;
 use crate::cli::OutputFormat;
 use crate::commands::common::{
-    ensure_api_credentials, fleet_worker_count, select_discourse, selected_discourses,
+    emit_output_with, ensure_api_credentials, fleet_worker_count, select_discourse,
+    selected_discourses,
 };
 use crate::config::{Config, DiscourseConfig};
 use crate::utils::create_atomic_output;
@@ -266,100 +267,95 @@ pub fn backup_list(
             .or_else(|| backup_location_response(&response))
     };
 
-    match format {
-        OutputFormat::Text => {
-            if backups.is_empty() && !verbose {
-                println!("No backups found.");
-                return Ok(());
+    emit_output_with(format, &response, |format| {
+        match format {
+            OutputFormat::Text => {
+                if backups.is_empty() && !verbose {
+                    println!("No backups found.");
+                    return Ok(());
+                }
+                if let Some(latest) = backups.first() {
+                    let filename = backup_filename(latest);
+                    let created_at = backup_created_at(latest).unwrap_or("unknown");
+                    let location = backup_location(latest, global_location.as_deref());
+                    println!(
+                        "Latest backup: {} - {} - {}",
+                        filename, created_at, location
+                    );
+                }
+                for backup in &backups {
+                    let filename = backup_filename(backup);
+                    let created_at = backup_created_at(backup).unwrap_or("unknown");
+                    let size = backup_size(backup);
+                    let location = backup_location(backup, global_location.as_deref());
+                    println!("{} - {} - {} - {}", filename, created_at, size, location);
+                }
             }
-            if let Some(latest) = backups.first() {
-                let filename = backup_filename(latest);
-                let created_at = backup_created_at(latest).unwrap_or("unknown");
-                let location = backup_location(latest, global_location.as_deref());
-                println!(
-                    "Latest backup: {} - {} - {}",
-                    filename, created_at, location
-                );
+            OutputFormat::Markdown => {
+                if let Some(latest) = backups.first() {
+                    let filename = backup_filename(latest);
+                    let created_at = backup_created_at(latest).unwrap_or("unknown");
+                    let location = backup_location(latest, global_location.as_deref());
+                    println!(
+                        "Latest backup: {} ({}) - {}",
+                        filename, created_at, location
+                    );
+                }
+                for backup in &backups {
+                    let filename = backup_filename(backup);
+                    let created_at = backup_created_at(backup).unwrap_or("unknown");
+                    let size = backup_size(backup);
+                    let location = backup_location(backup, global_location.as_deref());
+                    println!("- {} ({}) - {} - {}", filename, created_at, size, location);
+                }
             }
-            for backup in &backups {
-                let filename = backup_filename(backup);
-                let created_at = backup_created_at(backup).unwrap_or("unknown");
-                let size = backup_size(backup);
-                let location = backup_location(backup, global_location.as_deref());
-                println!("{} - {} - {} - {}", filename, created_at, size, location);
+            OutputFormat::MarkdownTable => {
+                println!("| Filename | Created At | Size | Location |");
+                println!("| --- | --- | --- | --- |");
+                for backup in &backups {
+                    let filename = backup_filename(backup);
+                    let created_at = backup_created_at(backup).unwrap_or("unknown");
+                    let size = backup_size(backup);
+                    let location = backup_location(backup, global_location.as_deref());
+                    println!(
+                        "| {} | {} | {} | {} |",
+                        filename, created_at, size, location
+                    );
+                }
             }
-        }
-        OutputFormat::Markdown => {
-            if let Some(latest) = backups.first() {
-                let filename = backup_filename(latest);
-                let created_at = backup_created_at(latest).unwrap_or("unknown");
-                let location = backup_location(latest, global_location.as_deref());
-                println!(
-                    "Latest backup: {} ({}) - {}",
-                    filename, created_at, location
-                );
+            OutputFormat::Csv => {
+                let mut writer = csv::Writer::from_writer(io::stdout());
+                writer.write_record(["filename", "created_at", "size", "location"])?;
+                for backup in &backups {
+                    let filename = backup_filename(backup);
+                    let created_at = backup_created_at(backup).unwrap_or("");
+                    // Raw byte count for machine consumption.
+                    let size = backup
+                        .get("size")
+                        .and_then(|v| v.as_u64())
+                        .or_else(|| backup.get("size_bytes").and_then(|v| v.as_u64()))
+                        .map(|v| v.to_string())
+                        .or_else(|| {
+                            backup
+                                .get("size")
+                                .and_then(|v| v.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .unwrap_or_default();
+                    let location = backup_location(backup, global_location.as_deref());
+                    writer.write_record([filename, created_at, &size, &location])?;
+                }
+                writer.flush()?;
             }
-            for backup in &backups {
-                let filename = backup_filename(backup);
-                let created_at = backup_created_at(backup).unwrap_or("unknown");
-                let size = backup_size(backup);
-                let location = backup_location(backup, global_location.as_deref());
-                println!("- {} ({}) - {} - {}", filename, created_at, size, location);
+            OutputFormat::Urls => {
+                return Err(anyhow!(
+                    "'backup list' does not support '--format urls'; use text/markdown/json/yaml/csv"
+                ));
             }
+            OutputFormat::Json | OutputFormat::Yaml => unreachable!("handled by emit_output_with"),
         }
-        OutputFormat::MarkdownTable => {
-            println!("| Filename | Created At | Size | Location |");
-            println!("| --- | --- | --- | --- |");
-            for backup in &backups {
-                let filename = backup_filename(backup);
-                let created_at = backup_created_at(backup).unwrap_or("unknown");
-                let size = backup_size(backup);
-                let location = backup_location(backup, global_location.as_deref());
-                println!(
-                    "| {} | {} | {} | {} |",
-                    filename, created_at, size, location
-                );
-            }
-        }
-        OutputFormat::Json => {
-            let raw = serde_json::to_string_pretty(&response)?;
-            println!("{}", raw);
-        }
-        OutputFormat::Yaml => {
-            let raw = serde_yaml::to_string(&response)?;
-            println!("{}", raw);
-        }
-        OutputFormat::Csv => {
-            let mut writer = csv::Writer::from_writer(io::stdout());
-            writer.write_record(["filename", "created_at", "size", "location"])?;
-            for backup in &backups {
-                let filename = backup_filename(backup);
-                let created_at = backup_created_at(backup).unwrap_or("");
-                // Raw byte count for machine consumption.
-                let size = backup
-                    .get("size")
-                    .and_then(|v| v.as_u64())
-                    .or_else(|| backup.get("size_bytes").and_then(|v| v.as_u64()))
-                    .map(|v| v.to_string())
-                    .or_else(|| {
-                        backup
-                            .get("size")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                    })
-                    .unwrap_or_default();
-                let location = backup_location(backup, global_location.as_deref());
-                writer.write_record([filename, created_at, &size, &location])?;
-            }
-            writer.flush()?;
-        }
-        OutputFormat::Urls => {
-            return Err(anyhow!(
-                "'backup list' does not support '--format urls'; use text/markdown/json/yaml/csv"
-            ));
-        }
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]

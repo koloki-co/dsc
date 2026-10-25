@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::api::DiscourseClient;
-use crate::cli::ListFormat;
+use crate::cli::{ListFormat, OutputFormat};
 use crate::config::{Config, DiscourseConfig, find_discourse};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::Serialize;
@@ -53,6 +53,31 @@ pub fn emit_with<T: Serialize>(
             println!("{}", serde_yaml::to_string(value)?);
             Ok(())
         }
+    }
+}
+
+/// Emit `value` as JSON or YAML for the larger `OutputFormat` enum, or
+/// delegate every other variant (`Text`/`Markdown`/`MarkdownTable`/`Csv`/
+/// `Urls`) to `other`. The sibling of `emit_with` for commands whose format
+/// enum has more than the three `ListFormat` variants. Only safe for a
+/// caller whose non-JSON/YAML variants share one buffered match with no
+/// per-row streaming; `backup_create`/`backup_health` stream text/CSV rows
+/// as each forum completes and so cannot use this.
+pub fn emit_output_with<T: Serialize>(
+    format: OutputFormat,
+    value: &T,
+    other: impl FnOnce(OutputFormat) -> Result<()>,
+) -> Result<()> {
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(value)?);
+            Ok(())
+        }
+        OutputFormat::Yaml => {
+            println!("{}", serde_yaml::to_string(value)?);
+            Ok(())
+        }
+        other_format => other(other_format),
     }
 }
 
