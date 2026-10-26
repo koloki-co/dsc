@@ -20,14 +20,15 @@ dsc update log [--latest] [--since <DUR>] [--format text|md|json]
 
 1. Refuse or skip if a `./launcher rebuild` is already running, unless `--force` is set.
 2. Fetch the initial Discourse version and OS details.
-3. Check available 1 KiB blocks on `/` and compare them without whole-GiB rounding. If space is below the configured minimum, run the [disk recovery](#disk-guard-and-recovery) sequence before making any OS or Discourse change.
-4. Run the OS package update over SSH and reboot if applicable.
-5. Verify the reboot by requiring Linux's boot ID to change, then requiring three consecutive successful SSH boot-ID probes. A reboot command that closes SSH with exit 255 is treated as indeterminate and reconciled through this check; it never skips directly to the rebuild.
-6. Check whether the running Discourse commit matches the latest commit on the configured branch (default `latest`, override with `--branch` or `discourse_branch` in `dsc.toml`). If they match, skip the rebuild.
-7. Run the Discourse rebuild (`./launcher rebuild app`) when step 6 cannot prove the running commit is current. This includes an unavailable GitHub comparison or unknown running commit, which deliberately fail open to a rebuild. A raw SSH exit 255 is not retried because it cannot prove whether launcher started.
-8. Require Discourse to serve version information again. When a newer target commit was known, refuse success if the running commit remained unchanged after the rebuild.
-9. Run Docker cleanup (`docker container prune -f && docker image prune -f`) and report root disk usage.
-10. Optionally post a changelog checklist to the configured topic.
+3. On rootless hosts, preflight `/var/discourse`: its checkout and Git directories must be writable by the launcher user, contain no foreign-owned entries outside `shared/`, be clean, and be able to fast-forward to `origin/main`. This refuses before any disruptive action and never repairs ownership automatically.
+4. Check available 1 KiB blocks on `/` and compare them without whole-GiB rounding. If space is below the configured minimum, run the [disk recovery](#disk-guard-and-recovery) sequence before making any OS or Discourse change.
+5. Run the OS package update over SSH and reboot if applicable.
+6. Verify the reboot by requiring Linux's boot ID to change, then requiring three consecutive successful SSH boot-ID probes. A reboot command that closes SSH with exit 255 is treated as indeterminate and reconciled through this check; it never skips directly to the rebuild.
+7. Check whether the running Discourse commit matches the latest commit on the configured branch (default `latest`, override with `--branch` or `discourse_branch` in `dsc.toml`). If they match, skip the rebuild.
+8. Run the Discourse rebuild (`./launcher rebuild app`) when step 7 cannot prove the running commit is current. This includes an unavailable GitHub comparison or unknown running commit, which deliberately fail open to a rebuild. A raw SSH exit 255 is not retried because it cannot prove whether launcher started.
+9. Require Discourse to serve version information again. When a newer target commit was known, refuse success if the running commit remained unchanged after the rebuild.
+10. Run Docker cleanup (`docker container prune -f && docker image prune -f`) and report root disk usage.
+11. Optionally post a changelog checklist to the configured topic.
 
 If the OS update command fails, `dsc update` aborts after attempting the rollback command (when configured).
 
@@ -83,6 +84,8 @@ dsc update all -y --skip-recent
 
 If `docker_rootless = true` is set on a Discourse entry, the update command drops `sudo -n` from Docker and launcher commands. This is required for instances provisioned with `dsc harden` (which defaults to rootless Docker). Without this flag, commands like `sudo ./launcher rebuild app` fail because the root user has no Docker context.
 
+Before OS update, rootless hosts also verify that `/var/discourse` is a clean, writable `discourse_docker` checkout that can fast-forward to `origin/main`. If foreign-owned files are found, `dsc` prints up to eight escaped paths and a `find ... -exec chown` recovery command that deliberately prunes `shared/`; it never changes ownership itself.
+
 ## Skipping behaviour
 
 Three independent gates can skip work; each is recorded in the [update log](#update-log):
@@ -94,7 +97,7 @@ Three independent gates can skip work; each is recorded in the [update log](#upd
 
 ## Update log
 
-Every `dsc update` pass appends one line per forum to an append-only log — a register of what was updated, when, and to which version.
+Every mutating `dsc update` pass appends `started` before remote work and a terminal record when it completes, producing an append-only register of what was updated, when, and to which version.
 
 ```
 dsc update log            # full chronological history

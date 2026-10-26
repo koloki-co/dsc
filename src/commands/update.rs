@@ -11,6 +11,7 @@ use crate::commands::update_log::{self, LogKind};
 use crate::config::{Config, DiscourseConfig, find_discourse};
 use crate::utils::color_discourse_label;
 use anyhow::{Context, Result, anyhow};
+use base64::Engine;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::blocking::Client;
 use std::collections::{HashSet, VecDeque};
@@ -30,6 +31,44 @@ const BOOT_ID_CMD: &str = "cat /proc/sys/kernel/random/boot_id";
 const REBOOT_READY_TIMEOUT: Duration = Duration::from_secs(3 * 60);
 const REBOOT_PROBE_INTERVAL: Duration = Duration::from_secs(5);
 const REBOOT_STABLE_PROBES: usize = 3;
+const CHECKOUT_FOREIGN_PATH_LIMIT: usize = 8;
+const DISCOURSE_DOCKER_PREFLIGHT_CMD: &str = r#"
+set -eu
+cd /var/discourse
+if [ ! -d .git ]; then
+  printf 'MISSING_CHECKOUT\n'
+  exit 0
+fi
+for path in . .git .git/objects .git/refs; do
+  if [ ! -d "$path" ] || [ ! -w "$path" ]; then
+    printf 'UNWRITABLE:%s\n' "$path"
+    exit 0
+  fi
+done
+paths=$(mktemp)
+trap 'rm -f "$paths"' EXIT
+find . -path ./shared -prune -o ! -uid "$(id -u)" -print0 > "$paths"
+if [ -s "$paths" ]; then
+  printf 'FOREIGN_BASE64:'
+  head -z -n 8 "$paths" | base64 | tr -d '\n'
+  printf '\n'
+  exit 0
+fi
+if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+  printf 'DIRTY\n'
+  exit 0
+fi
+if ! git fetch --quiet origin; then
+  printf 'FETCH_FAILED\n'
+  exit 0
+fi
+if ! git rev-parse --verify origin/main >/dev/null 2>&1 \
+  || ! git merge-base --is-ancestor HEAD origin/main; then
+  printf 'NOT_FAST_FORWARD\n'
+  exit 0
+fi
+printf 'READY\n'
+"#;
 /// Window for "was this forum updated recently?" when `--skip-recent` is given
 /// without a value, or for the interactive re-update prompt.
 const DEFAULT_RECENT_WINDOW: Duration = Duration::from_secs(24 * 3600);
@@ -338,6 +377,7 @@ fn parallel_worker_count(max: Option<usize>, discourse_count: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
     use std::collections::VecDeque;
 
     struct FakeDiskOps {
@@ -408,6 +448,51 @@ mod tests {
         let reason = changelog_skip_reason(&no_key).expect("missing key skips");
         assert!(reason.contains("apikey/api_username"), "{reason}");
         assert!(reason.contains("keyless"), "{reason}");
+    }
+
+    #[test]
+    fn discourse_docker_preflight_accepts_a_ready_checkout() {
+        parse_discourse_docker_preflight("READY\n").unwrap();
+    }
+
+    #[test]
+    fn discourse_docker_preflight_refuses_unsafe_checkout_states() {
+        for (status, expected) in [
+            ("MISSING_CHECKOUT", "not a discourse_docker checkout"),
+            ("UNWRITABLE:.git/objects", "cannot write"),
+            ("UNWRITABLE:unexpected", "invalid unwritable checkout path"),
+            ("DIRTY", "uncommitted or untracked"),
+            ("FETCH_FAILED", "could not fetch origin"),
+            ("NOT_FAST_FORWARD", "cannot fast-forward"),
+            ("FOREIGN_BASE64:not-base64", "decoding foreign-owned"),
+            ("unexpected", "unrecognised"),
+        ] {
+            let error = parse_discourse_docker_preflight(status).unwrap_err();
+            assert!(error.to_string().contains(expected), "{status}: {error}");
+        }
+    }
+
+    #[test]
+    fn discourse_docker_preflight_names_foreign_entries_without_touching_shared() {
+        let encoded = base64::engine::general_purpose::STANDARD
+            .encode(b"./.git/refs/remotes/origin/main\0./templates/web.template.yml\0");
+        let error = parse_discourse_docker_preflight(&format!("FOREIGN_BASE64:{encoded}"))
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("./.git/refs/remotes/origin/main"));
+        assert!(error.contains("./templates/web.template.yml"));
+        assert!(error.contains("-path /var/discourse/shared -prune"));
+        assert!(!error.contains("chown -R"));
+    }
+
+    #[test]
+    fn discourse_docker_preflight_command_is_bounded_and_fast_forward_only() {
+        assert!(DISCOURSE_DOCKER_PREFLIGHT_CMD.contains("-path ./shared -prune"));
+        assert!(DISCOURSE_DOCKER_PREFLIGHT_CMD.contains("head -z -n 8"));
+        assert!(DISCOURSE_DOCKER_PREFLIGHT_CMD.contains("git fetch --quiet origin"));
+        assert!(DISCOURSE_DOCKER_PREFLIGHT_CMD.contains("git merge-base --is-ancestor"));
+        assert!(!DISCOURSE_DOCKER_PREFLIGHT_CMD.contains("git pull"));
     }
 
     #[test]
@@ -1051,6 +1136,13 @@ fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<
     };
 
     let rootless = discourse.docker_rootless.unwrap_or(false);
+    if rootless {
+        stage(
+            &discourse_label,
+            "Checking the rootless discourse_docker checkout",
+        );
+        check_discourse_docker_checkout(&target)?;
+    }
 
     stage(&discourse_label, "Checking root disk free space");
     let min_free_gb = std::env::var("DSC_DISCOURSE_MIN_FREE_GB")
@@ -1243,6 +1335,76 @@ fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<
         server_rebooted,
         discourse_rebuilt,
     })))
+}
+
+fn check_discourse_docker_checkout(target: &str) -> Result<()> {
+    let output = run_ssh_command_named(
+        target,
+        DISCOURSE_DOCKER_PREFLIGHT_CMD,
+        "discourse_docker preflight",
+    )?;
+    parse_discourse_docker_preflight(&output)
+        .with_context(|| format!("rootless discourse_docker preflight failed on {target}"))
+}
+
+fn parse_discourse_docker_preflight(output: &str) -> Result<()> {
+    let status = output.trim();
+    if status == "READY" {
+        return Ok(());
+    }
+    if status == "MISSING_CHECKOUT" {
+        return Err(anyhow!(
+            "/var/discourse is not a discourse_docker checkout; repair or clone it before retrying"
+        ));
+    }
+    if let Some(path) = status.strip_prefix("UNWRITABLE:") {
+        if !matches!(path, "." | ".git" | ".git/objects" | ".git/refs") {
+            return Err(anyhow!("invalid unwritable checkout path"));
+        }
+        return Err(anyhow!(
+            "the rootless launcher user cannot write /var/discourse/{}; repair ownership or permissions before retrying",
+            path.trim_start_matches("./")
+        ));
+    }
+    if let Some(encoded_paths) = status.strip_prefix("FOREIGN_BASE64:") {
+        return foreign_checkout_ownership_error(encoded_paths);
+    }
+    if status == "DIRTY" {
+        return Err(anyhow!(
+            "/var/discourse has uncommitted or untracked files; review or clean the checkout before retrying"
+        ));
+    }
+    if status == "FETCH_FAILED" {
+        return Err(anyhow!(
+            "could not fetch origin for /var/discourse; resolve the checkout's Git access before retrying"
+        ));
+    }
+    if status == "NOT_FAST_FORWARD" {
+        return Err(anyhow!(
+            "/var/discourse cannot fast-forward to origin/main; review the checkout before retrying"
+        ));
+    }
+    Err(anyhow!(
+        "received an unrecognised discourse_docker preflight response"
+    ))
+}
+
+fn foreign_checkout_ownership_error(encoded_paths: &str) -> Result<()> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded_paths)
+        .context("decoding foreign-owned checkout paths")?;
+    let paths: Vec<String> = bytes
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8_lossy(path).escape_default().to_string())
+        .collect();
+    if paths.is_empty() || paths.len() > CHECKOUT_FOREIGN_PATH_LIMIT {
+        return Err(anyhow!("invalid foreign-owned checkout path list"));
+    }
+    Err(anyhow!(
+        "/var/discourse contains entries not owned by the rootless launcher user:\n  {}\nRepair it without touching shared data, then retry:\n  sudo find /var/discourse -path /var/discourse/shared -prune -o -exec chown \"$(id -un)\":\"$(id -gn)\" {{}} +",
+        paths.join("\n  ")
+    ))
 }
 
 pub(crate) fn run_ssh_command(target: &str, command: &str) -> Result<String> {

@@ -1,6 +1,6 @@
 # `dsc update` failure detection and disk-guard recovery
 
-> **Status: R42 active after a reproduced post-reboot race on 2026-09-23. Disk recovery and SSH diagnostics are implemented; reboot transition verification, final service verification, stop-on-failure fleet admission, SSH keepalives, and interrupted-pass update-log records are implemented on `main`, and reboot verification was confirmed live on 2026-10-24. Two new field defects from 2026-10-24 remain open: a launcher self-update loop that `dsc` waits on indefinitely (Defect 4), and the missing post-failure service check after a mid-rebuild transport loss (Defect 5). Durable detached rebuild jobs remain a future reliability phase.**
+> **Status: R42 active after a reproduced post-reboot race on 2026-09-23. Disk recovery and SSH diagnostics are implemented; reboot transition verification, final service verification, stop-on-failure fleet admission, SSH keepalives, interrupted-pass update-log records, and the rootless `discourse_docker` checkout preflight are implemented on `main`, and reboot verification was confirmed live on 2026-10-24. Two new field defects from 2026-10-24 remain open: a launcher self-update loop that needs a no-progress watchdog (Defect 4), and the missing post-failure service check after a mid-rebuild transport loss (Defect 5). Durable detached rebuild jobs remain a future reliability phase.**
 
 The field report came from a 13-forum fleet run on 2026-07-29 (`dsc 0.12.1`) taking every managed forum from Discourse `2026.7.0-latest` to `2026.8.0-latest`. The disk guard was a confirmed `dsc` logic error. Source comparison established that v0.12.1 and current code both classified SSH success by exit status; the proven diagnostic defect was that a non-zero command discarded stdout and its exit status, then displayed ordinary git stderr as though it were the reason for failure. Why the historical launcher invocation returned non-zero remains an investigation rather than a resolved false-failure classification.
 
@@ -59,13 +59,13 @@ Expected: `dsc` fails fast with an actionable message. Actual: silent indefinite
 
 ### Requirement
 
-- [ ] Preflight the `discourse_docker` checkout before launcher: as the user launcher will run as, verify the working tree and `.git` are writable (no entries owned by another user outside `shared/`) and, when behind `origin`, that a fast-forward is possible. On failure, refuse before any OS update, reboot, or launcher invocation, naming the offending paths (bounded list) and printing the shell-quoted recovery command that excludes `shared/`. Never `chown` automatically.
-- [ ] Alternatively or additionally, have `dsc` perform the `discourse_docker` fast-forward itself as an explicit step with its own exit status, so launcher never enters its self-update branch.
+- [x] Preflight the rootless `discourse_docker` checkout before OS update: as the user launcher will run as, verify the working tree and `.git` directories are writable, refuse foreign-owned entries outside `shared/` (bounded to eight escaped paths), require a clean worktree, fetch `origin`, and require `HEAD` to fast-forward to `origin/main`. On failure, refuse before any OS update, reboot, or launcher invocation, naming the offending paths and printing a recovery command that excludes `shared/`. Never `chown` automatically.
+- [ ] Consider an explicit `discourse_docker` fast-forward step with its own exit status, so launcher never enters its self-update branch. The current preflight verifies fast-forwardability but deliberately does not modify the checkout.
 - [ ] Add a rebuild progress watchdog: if launcher produces no new output for a bounded interval (much shorter than a normal rebuild), or repeats the same self-update lines, report a stall with the last output lines instead of waiting indefinitely. A stall during the pre-bootstrap phase is safe to abort because no container has been stopped.
 
 ### Verification
 
-- [ ] Unit test: ownership preflight output with foreign-owned entries refuses and lists them; output with none passes.
+- [x] Unit test: ownership preflight output with foreign-owned entries refuses and lists them; a ready checkout passes. The command test asserts bounded foreign-path capture, `shared/` exclusion, fetch-backed fast-forward verification, and no automatic pull.
 - [ ] Process test: a fake launcher that loops emitting self-update lines is reported as stalled within the watchdog interval.
 
 ## Defect 5 - transport loss mid-rebuild leaves the forum down and `dsc` hung
