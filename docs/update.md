@@ -77,7 +77,7 @@ For an unattended pass that can be rerun after fixing a failed host, use:
 dsc update all -y --skip-recent
 ```
 
-`-y` confirms changelog posting without prompting. `--skip-recent` silently skips forums successfully completed within the last 24 hours, so a rerun resumes with the failed and not-yet-started forums. Increase or reduce that window with `--skip-recent 6h`, for example. Do not use `--force` for routine recovery: it bypasses both the recent-success guard and the pre-existing rebuild guard.
+`-y` confirms changelog posting without prompting. Before any update starts, `dsc` lists every target forum whose changelog will be skipped (missing `changelog_topic_id`, `apikey` or `api_username`), so an unattended run reports the gap up front rather than only after each forum finishes. `--skip-recent` silently skips forums successfully completed within the last 24 hours, so a rerun resumes with the failed and not-yet-started forums. Increase or reduce that window with `--skip-recent 6h`, for example. Do not use `--force` for routine recovery: it bypasses both the recent-success guard and the pre-existing rebuild guard.
 
 ## Rootless Docker
 
