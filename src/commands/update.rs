@@ -55,6 +55,7 @@ pub fn update_one(
         return Ok(());
     }
 
+    warn_changelog_preflight(std::slice::from_ref(discourse), post_changelog);
     let branch = resolve_branch(discourse, branch_override);
     update_and_log(discourse, post_changelog, yes, force, &branch)
 }
@@ -91,6 +92,7 @@ pub fn update_all(
         .into_iter()
         .filter(|d| !skip_set.contains(&d.name))
         .collect();
+    warn_changelog_preflight(&to_update, post_changelog);
 
     let Some(width) = parallel else {
         for discourse in &to_update {
@@ -372,6 +374,37 @@ mod tests {
                 Ok(self.older_base_image_ids.clone())
             }
         }
+    }
+
+    #[test]
+    fn changelog_skip_reason_names_missing_topic_and_credentials() {
+        let ready = DiscourseConfig {
+            name: "ready".to_string(),
+            apikey: Some("key".to_string()),
+            api_username: Some("system".to_string()),
+            changelog_topic_id: Some(42),
+            ..DiscourseConfig::default()
+        };
+        assert_eq!(changelog_skip_reason(&ready), None);
+
+        let no_topic = DiscourseConfig {
+            name: "numun".to_string(),
+            changelog_topic_id: None,
+            ..ready.clone()
+        };
+        assert_eq!(
+            changelog_skip_reason(&no_topic).as_deref(),
+            Some("missing changelog_topic_id for numun")
+        );
+
+        let no_key = DiscourseConfig {
+            name: "keyless".to_string(),
+            apikey: Some("  ".to_string()),
+            ..ready.clone()
+        };
+        let reason = changelog_skip_reason(&no_key).expect("missing key skips");
+        assert!(reason.contains("apikey/api_username"), "{reason}");
+        assert!(reason.contains("keyless"), "{reason}");
     }
 
     #[test]
@@ -1951,18 +1984,37 @@ fn confirm_changelog_post(yes: bool) -> Result<bool> {
     Ok(matches!(input.trim(), "y" | "Y" | "yes" | "YES"))
 }
 
-fn handle_changelog_post(discourse: &DiscourseConfig, payload: &str, yes: bool) -> Result<()> {
-    let topic_id = discourse.changelog_topic_id;
-    if topic_id.is_none() {
-        println!(
-            "Changelog post skipped: missing changelog_topic_id for {}",
-            discourse.name
-        );
-        return Ok(());
+/// Why a forum's changelog post would be skipped by configuration alone, or
+/// `None` when it can be posted. Shared by the up-front preflight warning and
+/// the post-update check so the two never disagree.
+fn changelog_skip_reason(discourse: &DiscourseConfig) -> Option<String> {
+    if discourse.changelog_topic_id.is_none() {
+        return Some(format!("missing changelog_topic_id for {}", discourse.name));
     }
+    ensure_api_credentials(discourse)
+        .err()
+        .map(|err| err.to_string())
+}
 
-    if let Err(err) = ensure_api_credentials(discourse) {
-        println!("Changelog post skipped: {}", err);
+/// Warn before any slow work about forums whose changelog will be skipped,
+/// so an unattended run does not only reveal it after each update finishes.
+fn warn_changelog_preflight(targets: &[DiscourseConfig], post_changelog: bool) {
+    if !post_changelog {
+        return;
+    }
+    let skipped: Vec<String> = targets.iter().filter_map(changelog_skip_reason).collect();
+    if skipped.is_empty() {
+        return;
+    }
+    println!("Changelog will be skipped for {} forum(s):", skipped.len());
+    for reason in &skipped {
+        println!("  - {}", reason);
+    }
+}
+
+fn handle_changelog_post(discourse: &DiscourseConfig, payload: &str, yes: bool) -> Result<()> {
+    if let Some(reason) = changelog_skip_reason(discourse) {
+        println!("Changelog post skipped: {}", reason);
         return Ok(());
     }
 
