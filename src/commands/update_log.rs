@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Append-only update log: one TSV line per `dsc update` pass per forum, so a
-//! fleet round is auditable and re-runnable without repeating the day's work.
+//! Append-only update log: a `started` record plus a terminal TSV record per
+//! completed `dsc update` pass, so a fleet round is auditable and re-runnable
+//! without repeating the day's work.
 //! See spec/update-log.md.
 
 use crate::cli::UpdateLogFormat;
@@ -29,6 +30,7 @@ fn iso_to_epoch(s: &str) -> Option<i64> {
 /// Outcome category recorded for one forum's update pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogKind {
+    Started,
     Updated,
     Current,
     SkippedRecent,
@@ -39,6 +41,7 @@ pub enum LogKind {
 impl LogKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            LogKind::Started => "started",
             LogKind::Updated => "updated",
             LogKind::Current => "current",
             LogKind::SkippedRecent => "skipped-recent",
@@ -49,6 +52,7 @@ impl LogKind {
 
     fn parse(s: &str) -> Option<LogKind> {
         Some(match s {
+            "started" => LogKind::Started,
             "updated" => LogKind::Updated,
             "current" => LogKind::Current,
             "skipped-recent" => LogKind::SkippedRecent,
@@ -316,6 +320,10 @@ mod tests {
         assert_eq!(r.outcome, "updated");
         assert_eq!(r.from_version, "2026.6.0");
         assert_eq!(version_cell(&r), "2026.6.0 → 2026.7.0");
+
+        let started = parse_line("2026-10-26T09:12:03Z\tbawmedical\tstarted\t-\t-\t-")
+            .expect("started record parses");
+        assert_eq!(started.outcome, "started");
     }
 
     #[test]
@@ -335,6 +343,7 @@ mod tests {
     fn is_success_only_for_updated_and_current() {
         assert!(LogKind::Updated.is_success());
         assert!(LogKind::Current.is_success());
+        assert!(!LogKind::Started.is_success());
         assert!(!LogKind::Failed.is_success());
         assert!(!LogKind::SkippedRecent.is_success());
     }

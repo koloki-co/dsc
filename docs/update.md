@@ -102,7 +102,7 @@ dsc update log --latest   # one row per forum (most recent state) - a fleet chec
 dsc update log --since 7d --format md
 ```
 
-- Outcomes recorded: `updated`, `current` (already on latest), `skipped-recent`, `skipped-rebuild`, `failed`.
+- Outcomes recorded: `started` (an update pass began), `updated`, `current` (already on latest), `skipped-recent`, `skipped-rebuild`, `failed`. Normal passes have a terminal record after `started`; a lone `started` record means the local process was interrupted before it could record an outcome.
 - Format: tab-separated, timestamp-first (greppable/`tail`-able); the pretty view is rendered by `update log`.
 - Location: `$XDG_STATE_HOME/dsc/update.log` (default `~/.local/state/dsc/update.log`), overridable with `DSC_UPDATE_LOG`.
 

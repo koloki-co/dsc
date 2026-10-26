@@ -202,8 +202,8 @@ fn update_all_parallel(
     Ok(())
 }
 
-/// Run one forum's update and record the outcome (updated / current /
-/// skipped-rebuild / failed) in the update log.
+/// Run one forum's update and record its start and terminal outcome in the
+/// update log.
 fn update_and_log(
     discourse: &DiscourseConfig,
     post_changelog: bool,
@@ -211,6 +211,9 @@ fn update_and_log(
     force: bool,
     branch: &str,
 ) -> Result<()> {
+    // Persist this before any remote mutation so an interrupted local process
+    // remains visible to `dsc update log` rather than disappearing entirely.
+    update_log::append(&discourse.name, LogKind::Started, "-", "-", "-");
     match run_update(discourse, force, branch) {
         Ok(UpdateOutcome::Updated(metadata)) => {
             let kind = if metadata.discourse_rebuilt {

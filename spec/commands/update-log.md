@@ -15,10 +15,10 @@ The record is useful on its own (audit: what ran, when, from→to version). But 
 
 ## The log
 
-- **Append-only, one record per line, timestamp-first** - classic Unix logfile discipline (greppable, `tail`-able, `awk`-friendly, never rewritten). One record is appended per forum per `dsc update` pass, whatever the outcome.
+- **Append-only, one record per line, timestamp-first** - classic Unix logfile discipline (greppable, `tail`-able, `awk`-friendly, never rewritten). Every mutating `dsc update` pass appends `started` before remote work, then appends a terminal outcome where the process reaches one. A lone `started` record identifies a locally interrupted pass instead of making it invisible.
 - **Format: TSV**, columns: `timestamp` (ISO-8601 UTC) · `forum` · `outcome` · `from_version` · `to_version` · `detail`. `detail` holds a failure reason or short commit range; `-` for empty fields. TSV keeps it both human-glanceable and trivially parseable; the pretty view is rendered (below), so the raw log optimises for machines and `grep`.
 - **Location:** `$XDG_STATE_HOME/dsc/update.log` (default `~/.local/state/dsc/update.log`) - log/state data, not config. Overridable with `DSC_UPDATE_LOG`. Created (with parents) on first write.
-- **Outcomes recorded:** `updated` · `current` (was already on latest; rebuild skipped) · `skipped-recent` · `skipped-rebuild` (a `./launcher rebuild` was already running) · `failed` (detail = reason). This means a failure is now *recorded*, not just printed.
+- **Outcomes recorded:** `started` · `updated` · `current` (was already on latest; rebuild skipped) · `skipped-recent` · `skipped-rebuild` (a `./launcher rebuild` was already running) · `failed` (detail = reason). This means a failure or local interruption is now *recorded*, not just printed.
 - Data comes straight from `UpdateOutcome` + `UpdateMetadata` (before/after version + commit already captured), plus a UTC timestamp.
 
 Example:
@@ -63,6 +63,7 @@ The skip happens at the **top of `run_update`**, before the OS update / reboot, 
 
 - [x] **Phase 1 - the log.** `src/commands/update_log.rs`: TSV append (O_APPEND-atomic per line, so parallel workers don't interleave), `$XDG_STATE_HOME/dsc/update.log` (or `$DSC_UPDATE_LOG`), parse, `dsc update log [--latest] [--since] [--format text|md|json]`. Every `run_update` outcome logged via `update_and_log` (updated/current/skipped-rebuild/failed). Unit-tested (duration parse, line round-trip, TSV sanitising, malformed-skip).
 - [x] **Phase 2 - skip-recent + prompt.** `--skip-recent [dur]` (silent) and the front-loaded prompt (batched for `all`, per-forum for one; TTY-gated, non-interactive = unchanged behaviour); `--force` overrides both this and the rebuild-lock; `skipped-recent` outcome + log line. Verified on koloki-demo.
+- [x] **Phase 3 - interrupted-pass visibility.** `started` is appended before remote mutation; a terminal outcome follows on normal completion, while a lone `started` remains visible after local interruption.
 
 ## Stretch
 

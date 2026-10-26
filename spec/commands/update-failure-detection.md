@@ -1,6 +1,6 @@
 # `dsc update` failure detection and disk-guard recovery
 
-> **Status: R42 active after a reproduced post-reboot race on 2026-09-23. Disk recovery and SSH diagnostics are implemented; reboot transition verification, final service verification, and stop-on-failure fleet admission are now implemented on `main`, and reboot verification was confirmed live on 2026-10-24. Two new field defects from 2026-10-24 are open: a launcher self-update loop that `dsc` waits on indefinitely (Defect 4) and a mid-rebuild transport loss that hung `dsc` for ~2.5 hours and left the forum down (Defect 5). Durable detached rebuild jobs remain a future reliability phase.**
+> **Status: R42 active after a reproduced post-reboot race on 2026-09-23. Disk recovery and SSH diagnostics are implemented; reboot transition verification, final service verification, stop-on-failure fleet admission, SSH keepalives, and interrupted-pass update-log records are implemented on `main`, and reboot verification was confirmed live on 2026-10-24. Two new field defects from 2026-10-24 remain open: a launcher self-update loop that `dsc` waits on indefinitely (Defect 4), and the missing post-failure service check after a mid-rebuild transport loss (Defect 5). Durable detached rebuild jobs remain a future reliability phase.**
 
 The field report came from a 13-forum fleet run on 2026-07-29 (`dsc 0.12.1`) taking every managed forum from Discourse `2026.7.0-latest` to `2026.8.0-latest`. The disk guard was a confirmed `dsc` logic error. Source comparison established that v0.12.1 and current code both classified SSH success by exit status; the proven diagnostic defect was that a non-zero command discarded stdout and its exit status, then displayed ordinary git stderr as though it were the reason for failure. Why the historical launcher invocation returned non-zero remains an investigation rather than a resolved false-failure classification.
 
@@ -90,15 +90,15 @@ The cause of the reset itself is unknown (not a reboot; the host had been up ~2 
 
 ### Requirement
 
-- [ ] Set SSH keepalives on every `dsc` SSH invocation (for example `ServerAliveInterval=15`, `ServerAliveCountMax=4`) so a dead session fails in about a minute, not hours. Respect explicit user `ssh_config` overrides.
+- [x] Set SSH keepalives on every `dsc` SSH invocation (`ServerAliveInterval=30`, `ServerAliveCountMax=3`) so a dead session fails in about 90 seconds, not hours. The shared SSH builder applies the policy to every command; later `DSC_SSH_OPTIONS` arguments are appended after it and can override it.
 - [ ] After any failed or interrupted rebuild, check the forum (`/srv/status` and, over a fresh SSH connection, `docker ps -a` for `app` and any running `launcher rebuild`) and report one of: still serving the old version; down with `app` exited and no rebuild running (print `./launcher start app` as the immediate restore, rootful/rootless-correct); rebuild still running on the host (do not start another).
 - [ ] Record the post-failure service state in the update log entry.
 - [ ] The durable detached-rebuild phase noted under Defect 3 remains the structural fix: a launcher that survives transport loss under a dsc-owned operation ID, with reconnectable status and logs.
-- [ ] Record a `started` update-log entry before mutation so an interrupted or killed run is visible in `dsc update log` (on 2026-10-24 two killed `accm` attempts left no trace there).
+- [x] Record a `started` update-log entry before mutation so an interrupted or killed run is visible in `dsc update log` (on 2026-10-24 two killed `accm` attempts left no trace there).
 
 ### Verification
 
-- [ ] Unit test: generated SSH arguments include keepalive options unless overridden.
+- [x] Unit test: generated SSH arguments include keepalive options.
 - [ ] Policy test: each post-failure state maps to the correct operator message and never auto-starts a second rebuild.
 
 ## Reported failure 1 - misleading SSH failure diagnostics
