@@ -33,6 +33,8 @@ If the OS update command fails, `dsc update` aborts after attempting the rollbac
 
 OS-update and Discourse-rebuild success is determined only by the SSH process exit status. Output written to stderr, including ordinary git fetch progress, does not turn a successful command into a failure. A failed streamed command reports its exit status and bounded tails from both stdout and stderr; the update log stores only the concise first-line diagnosis.
 
+If the Discourse rebuild fails (including a lost SSH session mid-rebuild), `dsc` probes the forum before reporting the error: `/srv/status` over HTTP, then a fresh SSH connection reading the `app` container's Docker state and whether a `./launcher rebuild` is still running. It reports one of: a rebuild is **still running** on the host (do not start another); the forum is **still serving**, most likely the previous version; the forum is **down** with `app` not running and no rebuild running, with the rootful/rootless-correct `ssh <host> 'cd /var/discourse && [sudo ]./launcher start app'` restore command; or **unknown**, with a `docker ps -a` command to check by hand. The probe is read-only: `dsc` never starts the container or another rebuild itself. The state is appended to the `failed` update-log detail, e.g. `(post-failure: down, app not running)`.
+
 ## Disk guard and recovery
 
 The preflight requires at least 5 GiB free on `/` by default. When the host is below that threshold, `dsc` performs a conservative recovery before refusing:
