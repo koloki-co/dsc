@@ -283,7 +283,7 @@ fn update_and_log(
                 LogKind::Failed,
                 "-",
                 "-",
-                &concise_failure_detail(&e),
+                &failure_log_detail(&e),
             );
             Err(e)
         }
@@ -806,6 +806,95 @@ mod tests {
     }
 
     #[test]
+    fn post_failure_probe_is_read_only_and_rootless_aware() {
+        for rootless in [false, true] {
+            let command = super::post_failure_probe_command(rootless);
+            assert!(!command.contains("launcher start"));
+            assert!(!command.contains("launcher rebuild"));
+            assert!(command.contains("[l]auncher rebuild"));
+            assert_eq!(command.contains("sudo -n docker ps -a"), !rootless);
+        }
+    }
+
+    #[test]
+    fn post_failure_probe_parser_distinguishes_missing_app_from_docker_failure() {
+        use super::parse_post_failure_probe as parse;
+        assert_eq!(parse("exited\nIDLE\n"), Ok((Some("exited".into()), false)));
+        assert_eq!(parse("IDLE\n"), Ok((None, false)));
+        assert_eq!(parse("DOCKER_FAILED\nREBUILDING\n"), Ok((None, true)));
+        assert!(parse("DOCKER_FAILED\nIDLE\n").is_err());
+        assert!(parse("").is_err());
+    }
+
+    #[test]
+    fn post_failure_states_map_to_operator_messages() {
+        use super::{PostFailureState, classify_post_failure, post_failure_message};
+        let idle = |state: Option<&str>| Ok((state.map(String::from), false));
+
+        // A running rebuild wins, even over a serving forum.
+        let state = classify_post_failure(true, Ok((Some("running".into()), true)));
+        assert_eq!(state, PostFailureState::RebuildRunning);
+        let message = post_failure_message(&state, "forum", false);
+        assert!(message.contains("Do not start another"));
+        assert!(!message.contains("launcher start app"));
+
+        let state = classify_post_failure(true, idle(Some("running")));
+        assert_eq!(state, PostFailureState::Serving);
+        assert!(!post_failure_message(&state, "forum", false).contains("launcher start"));
+        // Serving is observable over HTTP even when SSH is still unreachable.
+        assert_eq!(
+            classify_post_failure(true, Err("ssh failed".into())),
+            PostFailureState::Serving
+        );
+
+        for app in [Some("exited"), Some("dead"), None] {
+            let state = classify_post_failure(false, idle(app));
+            assert!(matches!(state, PostFailureState::Down { .. }));
+            assert!(
+                post_failure_message(&state, "forum", false)
+                    .contains("ssh 'forum' 'cd /var/discourse && sudo ./launcher start app'")
+            );
+            assert!(
+                post_failure_message(&state, "forum", true)
+                    .contains("ssh 'forum' 'cd /var/discourse && ./launcher start app'")
+            );
+        }
+
+        for state in [
+            classify_post_failure(false, idle(Some("running"))),
+            classify_post_failure(false, idle(Some("paused"))),
+            classify_post_failure(false, idle(Some("restarting"))),
+            classify_post_failure(false, Err("ssh failed".into())),
+        ] {
+            assert!(matches!(state, PostFailureState::Unknown { .. }));
+            assert!(!post_failure_message(&state, "forum", false).contains("launcher start"));
+        }
+    }
+
+    #[test]
+    fn rebuild_failure_log_detail_records_post_failure_state() {
+        let error: anyhow::Error = super::RebuildFailure {
+            error: anyhow::anyhow!("Discourse rebuild failed on forum (ssh exit 255)\nstderr"),
+            state: super::PostFailureState::Down { app_state: None },
+            report: "Post-failure check: forum is DOWN".to_string(),
+        }
+        .into();
+        assert_eq!(
+            super::failure_log_detail(&error),
+            "Discourse rebuild failed on forum (ssh exit 255) (post-failure: down, app not running)"
+        );
+        assert!(
+            error
+                .to_string()
+                .ends_with("Post-failure check: forum is DOWN")
+        );
+        assert_eq!(
+            super::failure_log_detail(&anyhow::anyhow!("other failure")),
+            "other failure"
+        );
+    }
+
+    #[test]
     fn docker_commands_preserve_rootless_mode() {
         assert_eq!(
             docker_command(false, "rmi sha256:abc"),
@@ -1067,6 +1156,159 @@ fn rebuild_in_progress(target: &str) -> Result<bool> {
     Ok(run_ssh_command(target, REBUILD_CHECK_CMD)?.contains("REBUILDING"))
 }
 
+/// What a fresh probe found after `./launcher rebuild` failed or its SSH
+/// session was lost. A rebuild failure after launcher has stopped `app`
+/// routinely leaves the forum down, so the operator needs to know which.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PostFailureState {
+    /// A `./launcher rebuild` is still running on the host.
+    RebuildRunning,
+    /// `/srv/status` still answers, most likely from the previous container.
+    Serving,
+    /// Not serving, no rebuild running, and `app` is not running (its Docker
+    /// state, or `None` when no `app` container exists).
+    Down { app_state: Option<String> },
+    /// The probe could not establish which of the above holds.
+    Unknown { reason: String },
+}
+
+impl PostFailureState {
+    /// Short form recorded in the update log's detail field.
+    fn label(&self) -> &'static str {
+        match self {
+            PostFailureState::RebuildRunning => "rebuild still running",
+            PostFailureState::Serving => "still serving",
+            PostFailureState::Down { .. } => "down, app not running",
+            PostFailureState::Unknown { .. } => "unknown",
+        }
+    }
+}
+
+/// The host-side half of the post-failure probe: the `app` container's state
+/// (empty when there is none) and whether a rebuild is running. Read-only - it
+/// never starts, stops, or rebuilds anything. A failing `docker ps` prints a
+/// marker rather than nothing, so it cannot be mistaken for a missing `app`.
+fn post_failure_probe_command(rootless: bool) -> String {
+    let app_state = docker_command(rootless, "ps -a --filter name=^app$ --format '{{.State}}'");
+    format!("{app_state} || echo DOCKER_FAILED; {REBUILD_CHECK_CMD}")
+}
+
+/// Parse [`post_failure_probe_command`]'s output into (`app` state, rebuild
+/// running).
+fn parse_post_failure_probe(output: &str) -> std::result::Result<(Option<String>, bool), String> {
+    let mut app_state = None;
+    let mut docker_failed = false;
+    let mut rebuilding = None;
+    for line in output.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        match line {
+            "REBUILDING" => rebuilding = Some(true),
+            "IDLE" => rebuilding = Some(false),
+            "DOCKER_FAILED" => docker_failed = true,
+            state if app_state.is_none() => app_state = Some(state.to_ascii_lowercase()),
+            _ => {}
+        }
+    }
+    match rebuilding {
+        // A running rebuild is decisive even when Docker could not be queried.
+        Some(true) => Ok((app_state, true)),
+        Some(false) if docker_failed => Err("docker ps failed on the host".to_string()),
+        Some(false) => Ok((app_state, false)),
+        None => Err("unexpected probe output".to_string()),
+    }
+}
+
+/// Decide the post-failure state. A running rebuild wins over everything else
+/// because the one thing the operator must not do is start a second one.
+fn classify_post_failure(
+    serving: bool,
+    probe: std::result::Result<(Option<String>, bool), String>,
+) -> PostFailureState {
+    match probe {
+        Ok((_, true)) => PostFailureState::RebuildRunning,
+        _ if serving => PostFailureState::Serving,
+        Ok((None, false)) => PostFailureState::Down { app_state: None },
+        Ok((Some(app_state), false)) if matches!(app_state.as_str(), "exited" | "dead") => {
+            PostFailureState::Down {
+                app_state: Some(app_state),
+            }
+        }
+        Ok((Some(app_state), false)) => PostFailureState::Unknown {
+            reason: format!("the app container is {app_state} but /srv/status did not answer"),
+        },
+        Err(reason) => PostFailureState::Unknown { reason },
+    }
+}
+
+/// The operator-facing report for a post-failure state. `dsc` never acts on
+/// it: restoring service is left to the operator.
+fn post_failure_message(state: &PostFailureState, target: &str, rootless: bool) -> String {
+    let sudo = if rootless { "" } else { "sudo " };
+    let quoted_target = shell_quote(target);
+    match state {
+        PostFailureState::RebuildRunning => format!(
+            "Post-failure check: a ./launcher rebuild is still running on {target}. Do not start another; let it finish, then check the forum."
+        ),
+        PostFailureState::Serving => format!(
+            "Post-failure check: {target} is still serving (/srv/status OK), most likely the previous version."
+        ),
+        PostFailureState::Down { app_state } => format!(
+            "Post-failure check: {target} is DOWN - the app container is {} and no rebuild is running. Restore the previous container with:\n  ssh {quoted_target} {}",
+            app_state.as_deref().unwrap_or("missing"),
+            shell_quote(&format!("cd /var/discourse && {sudo}./launcher start app"))
+        ),
+        PostFailureState::Unknown { reason } => format!(
+            "Post-failure check: could not determine the state of {target} ({reason}). Check it before retrying:\n  ssh {quoted_target} {}",
+            shell_quote(&manual_docker_command(rootless, "ps -a"))
+        ),
+    }
+}
+
+/// Probe the forum after a failed rebuild, over HTTP and a fresh SSH
+/// connection (the rebuild's own session may be the thing that died).
+fn check_after_failed_rebuild(
+    client: &DiscourseClient,
+    target: &str,
+    rootless: bool,
+) -> PostFailureState {
+    let serving = client
+        .get("/srv/status")
+        .is_ok_and(|r| r.status().is_success());
+    let probe = run_ssh_command_named(
+        target,
+        &post_failure_probe_command(rootless),
+        "Post-failure check",
+    )
+    .map_err(|e| concise_failure_detail(&e))
+    .and_then(|output| parse_post_failure_probe(&output));
+    classify_post_failure(serving, probe)
+}
+
+/// A failed rebuild together with what the post-failure check found.
+#[derive(Debug)]
+struct RebuildFailure {
+    error: anyhow::Error,
+    state: PostFailureState,
+    report: String,
+}
+
+impl std::fmt::Display for RebuildFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#}\n\n{}", self.error, self.report)
+    }
+}
+
+impl std::error::Error for RebuildFailure {}
+
+/// Update-log detail for a failed pass, including the post-failure state when
+/// the failure was a rebuild.
+fn failure_log_detail(error: &anyhow::Error) -> String {
+    let detail = concise_failure_detail(error);
+    match error.downcast_ref::<RebuildFailure>() {
+        Some(failure) => format!("{detail} (post-failure: {})", failure.state.label()),
+        None => detail,
+    }
+}
+
 fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<UpdateOutcome> {
     let client = DiscourseClient::new(discourse)?;
     let target = discourse
@@ -1254,13 +1496,26 @@ fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<
         );
     } else {
         stage(&discourse_label, "Running Discourse update");
-        run_ssh_command_with_tail(
+        if let Err(error) = run_ssh_command_with_tail(
             &target,
             &discourse_update_cmd,
             "Discourse rebuild",
             "Discourse update in progress",
             3,
-        )?;
+        ) {
+            stage(
+                &discourse_label,
+                "Rebuild failed; checking whether the forum is still serving",
+            );
+            let state = check_after_failed_rebuild(&client, &target, rootless);
+            let report = post_failure_message(&state, &target, rootless);
+            return Err(RebuildFailure {
+                error,
+                state,
+                report,
+            }
+            .into());
+        }
     }
     stage(&discourse_label, "Waiting for Discourse to serve pages");
     // Poll the Discourse API instead of sleeping blindly. Try immediately
