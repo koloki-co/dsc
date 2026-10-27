@@ -762,7 +762,7 @@ mod tests {
             PostFailureState::Serving
         );
 
-        for app in [Some("exited"), None] {
+        for app in [Some("exited"), Some("dead"), None] {
             let state = classify_post_failure(false, idle(app));
             assert!(matches!(state, PostFailureState::Down { .. }));
             assert!(
@@ -777,6 +777,8 @@ mod tests {
 
         for state in [
             classify_post_failure(false, idle(Some("running"))),
+            classify_post_failure(false, idle(Some("paused"))),
+            classify_post_failure(false, idle(Some("restarting"))),
             classify_post_failure(false, Err("ssh failed".into())),
         ] {
             assert!(matches!(state, PostFailureState::Unknown { .. }));
@@ -1139,11 +1141,14 @@ fn classify_post_failure(
     match probe {
         Ok((_, true)) => PostFailureState::RebuildRunning,
         _ if serving => PostFailureState::Serving,
-        Ok((app_state, false)) if app_state.as_deref() != Some("running") => {
-            PostFailureState::Down { app_state }
+        Ok((None, false)) => PostFailureState::Down { app_state: None },
+        Ok((Some(app_state), false)) if matches!(app_state.as_str(), "exited" | "dead") => {
+            PostFailureState::Down {
+                app_state: Some(app_state),
+            }
         }
-        Ok((_, false)) => PostFailureState::Unknown {
-            reason: "the app container is running but /srv/status did not answer".to_string(),
+        Ok((Some(app_state), false)) => PostFailureState::Unknown {
+            reason: format!("the app container is {app_state} but /srv/status did not answer"),
         },
         Err(reason) => PostFailureState::Unknown { reason },
     }
