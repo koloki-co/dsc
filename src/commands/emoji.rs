@@ -12,7 +12,7 @@ use base64::Engine;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::HashSet;
 use std::fs;
-use std::io::Read;
+use std::io::{IsTerminal, Read};
 use std::path::Path;
 
 pub fn pull_emojis(config: &Config, discourse_name: &str, output_dir: &Path) -> Result<()> {
@@ -485,6 +485,13 @@ fn detect_inline_protocol() -> Option<InlineProtocol> {
         if value == "off" || value == "0" {
             return None;
         }
+    }
+    // The variables below are inherited by anything the terminal spawns, so
+    // they say nothing about whether stdout is still that terminal. Piped or
+    // redirected output must not receive image escapes unless the override
+    // above explicitly forced a protocol.
+    if !std::io::stdout().is_terminal() {
+        return None;
     }
     if let Ok(term_program) = std::env::var("TERM_PROGRAM")
         && (term_program == "iTerm.app" || term_program == "WezTerm")
