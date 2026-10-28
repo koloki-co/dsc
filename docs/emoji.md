@@ -40,6 +40,7 @@ Flags:
 
 - `--inline` (or `-i`) — render emoji images inline in supported terminals.
   - Override detection with `DSC_EMOJI_INLINE_PROTOCOL=iterm2|kitty|off`.
+  - Detection (`TERM_PROGRAM`, `KITTY_WINDOW_ID`, `TERM`) only applies when stdout is a terminal; piped or redirected output falls back to the plain `name<TAB>url` table. Set `DSC_EMOJI_INLINE_PROTOCOL` explicitly to force image escapes into a pipe.
 - `-v`, `--verbose` — include additional fields where supported.
 
 ## dsc emoji delete

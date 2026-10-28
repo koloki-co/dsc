@@ -11,6 +11,7 @@ Each guarantee below is phrased as a promise to someone running `dsc`, not as an
 | Every `* list` command supports `--format text\|json\|yaml` at minimum | `src/cli.rs::every_list_command_offers_the_standard_formats` - walks the full clap command tree and checks every `list`-named subcommand's `--format` argument for all three values. |
 | Every top-level command documents at least one `Examples:` block | `src/cli.rs::every_top_level_command_documents_examples` - walks the command tree checking `after_help`. |
 | Every path-shaped argument has a shell-completion hint | `src/cli.rs::every_path_argument_has_a_completion_hint` |
+| Piped (non-terminal) stdout/stderr carry no ANSI or terminal-image escapes unless the operator explicitly forced them (`DSC_COLOR=always`, `DSC_EMOJI_INLINE_PROTOCOL`); `NO_COLOR` beats `DSC_COLOR=always`; inherited terminal hints (`TERM_PROGRAM`, `KITTY_WINDOW_ID`, `TERM=xterm-kitty`) never enable escapes into a pipe | `tests/non-terminal-output-test.rs` - black-box over every escape-emitting surface: `dsc update`'s coloured per-forum labels (via a refusing `ssh` stub), `emoji list --inline` image protocols (via a mock serving list and image), and clap help/usage errors. Each suppression has a forced-on positive control; mutation-checked by disabling the stdout-terminal check in `color_discourse_label` and in emoji inline detection. |
 
 ## Dry-run
 
