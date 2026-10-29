@@ -323,3 +323,115 @@ fn explorer_fleet_dry_run_does_not_contact_forums() {
     assert_eq!(alpha_requests.load(Ordering::Relaxed), 0);
     assert_eq!(beta_requests.load(Ordering::Relaxed), 0);
 }
+
+fn start_disabled_mock() -> (String, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind disabled mock listener");
+    let addr = listener.local_addr().expect("disabled mock addr");
+    let requests = Arc::new(AtomicUsize::new(0));
+    let thread_requests = Arc::clone(&requests);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(match stream.try_clone() {
+                Ok(stream) => stream,
+                Err(_) => continue,
+            });
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_err() || line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            thread_requests.fetch_add(1, Ordering::Relaxed);
+            let body = r#"{"errors":["The requested URL or resource could not be found."]}"#;
+            let response = format!(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+            let _ = stream.flush();
+        }
+    });
+    (format!("http://{addr}"), requests)
+}
+
+#[test]
+fn explorer_fleet_run_selects_by_tags_and_groups_text_by_forum() {
+    let (alpha_url, alpha_requests) =
+        start_mock(vec![(7, "Shared Audit")], "alpha", Duration::ZERO);
+    let (beta_url, beta_requests) = start_mock(vec![(42, "Shared Audit")], "beta", Duration::ZERO);
+    let dir = TempDir::new().expect("tempdir");
+    let config = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"alpha\"\nbaseurl = \"{alpha_url}\"\napikey = \"k\"\napi_username = \"tester\"\ntags = [\"production\"]\n\n[[discourse]]\nname = \"beta\"\nbaseurl = \"{beta_url}\"\napikey = \"k\"\napi_username = \"tester\"\ntags = [\"staging\"]\n"
+        ),
+    );
+
+    let output = run_dsc(
+        &[
+            "explorer",
+            "run",
+            "--tags",
+            "staging",
+            "--query-name",
+            "Shared Audit",
+        ],
+        &config,
+    );
+    assert!(
+        output.status.success(),
+        "tagged explorer run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("== beta =="),
+        "missing forum header: {stdout}"
+    );
+    assert!(
+        stdout.contains("query: Shared Audit (42)"),
+        "missing resolved query identity: {stdout}"
+    );
+    assert!(!stdout.contains("alpha"), "untagged forum leaked: {stdout}");
+    assert_eq!(alpha_requests.load(Ordering::Relaxed), 0);
+    assert_eq!(beta_requests.load(Ordering::Relaxed), 2);
+}
+
+#[test]
+fn explorer_fleet_run_reports_disabled_data_explorer_as_a_per_forum_failure() {
+    let (alpha_url, alpha_requests) = start_disabled_mock();
+    let (beta_url, _) = start_mock(vec![(42, "Shared Audit")], "beta", Duration::ZERO);
+    let dir = TempDir::new().expect("tempdir");
+    let config = fleet_config(&dir, &alpha_url, &beta_url);
+
+    let output = run_dsc(
+        &[
+            "explorer",
+            "run",
+            "--all",
+            "--query-name",
+            "Shared Audit",
+            "--format",
+            "json",
+        ],
+        &config,
+    );
+    assert!(!output.status.success());
+    let rows: Vec<serde_json::Value> =
+        serde_json::from_slice(&output.stdout).expect("partial fleet result JSON");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["forum"], "alpha");
+    assert!(
+        rows[0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("Data Explorer may be disabled"),
+        "unexpected error: {}",
+        rows[0]["error"]
+    );
+    assert_eq!(rows[1]["forum"], "beta");
+    assert_eq!(rows[1]["result"]["success"], true);
+    // A read command never tries to enable the plugin: only the catalogue GET is made.
+    assert_eq!(alpha_requests.load(Ordering::Relaxed), 1);
+}

@@ -1,6 +1,6 @@
 # Report evidence collection
 
-> **Status: R65 Phase 1 in progress.** The first implementation extends `dsc explorer run` with exact query-name resolution and canonical fleet selectors. Evidence bundles, validation, and any report presentation kit remain later phases.
+> **Status: R65 Phase 1 implemented on `main`.** `dsc explorer run` supports exact query-name resolution and canonical fleet selectors, with every Phase 1 contract point covered by mock-forum tests in `tests/explorer-test.rs`; live fleet verification is pending. Evidence bundles, validation, and any report presentation kit remain later phases.
 
 Spec for collecting deterministic, reviewable evidence that an external author or AI can turn into a narrative report. Goal: keep remote access, fleet behavior, provenance, and verification inside `dsc` while keeping interpretation and presentation outside the CLI. Driver: the 23 September 2026 email reachability and deliverability audit across 16 managed forums required a one-off collector before an AI could produce a useful self-contained HTML comparison report.
 
