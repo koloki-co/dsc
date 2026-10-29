@@ -21,6 +21,10 @@ Most state lives behind a `pull` / `push` pair: `topic`, `category`, `post`, `ta
 
 `dsc.toml` entries carry `tags`. Most read commands accept `--tags tag1,tag2` to filter; `dsc setting set --tags <tags> <key> <value>` writes across every matching install. Tag your installs by environment (`production`, `staging`), region, or customer.
 
+## Low disk space after updates
+
+If disk space remains noticeably low after `dsc update` completes, consider running `./launcher cleanup` over SSH from `/var/discourse`. It can reclaim old, unused tagged images that a narrower Docker prune leaves behind. Inspect containers and images first, preserve intentionally retained images, and use the appropriate rootful or rootless Docker access. Launcher may separately offer to remove an old PostgreSQL migration data cluster; review that prompt before answering and do not count its detected size as removed without evidence. Compare `df -h /` before and after, and record the actual outcome in the forum's CHANGELOG topic and the local update log. This is an ad-hoc operational step, not a separate `dsc` command.
+
 ## When you find a bug, tweak, or gap
 
 Record it in [spec/roadmap.md](spec/roadmap.md), the single list of planned work. `dsc`'s author is actively shaping the tool around real-world use. Do not open an issue for a missing feature; write or update its spec and roadmap entry instead.
