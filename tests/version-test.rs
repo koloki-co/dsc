@@ -190,6 +190,38 @@ fn version_all_keeps_error_rows_and_fails_after_rendering() {
 }
 
 #[test]
+fn version_all_text_aligns_forum_version_and_commit_columns() {
+    let alpha_url = start_version_mock("2026.9.0-latest", "aaaaaaaaaa");
+    let dir = TempDir::new().expect("tempdir");
+    let config = write_temp_config(
+        &dir,
+        &format!(
+            "[[discourse]]\nname = \"alpha\"\nbaseurl = \"{alpha_url}\"\napikey = \"k\"\napi_username = \"tester\"\n\n[[discourse]]\nname = \"missing-credentials\"\nbaseurl = \"https://example.invalid\"\n"
+        ),
+    );
+
+    let output = run_dsc(&["version", "--all"], &config);
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(
+        lines[0],
+        "Forum                Version          Commit / error"
+    );
+
+    let alpha = lines
+        .iter()
+        .find(|line| line.starts_with("alpha "))
+        .unwrap();
+    let missing = lines
+        .iter()
+        .find(|line| line.starts_with("missing-credentials"))
+        .unwrap();
+    assert_eq!(alpha.find("2026.9.0-latest"), missing.find("ERROR"));
+    assert_eq!(alpha.find("aaaaaaaaaa"), missing.find("missing apikey"));
+}
+
+#[test]
 fn version_selectors_are_mutually_exclusive() {
     let dir = TempDir::new().expect("tempdir");
     let config = write_temp_config(&dir, "");

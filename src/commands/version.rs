@@ -93,18 +93,7 @@ fn fleet_version(config: &Config, tags: Option<&str>, format: ListFormat) -> Res
     );
 
     emit_with(format, &rows, || {
-        for row in &rows {
-            if let Some(error) = &row.error {
-                println!("{}: ERROR: {error}", row.discourse);
-            } else {
-                println!(
-                    "{}: Discourse {} ({})",
-                    row.discourse,
-                    row.version.as_deref().unwrap_or("(unknown)"),
-                    row.commit.as_deref().unwrap_or("(unknown)")
-                );
-            }
-        }
+        render_fleet_text(&rows);
         Ok(())
     })?;
 
@@ -116,6 +105,37 @@ fn fleet_version(config: &Config, tags: Option<&str>, format: ListFormat) -> Res
         ));
     }
     Ok(())
+}
+
+fn render_fleet_text(rows: &[VersionRow]) {
+    let forum_width = rows
+        .iter()
+        .map(|row| row.discourse.len())
+        .max()
+        .unwrap_or_default()
+        .max("Forum".len());
+    let version_width = rows
+        .iter()
+        .map(|row| row.version.as_deref().unwrap_or("ERROR").len())
+        .max()
+        .unwrap_or_default()
+        .max("Version".len());
+
+    println!(
+        "{:<forum_width$}  {:<version_width$}  Commit / error",
+        "Forum", "Version"
+    );
+    for row in rows {
+        let (version, commit_or_error) = match (&row.version, &row.commit, &row.error) {
+            (Some(version), Some(commit), None) => (version.as_str(), commit.as_str()),
+            (_, _, Some(error)) => ("ERROR", error.as_str()),
+            _ => ("(unknown)", "(unknown)"),
+        };
+        println!(
+            "{:<forum_width$}  {:<version_width$}  {commit_or_error}",
+            row.discourse, version
+        );
+    }
 }
 
 fn fetch_forum_version(discourse: &DiscourseConfig) -> Result<(String, String)> {

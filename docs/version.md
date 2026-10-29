@@ -8,7 +8,7 @@ With no target selector, prints `dsc`'s own version without loading configuratio
 
 With a forum name, prints that forum's **live Discourse version and git commit** using the configured API key, so it works even on login-required forums where an anonymous request is rejected. The version comes primarily from `/about.json`; the commit comes from the homepage's generator metadata.
 
-`--all` checks every configured forum. `--tags` checks forums matching any comma-separated tag. Fleet requests use bounded concurrency and preserve configuration order in JSON/YAML output. An unavailable or unconfigured forum is retained as an error row; other forums still complete, and the command exits non-zero after printing the complete result.
+`--all` checks every configured forum. `--tags` checks forums matching any comma-separated tag. Text fleet output is an aligned `Forum` / `Version` / `Commit / error` table; JSON/YAML preserve configuration order. An unavailable or unconfigured forum is retained as an error row; other forums still complete, and the command exits non-zero after printing the complete result.
 
 ```bash
 dsc version                # → 0.10.20  (dsc itself)
