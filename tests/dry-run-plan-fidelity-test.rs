@@ -918,3 +918,61 @@ fn category_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state
         ]),
     );
 }
+
+/// Parse `dsc topic push`'s single plan line,
+/// `[dry-run] mock: would replace OP of topic N (post id P) with B bytes from F`,
+/// into `topic N -> B` - the same key the mock records for the real run's
+/// `PUT /posts/1001.json` (post 1001 is topic 101's OP in the fixture).
+fn parse_topic_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let Some((_, rest)) = line.split_once("would replace OP of topic ") else {
+            continue;
+        };
+        let Some((topic, rest)) = rest.split_once(" (post id ") else {
+            continue;
+        };
+        let Some((_, rest)) = rest.split_once(") with ") else {
+            continue;
+        };
+        let Some((bytes, _file)) = rest.split_once(" bytes from ") else {
+            continue;
+        };
+        changes.insert(format!("topic {topic}"), bytes.to_string());
+    }
+    changes
+}
+
+#[test]
+fn topic_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    // Local-only front matter must be stripped before both the planned byte
+    // count and the real PUT; the multi-byte body checks bytes, not chars.
+    let body = "new alpha body, caf\u{e9}\n";
+    let file = write_file(
+        &dir,
+        "alpha.md",
+        &format!("---\ntitle: Alpha\ntopic_id: 101\n---\n{body}"),
+    );
+    let file = file.to_str().expect("utf-8 temp path");
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &[
+            "--dry-run",
+            "topic",
+            "push",
+            "mock",
+            "101",
+            file,
+            "--no-bump",
+        ],
+        &["topic", "push", "mock", "101", file, "--no-bump"],
+        parse_topic_planned_changes,
+        &BTreeMap::from([("topic 101".to_string(), body.len().to_string())]),
+    );
+}
