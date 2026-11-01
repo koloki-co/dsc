@@ -140,6 +140,12 @@ const SERVER_TOPIC_101_JSON: &str = r#"{"id":101,"category_id":7,
 const SERVER_TOPIC_102_JSON: &str = r#"{"id":102,"category_id":7,
 "post_stream":{"posts":[{"id":1002,"raw":"same beta body"}]}}"#;
 
+/// Frozen post 3003, as `GET /posts/3003.json?include_raw=1` always returns
+/// it: currently in topic 101, so `post move` must plan and send the move
+/// from that topic.
+const SERVER_POST_3003_JSON: &str = r#"{"id":3003,"topic_id":101,"post_number":4,
+"raw":"a reply"}"#;
+
 #[derive(Default)]
 struct Recorder {
     /// Overrides the `GET /tag_groups.json` body when set; the default is
@@ -277,6 +283,47 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
             .puts
             .push(("topic 101".to_string(), raw.len().to_string()));
         ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
+    } else if method == "PUT" && path == "/posts/2002.json" {
+        // `dsc post push`: form `post[raw]=...`; recorded as
+        // `post 2002 -> raw byte length`.
+        let raw = form_field(&body, "post[raw]");
+        recorder
+            .lock()
+            .expect("recorder lock")
+            .puts
+            .push(("post 2002".to_string(), raw.len().to_string()));
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
+    } else if method == "GET" && path.starts_with("/posts/3003.json") {
+        // `dsc post move` looks up the post's current topic first.
+        ("HTTP/1.1 200 OK", SERVER_POST_3003_JSON.to_string())
+    } else if method == "POST" && path.starts_with("/t/") && path.ends_with("/move-posts.json") {
+        // Form `destination_topic_id=D&post_ids[]=P...`; recorded as
+        // `move post P from topic S -> topic D` per moved post, with S taken
+        // from the request path the real run actually chose.
+        let source = path
+            .strip_prefix("/t/")
+            .and_then(|p| p.strip_suffix("/move-posts.json"))
+            .unwrap_or_default()
+            .to_string();
+        let dest = form_field(&body, "destination_topic_id");
+        let mut recorder = recorder.lock().expect("recorder lock");
+        for kv in body.split('&') {
+            if let Some((k, v)) = kv.split_once('=')
+                && urlencoding_decode(k)
+                    .replace("%5B", "[")
+                    .replace("%5D", "]")
+                    == "post_ids[]"
+            {
+                recorder.puts.push((
+                    format!("move post {v} from topic {source}"),
+                    format!("topic {dest}"),
+                ));
+            }
+        }
+        (
+            "HTTP/1.1 200 OK",
+            format!(r#"{{"success":"OK","url":"/t/moved/{dest}"}}"#),
+        )
     } else if method == "POST" && path == "/posts.json" {
         // Form `title=...&raw=...&category=7`; recorded as
         // `new "<title>" -> raw byte length`.
@@ -974,5 +1021,92 @@ fn topic_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() 
         &["topic", "push", "mock", "101", file, "--no-bump"],
         parse_topic_planned_changes,
         &BTreeMap::from([("topic 101".to_string(), body.len().to_string())]),
+    );
+}
+
+/// Parse `dsc post push`'s single plan line,
+/// `[dry-run] mock: would replace post P with B bytes`, into `post P -> B` -
+/// the same key the mock records for the real run's `PUT /posts/P.json`.
+fn parse_post_push_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let Some((_, rest)) = line.split_once("would replace post ") else {
+            continue;
+        };
+        let Some((post, rest)) = rest.split_once(" with ") else {
+            continue;
+        };
+        let Some(bytes) = rest.strip_suffix(" bytes") else {
+            continue;
+        };
+        changes.insert(format!("post {post}"), bytes.to_string());
+    }
+    changes
+}
+
+#[test]
+fn post_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    // Multi-byte body so the planned count must be bytes, not chars.
+    let body = "edited reply, na\u{ef}ve r\u{e9}sum\u{e9}\n";
+    let file = write_file(&dir, "reply.md", body);
+    let file = file.to_str().expect("utf-8 temp path");
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "post", "push", "mock", "2002", file],
+        &["post", "push", "mock", "2002", file],
+        parse_post_push_planned_changes,
+        &BTreeMap::from([("post 2002".to_string(), body.len().to_string())]),
+    );
+}
+
+/// Parse `dsc post move`'s single plan line,
+/// `[dry-run] mock: would move post P from topic S to topic D`, into
+/// `move post P from topic S -> topic D` - the same key/value the mock
+/// records from the real run's `POST /t/S/move-posts.json` form body.
+fn parse_post_move_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let Some((_, rest)) = line.split_once("would move post ") else {
+            continue;
+        };
+        let Some((from, dest)) = rest.rsplit_once(" to topic ") else {
+            continue;
+        };
+        changes.insert(format!("move post {from}"), format!("topic {dest}"));
+    }
+    changes
+}
+
+#[test]
+fn post_move_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &[
+            "--dry-run",
+            "post",
+            "move",
+            "mock",
+            "3003",
+            "--to-topic",
+            "555",
+        ],
+        &["post", "move", "mock", "3003", "--to-topic", "555"],
+        parse_post_move_planned_changes,
+        &BTreeMap::from([(
+            "move post 3003 from topic 101".to_string(),
+            "topic 555".to_string(),
+        )]),
     );
 }
