@@ -146,6 +146,53 @@ const SERVER_TOPIC_102_JSON: &str = r#"{"id":102,"category_id":7,
 const SERVER_POST_3003_JSON: &str = r#"{"id":3003,"topic_id":101,"post_number":4,
 "raw":"a reply"}"#;
 
+/// Frozen category definitions, as `GET /categories.json?show_permissions=true`
+/// always returns them. `General` (id 4) is edited by the file, `Meta` (id 5)
+/// is left as-is.
+const SERVER_CATEGORY_DEFS_JSON: &str = r#"{"category_list":{"categories":[
+    {"id":4,"name":"General","slug":"general","color":"0088CC","text_color":"FFFFFF","position":1,"read_restricted":false,"allowed_tags":[],"allowed_tag_groups":[]},
+    {"id":5,"name":"Meta","slug":"meta","color":"AAAAAA","text_color":"FFFFFF","position":2,"read_restricted":false,"allowed_tags":[],"allowed_tag_groups":[]}
+]}}"#;
+
+/// Category definition file: `General` changes colour and position (planned
+/// update), `Meta` matches the server (planned no-op), `Fresh` has no id and
+/// matches nothing (planned create).
+const CATEGORY_DEFS_FILE: &str = r#"version: 2
+categories:
+  - id: 4
+    name: General
+    slug: general
+    color: FF0000
+    text_color: FFFFFF
+    position: 3
+  - id: 5
+    name: Meta
+    slug: meta
+    color: AAAAAA
+    text_color: FFFFFF
+    position: 2
+  - name: Fresh
+    color: 00FF00
+"#;
+
+/// The frozen value of one scalar field of category `id` in
+/// `SERVER_CATEGORY_DEFS_JSON`, for the mock to tell which fields a real-run
+/// `PUT /categories/:id.json` actually changes (the apply path sends the
+/// entry's full parameter set, not only the changed fields).
+fn server_category_field(id: &str, field: &str) -> Option<String> {
+    let defs: serde_json::Value =
+        serde_json::from_str(SERVER_CATEGORY_DEFS_JSON).expect("category defs fixture");
+    let category = defs["category_list"]["categories"]
+        .as_array()?
+        .iter()
+        .find(|c| c["id"].as_u64().map(|n| n.to_string()).as_deref() == Some(id))?;
+    match &category[field] {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Null => None,
+        other => Some(other.to_string()),
+    }
+}
+
 #[derive(Default)]
 struct Recorder {
     /// Overrides the `GET /tag_groups.json` body when set; the default is
@@ -267,6 +314,41 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
             .puts
             .push((format!("delete group {name}"), String::new()));
         ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
+    } else if method == "GET" && path.starts_with("/categories.json") {
+        ("HTTP/1.1 200 OK", SERVER_CATEGORY_DEFS_JSON.to_string())
+    } else if method == "PUT" && path.starts_with("/categories/") && path.ends_with(".json") {
+        // `category def push` update: form params for the whole entry;
+        // recorded as `update <name> -> fields whose sent value differs from
+        // the frozen server value`, sorted, so it is comparable with the
+        // plan's `~ update: <name> (<fields>)` line.
+        let id = path
+            .strip_prefix("/categories/")
+            .and_then(|p| p.strip_suffix(".json"))
+            .unwrap_or_default();
+        let mut changed: Vec<&str> = ["name", "slug", "color", "text_color", "position"]
+            .into_iter()
+            .filter(|field| {
+                body.split('&')
+                    .any(|kv| kv.starts_with(&format!("{field}=")))
+                    && Some(form_field(&body, field)) != server_category_field(id, field)
+            })
+            .collect();
+        changed.sort_unstable();
+        recorder.lock().expect("recorder lock").puts.push((
+            format!("update {}", form_field(&body, "name")),
+            changed.join(", "),
+        ));
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
+    } else if method == "POST" && path == "/categories" {
+        // `category def push` create; recorded as `create <name> -> ""`.
+        recorder.lock().expect("recorder lock").puts.push((
+            format!("create {}", form_field(&body, "name")),
+            String::new(),
+        ));
+        (
+            "HTTP/1.1 200 OK",
+            r#"{"category":{"id":900,"name":"created"}}"#.to_string(),
+        )
     } else if method == "GET" && path == "/c/7.json" {
         ("HTTP/1.1 200 OK", SERVER_CATEGORY_JSON.to_string())
     } else if method == "GET" && path.starts_with("/t/101.json") {
@@ -1108,5 +1190,49 @@ fn post_move_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
             "move post 3003 from topic 101".to_string(),
             "topic 555".to_string(),
         )]),
+    );
+}
+
+/// Parse `dsc category def push`'s plan for its `+ create: <name>` and
+/// `~ update: <name> (<fields>)` lines, returning `create <name> -> ""` and
+/// `update <name> -> sorted fields`. `= unchanged:` lines are deliberately
+/// not collected, so an unchanged category that the real run still PUTs
+/// would surface as an extra entry on the real side.
+fn parse_category_def_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let line = line.trim_start();
+        if let Some(name) = line.strip_prefix("+ create: ") {
+            changes.insert(format!("create {name}"), String::new());
+        } else if let Some(rest) = line.strip_prefix("~ update: ")
+            && let Some((name, fields)) = rest.split_once(" (")
+        {
+            let mut fields: Vec<&str> = fields.trim_end_matches(')').split(", ").collect();
+            fields.sort_unstable();
+            changes.insert(format!("update {name}"), fields.join(", "));
+        }
+    }
+    changes
+}
+
+#[test]
+fn category_def_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    let file = write_file(&dir, "categories.yaml", CATEGORY_DEFS_FILE);
+    let file = file.to_str().expect("UTF-8 path");
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "category", "def", "push", "mock", file],
+        &["category", "def", "push", "mock", file],
+        parse_category_def_planned_changes,
+        &BTreeMap::from([
+            ("create Fresh".to_string(), String::new()),
+            ("update General".to_string(), "color, position".to_string()),
+        ]),
     );
 }
