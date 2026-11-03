@@ -5,6 +5,94 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.24.0] - 2026-11-03
+
+### Bug fixes
+
+- **version**: Align fleet version output ([a885880](https://github.com/koloki-co/dsc/commit/a8858803af59eb903efbb41b0bafec779327e97e))
+
+- **emoji**: Keep inline image escapes out of pipes; cover non-terminal output (R72) ([bc49112](https://github.com/koloki-co/dsc/commit/bc49112a4d1ce250ec7ff508597d4f75ae46b090))
+
+- **update**: Avoid restoring transient app states ([cd874f8](https://github.com/koloki-co/dsc/commit/cd874f87da406ae65a85d40ffe4c3b0f1a4824c2))
+
+- **update**: Preflight rootless checkout ownership (R42) ([7403283](https://github.com/koloki-co/dsc/commit/7403283d7ca09aeeb2d79e092855950b30534732))
+
+- **update**: Record interrupted update passes (R42) ([a594d06](https://github.com/koloki-co/dsc/commit/a594d06d90ca09627b1984fea61caab59e1bd69b))
+
+- **app**: Rename app env set/unset backup flag to --no-backup ([65d874d](https://github.com/koloki-co/dsc/commit/65d874d4f0b1038e8fcc0c6b75b7ee8a2d331f67))
+
+### Build
+
+- **deps**: Bump libc ([5ed18e0](https://github.com/koloki-co/dsc/commit/5ed18e0f3412f1fa6f66fb0a6251f76dd0ba7993))
+
+- **deps**: Bump the routine-minor-and-patch group across 1 directory with 4 updates ([a56ffdb](https://github.com/koloki-co/dsc/commit/a56ffdb75ad8fcd5aa5f4d1de8e36a3b3e785a6c))
+
+- **deps**: Bump zensical ([c2ee29c](https://github.com/koloki-co/dsc/commit/c2ee29c962868b28ea8790e8b4bee6864bcefc6d))
+
+- **deps**: Bump taiki-e/install-action ([9116d92](https://github.com/koloki-co/dsc/commit/9116d92b32dff4bfd505e5833ad9ca2e9fcd16c9))
+
+### CI / dependencies
+
+- **deps**: Clear rustls-webpki and webpki-root-certs RUSTSEC advisories ([b29180a](https://github.com/koloki-co/dsc/commit/b29180a42f015939f24002d7f9af19b118821128))
+
+### Documentation
+
+- **email-style**: Propose branding template management ([5e69108](https://github.com/koloki-co/dsc/commit/5e69108666de900fe232e1f833a6e4d34ae5dfba))
+
+- Record post-update disk recovery guidance ([af9f30a](https://github.com/koloki-co/dsc/commit/af9f30abe03bdd40d557666a4e1203270f0e8e4e))
+
+- **spec**: Record 2026-10-24 update field defects (R42, R78) ([55e7a9b](https://github.com/koloki-co/dsc/commit/55e7a9b1fe0af8c73bab0f822cc77ec1e80bd497))
+
+- **spec**: Replace stale (unreleased) banners with actual release versions ([5d87f5f](https://github.com/koloki-co/dsc/commit/5d87f5ff67d76a36cedf047c6d5c5de841c23fa4))
+
+- **roadmap**: Remove completed items, re-mark R67, split group-create question ([08d8295](https://github.com/koloki-co/dsc/commit/08d8295db9a5c830a4ab444c8d1cf5f9a9cb5a20))
+
+### Features
+
+- **user-field**: Add create-only definition management ([08baa19](https://github.com/koloki-co/dsc/commit/08baa1909058d37bfde8547817923139cb345e3b))
+
+- **update**: Check forum state after a failed rebuild (R42 Defect 5) ([13d259a](https://github.com/koloki-co/dsc/commit/13d259a6c667a1fece3fb292e9fd3099012e5060))
+
+- **update**: Warn up front about forums whose changelog will be skipped (R78) ([561677a](https://github.com/koloki-co/dsc/commit/561677a78bea993efaa267dd2677a64b5d4c4819))
+
+### Refactor
+
+- Close out R77, extract emit_output_with for OutputFormat sites ([5c3a6f3](https://github.com/koloki-co/dsc/commit/5c3a6f344f53a9e5ebf2486d702c513d3e22ccfb))
+
+- **emoji**: Use emit_with in list_emojis (R77) ([e6cca4a](https://github.com/koloki-co/dsc/commit/e6cca4a84c94f7e9b6ef8bc3fa04905306bf4198))
+
+- **search**: Use emit_with in search_all (R77) ([735ca99](https://github.com/koloki-co/dsc/commit/735ca998c8e9f6c0eb984c2645974fe0e210cef6))
+
+- **user**: Use emit_with in user find (R77) ([60ce78b](https://github.com/koloki-co/dsc/commit/60ce78bd7cc374c1c2edb7333a7824ec0951e232))
+
+- Use common::emit_with in category list (R77) ([0de36c8](https://github.com/koloki-co/dsc/commit/0de36c8a6b88ea1d720195d558864ed3dc2f1417))
+
+- Extract shared PageCursor pagination loop-guard ([7c3efef](https://github.com/koloki-co/dsc/commit/7c3efefe8db99f8b296f1f5dfee413b440da8d05))
+
+- Convert remaining ListFormat sites to common::emit_with (R77) ([c4c961b](https://github.com/koloki-co/dsc/commit/c4c961bebb0009564a41406a057533fe819a5a59))
+
+- Add common::emit_with and use it in upcoming-change list/show ([2bc42f2](https://github.com/koloki-co/dsc/commit/2bc42f25d3b90e1fa95bd18fa740b631063b00e1))
+
+- Extract is_json_path, read_path_or_stdin, require_yes helpers ([69611bf](https://github.com/koloki-co/dsc/commit/69611bff255950158eff1736012c0feaf9a319e1))
+
+### Tests
+
+- **r73**: Check palette push create plan against the real run ([b3533a4](https://github.com/koloki-co/dsc/commit/b3533a4b094ede6386087a1bc241ac2f11cc6e5e))
+
+- **r73**: Check category def push dry-run plan against the real run ([27f8fa7](https://github.com/koloki-co/dsc/commit/27f8fa76a11e6336cc3e311a446f07e5c871dab2))
+
+- **r73**: Check post push and post move dry-run plans against the real run ([5280f8d](https://github.com/koloki-co/dsc/commit/5280f8d6e5a7421b498e3c01379c3287e24a7943))
+
+- **r73**: Check topic push dry-run plan against the real run ([53731c9](https://github.com/koloki-co/dsc/commit/53731c996a662664c4824191f5433bc8b3deb38c))
+
+- **explorer**: Close out R65 Phase 1 fleet contract coverage ([1796f91](https://github.com/koloki-co/dsc/commit/1796f91468ce60b5f75bd108a35d4fd0b7436234))
+
+- Cover invite send/bulk, notification read, tag rename, post delete/move ([fa57c2b](https://github.com/koloki-co/dsc/commit/fa57c2b62ec47bf3a62804edc2dc3ffd707d9a3e))
+
+- Cover user moderation, pm send, and app env success paths ([bae18ee](https://github.com/koloki-co/dsc/commit/bae18eed51dbdb4ef2869b9cee9a9c69b900b785))
+
+- Cover malformed explicit --config refusal (R72) ([972da80](https://github.com/koloki-co/dsc/commit/972da808ff019a38c830f94c59f8266b718bb124))
+
 ## [0.23.0] - 2026-10-18
 
 ### Bug fixes
