@@ -28,6 +28,7 @@ mod topics;
 mod upcoming_changes;
 mod uploads;
 mod user_actions;
+mod user_fields;
 mod users;
 mod webhooks;
 

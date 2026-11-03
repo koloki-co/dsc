@@ -172,8 +172,9 @@ dsc update myforum
   - [topic](docs/topic.md) — pull, push, and sync topics as Markdown
   - [post](docs/post.md) — edit, delete, and move individual posts
   - [category](docs/category.md) — list, pull, push, and copy categories
-  - [palette](docs/palette.md) — list, pull, and push colour palettes
-  - [plugin](docs/plugin.md) — list, install, and remove plugins
+   - [palette](docs/palette.md) — list, pull, and push colour palettes
+   - [user-field](docs/user-field.md) — list, inspect, export, and safely create custom user-field definitions
+   - [plugin](docs/plugin.md) — list, install, and remove plugins
   - [theme](docs/theme.md) — install (git/bundle), delete, list, pull, push, duplicate; edit settings, fields (SCSS), and assets; enable/attach components; update remotes
   - [group](docs/group.md) — list, inspect, copy, and bulk-add members
   - [user](docs/user.md) — list, inspect, suspend, archive activity, and manage group memberships

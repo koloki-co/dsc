@@ -91,6 +91,7 @@ nav:
       - theme: theme.md
       - plugin: plugin.md
       - palette: palette.md
+      - user-field: user-field.md
       - log: log.md
       - notification: notification.md
   - Reports:

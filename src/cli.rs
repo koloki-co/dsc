@@ -287,6 +287,16 @@ pub enum Commands {
         #[command(subcommand)]
         command: SettingCommand,
     },
+    /// Manage custom user-field definitions as reviewable local snapshots.
+    #[command(visible_alias = "ucf")]
+    #[command(after_help = "Examples:
+  dsc user-field list myforum
+  dsc user-field pull myforum user-fields.yaml
+  dsc user-field push --dry-run myforum user-fields.yaml")]
+    UserField {
+        #[command(subcommand)]
+        command: UserFieldCommand,
+    },
     /// Export supported personal-data surfaces into a reviewable Subject Access
     /// Request (SAR / GDPR Art. 15) bundle. Single forum.
     #[command(after_help = "Examples:
@@ -2423,6 +2433,61 @@ pub enum NotificationCommand {
         /// Mark every unread notification read.
         #[arg(long)]
         all: bool,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(next_display_order = None)]
+pub enum UserFieldCommand {
+    /// List custom user-field definitions.
+    #[command(visible_alias = "ls")]
+    List {
+        /// Discourse name.
+        discourse: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Show one custom user-field definition.
+    Show {
+        /// Discourse name.
+        discourse: String,
+        /// User field ID (from `dsc user-field list`).
+        #[arg(value_parser = clap::value_parser!(i64).range(1..))]
+        field_id: i64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Pull all custom user-field definitions into a versioned snapshot.
+    Pull {
+        /// Discourse name.
+        discourse: String,
+        /// Destination YAML or JSON snapshot.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
+        local_path: PathBuf,
+        /// Overwrite an existing snapshot.
+        #[arg(long, short = 'f')]
+        force: bool,
+    },
+    /// Compare a user-field snapshot with the live forum without writing.
+    Diff {
+        /// Discourse name.
+        discourse: String,
+        /// YAML or JSON snapshot.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
+        local_path: PathBuf,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Create new user-field definitions from a curated snapshot.
+    Push {
+        /// Discourse name.
+        discourse: String,
+        /// YAML or JSON snapshot.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
+        local_path: PathBuf,
     },
 }
 

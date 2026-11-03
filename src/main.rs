@@ -1405,6 +1405,31 @@ fn main() -> Result<()> {
                 },
         } => commands::setting::audit_site_setting(&config, &setting, tags.as_deref(), format),
 
+        Commands::UserField { command } => match command {
+            UserFieldCommand::List { discourse, format } => {
+                commands::user_field::user_field_list(&config, &discourse, format)
+            }
+            UserFieldCommand::Show {
+                discourse,
+                field_id,
+                format,
+            } => commands::user_field::user_field_show(&config, &discourse, field_id, format),
+            UserFieldCommand::Pull {
+                discourse,
+                local_path,
+                force,
+            } => commands::user_field::user_field_pull(&config, &discourse, &local_path, force),
+            UserFieldCommand::Diff {
+                discourse,
+                local_path,
+                format,
+            } => commands::user_field::user_field_diff(&config, &discourse, &local_path, format),
+            UserFieldCommand::Push {
+                discourse,
+                local_path,
+            } => commands::user_field::user_field_push(&config, &discourse, &local_path, dry_run),
+        },
+
         Commands::Sar {
             discourse,
             user,

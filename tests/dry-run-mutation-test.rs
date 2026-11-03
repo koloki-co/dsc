@@ -562,6 +562,13 @@ const CASES: &[Case] = &[
         &["theme", "palette", "push", "mock", "PALETTE"],
         true,
     ),
+    // The mock does not expose user-field reads, but this still verifies that
+    // a dry-run push cannot issue a POST while planning fails.
+    (
+        "user-field push",
+        &["user-field", "push", "mock", "USERFIELDS"],
+        false,
+    ),
     ("update", &["update", "mock"], true),
     // SSH-driven mutations: a dry run must describe the remote command only.
     (
@@ -656,6 +663,14 @@ fn dry_run_never_issues_a_mutating_request() {
         "{\"name\":\"Palette\",\"colors\":{\"primary\":\"111111\"}}\n",
     )
     .expect("write palette");
+    let user_fields = dir.path().join("user-fields.yaml");
+    std::fs::write(
+        &user_fields,
+        format!(
+            "version: 1\nsource: {baseurl}\nuser_fields:\n  - name: Department\n    description: Your department\n    field_type: text\n    editable: true\n    requirement: optional\n    show_on_profile: false\n    show_on_signup: false\n    show_on_user_card: false\n    searchable: false\n"
+        ),
+    )
+    .expect("write user fields");
     let csvout = dir.path().join("result.csv");
 
     let substitute = |arg: &str| -> String {
@@ -669,6 +684,7 @@ fn dry_run_never_issues_a_mutating_request() {
             "CATDEF" => catdef.display().to_string(),
             "THEMESET" => themeset.display().to_string(),
             "PALETTE" => palette.display().to_string(),
+            "USERFIELDS" => user_fields.display().to_string(),
             "CSVOUT" => csvout.display().to_string(),
             other => other.to_string(),
         }
@@ -1088,6 +1104,10 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "user groups list",
     "user info",
     "user list",
+    "user-field diff",
+    "user-field list",
+    "user-field pull",
+    "user-field show",
     "version",
     "webhook list",
 ];

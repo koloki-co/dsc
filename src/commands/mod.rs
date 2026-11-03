@@ -45,5 +45,6 @@ pub mod update;
 pub mod update_log;
 pub mod upload;
 pub mod user;
+pub mod user_field;
 pub mod version;
 pub mod webhook;
