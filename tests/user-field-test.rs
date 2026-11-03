@@ -16,6 +16,30 @@ struct MockResponse {
 
 type RequestLog = Arc<Mutex<Vec<(String, String)>>>;
 
+const MOVEMENTS: &[&str] = &[
+    "Advocacy",
+    "Community organising",
+    "Co-operative",
+    "Disability rights",
+    "Education",
+    "Environmental justice",
+    "Faith community",
+    "Food sovereignty",
+    "Housing",
+    "Labour union",
+    "LGBTQ+ rights",
+    "Migrant justice",
+    "Mutual aid",
+    "Peace building",
+    "Public health",
+    "Racial justice",
+    "Rural development",
+    "Student movement",
+    "Women's rights",
+    "Côte d'Ivoire solidarity",
+    "日本の市民運動",
+];
+
 fn start_mock(responses: Vec<MockResponse>) -> (String, RequestLog, std::thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock listener");
     listener.set_nonblocking(true).expect("configure listener");
@@ -86,10 +110,14 @@ fn config_for(url: &str, dir: &TempDir) -> std::path::PathBuf {
 
 fn write_snapshot(dir: &TempDir, source: &str) -> std::path::PathBuf {
     let path = dir.path().join("user-fields.yaml");
+    let options = MOVEMENTS
+        .iter()
+        .map(|option| format!("      - {option}\n"))
+        .collect::<String>();
     std::fs::write(
         &path,
         format!(
-            "version: 1\nsource: {source}\nuser_fields:\n  - name: Countries\n    description: Where do you work?\n    field_type: multiselect\n    editable: true\n    requirement: on_signup\n    show_on_profile: false\n    show_on_signup: true\n    show_on_user_card: false\n    searchable: false\n    options:\n      - Côte d'Ivoire\n      - 日本\n"
+            "version: 1\nsource: {source}\nuser_fields:\n  - name: Movements\n    description: Which movements do you work with?\n    field_type: multiselect\n    editable: true\n    requirement: on_signup\n    show_on_profile: false\n    show_on_signup: true\n    show_on_user_card: false\n    searchable: false\n    options:\n{options}"
         ),
     )
     .expect("write snapshot");
@@ -103,7 +131,7 @@ fn push_creates_a_new_field_in_the_verified_envelope() {
             body: r#"{"user_fields":[]}"#,
         },
         MockResponse {
-            body: r#"{"user_field":{"id":42,"name":"Countries"}}"#,
+            body: r#"{"user_field":{"id":42,"name":"Movements"}}"#,
         },
     ];
     let (url, requests, handle) = start_mock(responses);
@@ -134,10 +162,10 @@ fn push_creates_a_new_field_in_the_verified_envelope() {
         "POST /admin/config/user_fields.json HTTP/1.1"
     );
     let payload: serde_json::Value = serde_json::from_str(&requests[1].1).expect("JSON payload");
-    assert_eq!(payload["user_field"]["name"], "Countries");
+    assert_eq!(payload["user_field"]["name"], "Movements");
     assert_eq!(
         payload["user_field"]["options"],
-        serde_json::json!(["Côte d'Ivoire", "日本"])
+        serde_json::json!(MOVEMENTS)
     );
     assert!(payload["user_field"].get("id").is_none());
 }
@@ -168,6 +196,19 @@ fn dry_run_plans_creation_without_posting() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stdout).contains("+ create: Countries"));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(&format!("target: \"{url}\"")));
+    assert!(stdout.contains("+ create: \"Movements\""));
+    assert!(stdout.contains("description: \"Which movements do you work with?\""));
+    assert!(stdout.contains("field_type: multiselect"));
+    assert!(stdout.contains("editable: true"));
+    assert!(stdout.contains("requirement: on_signup"));
+    assert!(stdout.contains("show_on_profile: false"));
+    assert!(stdout.contains("show_on_signup: true"));
+    assert!(stdout.contains("show_on_user_card: false"));
+    assert!(stdout.contains("searchable: false"));
+    for option in MOVEMENTS {
+        assert!(stdout.contains(&serde_json::to_string(option).expect("JSON option")));
+    }
     assert_eq!(requests.lock().expect("request log").len(), 1);
 }

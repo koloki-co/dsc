@@ -55,6 +55,24 @@ Validate the complete file before writes: recognized properties and types, nonem
 - Requirement `for_all_users` can affect existing users. Show that impact in the plan and require explicit confirmation; do not conflate it with `on_signup`. Visibility and searchability are explicit field settings, not guarantees about every audience or plugin. Let the operator choose them.
 - Use explicit values, not server defaults, for new managed definitions. Capture prior definitions for rollback, but warn that rollback may not restore associated responses or deleted directory configuration. Never export responses as part of this feature.
 
+## Observed dry-run plan gap - Numun, 2026-11-03
+
+With `dsc 0.23.0` against Numun's Discourse `2026.11.0-latest` (`112369ac34436e6597604e79fb35c093d3f9605e`), a curated YAML snapshot specified one new multiselect field with 21 ordered options and all visibility, signup and editability flags. Before creating the field, the operator ran:
+
+```console
+dsc ucf push --dry-run numun <curated-movements-snapshot.yaml>
++ create: Movements
+[dry-run] No changes applied.
+```
+
+The command identified the intended creation and did not create the field, but displayed neither its question, type, requirement, flags nor options. The operator had to inspect the input file separately to review those values. A subsequent deliberate live push created the field, and fresh show/list reads confirmed its configuration; the mutation was the live push, not the dry-run. The placeholder above avoids publishing a client workspace path; use a synthetic snapshot and mock forum to reproduce without modifying Numun.
+
+**Expected:** the create plan includes the target forum, field name, description, type, requirement, all submitted visibility/editability/search flags and every option in order, preserving Unicode and punctuation. If output must be bounded, explicitly indicate truncation and provide a way to review the complete plan; never imply an abbreviated list is complete. Derive the displayed plan and actual request from the same validated representation. A structured plan is welcome if consistent with the CLI contract, but the ordinary dry-run must itself be reviewable.
+
+Add regression coverage using a long, synthetic option list: assert the printed planned values match the actual create request against the same mock state, including booleans, ordering and Unicode; assert dry-run sends no mutation and that unrelated live fields receive no write. Keep the create-only and collision guards intact. Track this as part of R68 and coordinate with R73's plan-fidelity coverage.
+
+**Resolution (2026-11-03):** the create planner now carries the complete validated definition and its text plan prints the normalized target, description, type, requirement, all booleans, and every ordered option as JSON-quoted text. `tests/user-field-test.rs` uses 21 synthetic Unicode/punctuation options to verify that dry-run prints every submitted value without a POST and that a real run sends the matching `user_field` create payload.
+
 ## Source-derived API reference - verify before implementation
 
 Inspected local Discourse source at commit `9c72f9d3e93292cca012525b428ff0eee777e140` on 2026-11-03; Numun reported `2026.11.0-latest` commit `112369ac34436e6597604e79fb35c093d3f9605e`. These are different commits. On 2026-11-03, authenticated requests to `koloki-demo` confirmed list/show/create/delete envelopes and that a scalar-only update preserves options while an update with `options` replaces the ordered option list. The synthetic discovery field was deleted after verification.

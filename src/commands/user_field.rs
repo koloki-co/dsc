@@ -44,8 +44,8 @@ struct UserFieldFile {
 
 #[derive(Debug, Serialize)]
 struct UserFieldPlan {
-    create: Vec<String>,
-    unchanged: Vec<String>,
+    target: String,
+    create: Vec<UserFieldFile>,
 }
 
 pub fn user_field_list(config: &Config, discourse_name: &str, format: ListFormat) -> Result<()> {
@@ -211,12 +211,12 @@ fn plan(
                 field.name
             );
         }
-        create.push(field.name.clone());
+        create.push(field.clone());
     }
     Ok((
         UserFieldPlan {
+            target: source,
             create,
-            unchanged: Vec::new(),
         },
         file,
     ))
@@ -335,8 +335,26 @@ fn field_to_value(field: &UserFieldFile) -> Value {
 }
 
 fn print_plan(plan: &UserFieldPlan) -> Result<()> {
-    for name in &plan.create {
-        println!("+ create: {name}");
+    println!("target: {}", serde_json::to_string(&plan.target)?);
+    for field in &plan.create {
+        println!("+ create: {}", serde_json::to_string(&field.name)?);
+        println!(
+            "  description: {}",
+            serde_json::to_string(&field.description)?
+        );
+        println!("  field_type: {}", field.field_type);
+        println!("  editable: {}", field.editable);
+        println!("  requirement: {}", field.requirement);
+        println!("  show_on_profile: {}", field.show_on_profile);
+        println!("  show_on_signup: {}", field.show_on_signup);
+        println!("  show_on_user_card: {}", field.show_on_user_card);
+        println!("  searchable: {}", field.searchable);
+        if let Some(options) = &field.options {
+            println!("  options:");
+            for option in options {
+                println!("    - {}", serde_json::to_string(option)?);
+            }
+        }
     }
     if plan.create.is_empty() {
         println!("(no changes)");
