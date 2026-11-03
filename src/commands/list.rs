@@ -3,7 +3,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::cli::OutputFormat;
-use crate::commands::common::{emit_output_with, fetch_fullnames, open_url_detached, parse_tags};
+use crate::commands::common::{
+    emit_output_with, fetch_fullnames, open_url_detached, parse_tags, require_yes,
+};
 use crate::config::{Config, DiscourseConfig, save_config};
 use anyhow::{Context, Result};
 use serde::Serialize;
@@ -117,6 +119,43 @@ pub fn list_tidy(config_path: &Path, config: &mut Config) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+pub fn remove_discourse(
+    config_path: &Path,
+    config: &mut Config,
+    name: &str,
+    dry_run: bool,
+    yes: bool,
+) -> Result<()> {
+    let Some(index) = config
+        .discourse
+        .iter()
+        .position(|discourse| discourse.name == name)
+    else {
+        anyhow::bail!("configured discourse '{name}' was not found");
+    };
+    let discourse = &config.discourse[index];
+    let action = format!(
+        "remove configured discourse '{}' ({}) from {}",
+        discourse.name,
+        discourse.baseurl,
+        config_path.display()
+    );
+    if dry_run {
+        println!("[dry-run] would {action}");
+        return Ok(());
+    }
+    require_yes(yes, action, true)?;
+    let removed = config.discourse.remove(index);
+    save_config(config_path, config)?;
+    println!(
+        "Removed configured discourse '{}' ({}) from {}",
+        removed.name,
+        removed.baseurl,
+        config_path.display()
+    );
     Ok(())
 }
 

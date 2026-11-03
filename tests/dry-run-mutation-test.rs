@@ -276,6 +276,7 @@ fn run_dsc_with_input(args: &[&str], config: &Path, input: Option<&str>) -> (Str
 type Case = (&'static str, &'static [&'static str], bool);
 
 const CASES: &[Case] = &[
+    ("list rm", &["list", "rm", "mock"], true),
     ("board show", &["board", "show", "mock", "3"], true),
     ("board pull", &["board", "pull", "mock", "3"], true),
     (

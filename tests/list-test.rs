@@ -212,3 +212,68 @@ ssh_host = "a-host"
         "changelog_topic_id overwritten unexpectedly:\n{raw}"
     );
 }
+
+#[test]
+fn list_rm_dry_run_and_missing_confirmation_preserve_config() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        "[[discourse]]\nname = \"remove-me\"\nbaseurl = \"https://remove.example\"\n\n[[discourse]]\nname = \"keep-me\"\nbaseurl = \"https://keep.example\"\n",
+    );
+    let before = fs::read_to_string(&config_path).expect("read config");
+
+    let dry_run = run_dsc(&["--dry-run", "list", "rm", "remove-me"], &config_path);
+    assert!(
+        dry_run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dry_run.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&dry_run.stdout)
+            .contains("would remove configured discourse 'remove-me'")
+    );
+    assert_eq!(
+        fs::read_to_string(&config_path).expect("read config"),
+        before
+    );
+
+    let unconfirmed = run_dsc(&["list", "rm", "remove-me"], &config_path);
+    assert!(
+        !unconfirmed.status.success(),
+        "removal without --yes succeeded"
+    );
+    assert!(String::from_utf8_lossy(&unconfirmed.stderr).contains("without --yes"));
+    assert_eq!(
+        fs::read_to_string(&config_path).expect("read config"),
+        before
+    );
+}
+
+#[test]
+fn list_rm_removes_only_the_named_config_entry() {
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = write_temp_config(
+        &dir,
+        "[[discourse]]\nname = \"remove-me\"\nbaseurl = \"https://remove.example\"\napikey = \"secret\"\n\n[[discourse]]\nname = \"keep-me\"\nbaseurl = \"https://keep.example\"\n",
+    );
+
+    let output = run_dsc(&["list", "rm", "remove-me", "--yes"], &config_path);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let saved = fs::read_to_string(&config_path).expect("read saved config");
+    assert!(
+        !saved.contains("remove-me"),
+        "removed entry remained:\n{saved}"
+    );
+    assert!(
+        !saved.contains("secret"),
+        "removed credential remained:\n{saved}"
+    );
+    assert!(
+        saved.contains("keep-me"),
+        "unrelated entry was removed:\n{saved}"
+    );
+}

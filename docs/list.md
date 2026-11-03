@@ -48,3 +48,13 @@ Orders the `dsc.toml` file entries alphabetically by name. Collects any missing 
 ```bash
 dsc list tidy
 ```
+
+## dsc list rm
+
+```text
+dsc list rm <discourse> [--yes]
+```
+
+Removes one exact-name `[[discourse]]` entry from the active `dsc.toml`, including its locally stored API credentials. It never contacts the forum or changes the remote Discourse installation.
+
+Run `dsc --dry-run list rm <discourse>` first to print the selected entry and config path without writing. Live removal requires `--yes`; this keeps a typo or shell-variable mistake from deleting an unrelated local credential.

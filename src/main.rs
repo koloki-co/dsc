@@ -162,6 +162,25 @@ fn main() -> Result<()> {
         }
 
         Commands::List {
+            command: Some(ListCommand::Rm { discourse, yes }),
+            tags,
+            open,
+            verbose,
+            ..
+        } => {
+            if verbose {
+                return Err(anyhow!("--verbose is not supported with 'dsc list rm'"));
+            }
+            if open {
+                return Err(anyhow!("--open is not supported with 'dsc list rm'"));
+            }
+            if tags.is_some() {
+                return Err(anyhow!("--tags is not supported with 'dsc list rm'"));
+            }
+            commands::list::remove_discourse(&config_path, &mut config, &discourse, dry_run, yes)
+        }
+
+        Commands::List {
             format,
             tags,
             open,

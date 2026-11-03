@@ -41,7 +41,9 @@ pub enum Commands {
     #[command(visible_alias = "ls")]
     #[command(after_help = "Examples:
   dsc list
-  dsc list --tags production -f json")]
+  dsc list --tags production -f json
+  dsc --dry-run list rm retired-forum
+  dsc list rm retired-forum --yes")]
     List {
         /// Output format for the listing.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
@@ -1162,6 +1164,14 @@ pub enum ListCommand {
     /// Also inserts placeholder values for unset template keys.
     #[command(visible_alias = "ty")]
     Tidy,
+    /// Remove one Discourse entry and its locally stored credentials from dsc.toml.
+    Rm {
+        /// Configured Discourse name to remove.
+        discourse: String,
+        /// Confirm local removal after reviewing the dry-run plan.
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
