@@ -212,3 +212,72 @@ fn dry_run_plans_creation_without_posting() {
     }
     assert_eq!(requests.lock().expect("request log").len(), 1);
 }
+
+#[test]
+fn pull_one_field_uses_the_show_endpoint_and_writes_one_definition() {
+    let (url, requests, handle) = start_mock(vec![MockResponse {
+        body: r#"{"user_field":{"id":42,"name":"Movements","description":"Which movements do you work with?","field_type":"multiselect","editable":true,"requirement":"on_signup","show_on_profile":false,"show_on_signup":true,"show_on_user_card":false,"searchable":false,"options":["Advocacy","日本の市民運動"]}}"#,
+    }]);
+    let dir = TempDir::new().expect("tempdir");
+    let snapshot = dir.path().join("movements.yaml");
+    let config = config_for(&url, &dir);
+
+    let output = run_dsc(
+        &[
+            "ucf",
+            "pull",
+            "mock",
+            "42",
+            snapshot.to_str().expect("path"),
+        ],
+        &config,
+    );
+    handle.join().expect("mock thread");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        requests.lock().expect("request log")[0].0,
+        "GET /admin/config/user_fields/42.json HTTP/1.1"
+    );
+    let snapshot = std::fs::read_to_string(&snapshot).expect("read snapshot");
+    assert!(snapshot.contains("id: 42"));
+    assert!(snapshot.contains("name: Movements"));
+    assert!(snapshot.contains("- 日本の市民運動"));
+}
+
+#[test]
+fn pull_path_remains_a_full_export_for_compatibility() {
+    let (url, requests, handle) = start_mock(vec![MockResponse {
+        body: r#"{"user_fields":[]}"#,
+    }]);
+    let dir = TempDir::new().expect("tempdir");
+    let snapshot = dir.path().join("user-fields.yaml");
+    let config = config_for(&url, &dir);
+
+    let output = run_dsc(
+        &[
+            "user-field",
+            "pull",
+            "mock",
+            snapshot.to_str().expect("path"),
+        ],
+        &config,
+    );
+    handle.join().expect("mock thread");
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        requests.lock().expect("request log")[0].0,
+        "GET /admin/config/user_fields.json HTTP/1.1"
+    );
+    let snapshot = std::fs::read_to_string(&snapshot).expect("read snapshot");
+    assert!(snapshot.contains("user_fields: []"));
+}

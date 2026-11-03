@@ -22,9 +22,10 @@ Shows one definition by its forum-local ID.
 
 ```text
 dsc user-field pull <discourse> <local-path> [--force]
+dsc user-field pull <discourse> <field-id> [local-path] [--force]
 ```
 
-Exports every definition as a versioned YAML snapshot, or JSON when `<local-path>` ends in `.json`. Pulled entries retain their forum-local IDs and source URL. The command refuses to overwrite an existing file without `--force`.
+Exports every definition as a versioned YAML snapshot, or JSON when `<local-path>` ends in `.json`. A numeric `<field-id>` pulls only that definition. Without `[local-path]`, a single-field pull writes `user-field-<id>-<field-name>-<YYYY-MM-DD>.yaml` in the current directory, where the field name is slugified. Pulled entries retain their forum-local IDs and source URL. The command refuses to overwrite an existing file without `--force`.
 
 ## dsc user-field diff
 

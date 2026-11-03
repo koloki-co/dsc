@@ -12,13 +12,14 @@ Numun needs Countries, Regions and Movements as required signup multiselect fiel
 dsc user-field list <discourse> --format yaml
 dsc user-field show <discourse> <id> --format yaml
 dsc user-field pull <discourse> user-fields.yaml
+dsc user-field pull <discourse> 42
 # Edit a curated file containing only the definitions to manage.
 dsc user-field diff <discourse> user-fields.yaml
 dsc user-field push --dry-run <discourse> user-fields.yaml
 dsc user-field push <discourse> user-fields.yaml
 ```
 
-`list` and `show` support text, JSON and YAML. `pull` writes definitions only, never user answers, in YAML or JSON by extension. `diff` and dry-run fetch current state and use the exact same planner as push. Display every proposed create and each old-to-new change, including ordered option additions, removals and reordering, visibility and requirement changes. Honour the global dry-run without any mutation. `push` is idempotent and curated: omitted definitions are never modified or deleted. A failed read, ambiguous identity, unsupported change or invalid input aborts before any write. Apply sequentially, stop on first failure, report applied and outstanding actions, and re-read each changed definition; fail if the confirmed state differs from the plan. Multi-field operations are not atomic.
+`list` and `show` support text, JSON and YAML. `pull` writes definitions only, never user answers, in YAML or JSON by extension. A numeric second argument pulls one exact field; without an output path it writes `user-field-<id>-<slugified-name>-<YYYY-MM-DD>.yaml`. A nonnumeric second argument remains the full-snapshot output path for compatibility. `diff` and dry-run fetch current state and use the exact same planner as push. Display every proposed create and each old-to-new change, including ordered option additions, removals and reordering, visibility and requirement changes. Honour the global dry-run without any mutation. `push` is idempotent and curated: omitted definitions are never modified or deleted. A failed read, ambiguous identity, unsupported change or invalid input aborts before any write. Apply sequentially, stop on first failure, report applied and outstanding actions, and re-read each changed definition; fail if the confirmed state differs from the plan. Multi-field operations are not atomic.
 
 ### File shape and identity
 

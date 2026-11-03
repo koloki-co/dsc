@@ -1435,9 +1435,29 @@ fn main() -> Result<()> {
             } => commands::user_field::user_field_show(&config, &discourse, field_id, format),
             UserFieldCommand::Pull {
                 discourse,
+                target,
                 local_path,
                 force,
-            } => commands::user_field::user_field_pull(&config, &discourse, &local_path, force),
+            } => match target.parse::<i64>() {
+                Ok(field_id) if field_id > 0 => commands::user_field::user_field_pull(
+                    &config,
+                    &discourse,
+                    Some(field_id),
+                    local_path.as_deref(),
+                    force,
+                ),
+                Ok(_) => Err(anyhow!("user field ID must be a positive integer")),
+                Err(_) if local_path.is_some() => Err(anyhow!(
+                    "a full user-field pull accepts one destination path; a second path requires a numeric field ID"
+                )),
+                Err(_) => commands::user_field::user_field_pull(
+                    &config,
+                    &discourse,
+                    None,
+                    Some(std::path::Path::new(&target)),
+                    force,
+                ),
+            },
             UserFieldCommand::Diff {
                 discourse,
                 local_path,

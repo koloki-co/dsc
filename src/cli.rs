@@ -294,6 +294,7 @@ pub enum Commands {
     #[command(after_help = "Examples:
   dsc user-field list myforum
   dsc user-field pull myforum user-fields.yaml
+  dsc user-field pull myforum 42
   dsc user-field push --dry-run myforum user-fields.yaml")]
     UserField {
         #[command(subcommand)]
@@ -2469,13 +2470,16 @@ pub enum UserFieldCommand {
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,
     },
-    /// Pull all custom user-field definitions into a versioned snapshot.
+    /// Pull all definitions to a path, or one numeric-ID field to a snapshot.
     Pull {
         /// Discourse name.
         discourse: String,
-        /// Destination YAML or JSON snapshot.
+        /// A user field ID, or the destination for a full snapshot.
+        #[arg(value_parser = tilde_path_string, value_hint = ValueHint::FilePath)]
+        target: String,
+        /// Destination YAML or JSON snapshot when pulling one field by ID.
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
-        local_path: PathBuf,
+        local_path: Option<PathBuf>,
         /// Overwrite an existing snapshot.
         #[arg(long, short = 'f')]
         force: bool,

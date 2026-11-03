@@ -6,13 +6,13 @@ use crate::api::DiscourseClient;
 use crate::cli::ListFormat;
 use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
-use crate::utils::normalize_baseurl;
+use crate::utils::{normalize_baseurl, slugify};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const SNAPSHOT_VERSION: u64 = 1;
 
@@ -97,35 +97,61 @@ pub fn user_field_show(
 pub fn user_field_pull(
     config: &Config,
     discourse_name: &str,
-    path: &Path,
+    field_id: Option<i64>,
+    requested_path: Option<&Path>,
     force: bool,
 ) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+    let fields = match field_id {
+        Some(id) => vec![client.get_user_field(id)?],
+        None => client.list_user_fields()?,
+    };
+    let user_fields = fields
+        .iter()
+        .map(field_from_value)
+        .collect::<Result<Vec<_>>>()?;
+    if let Some(id) = field_id
+        && user_fields.first().and_then(|field| field.id) != Some(id)
+    {
+        bail!("user field response did not match requested ID {id}");
+    }
+    let path = match (requested_path, field_id, user_fields.first()) {
+        (Some(path), _, _) => path.to_path_buf(),
+        (None, Some(id), Some(field)) => {
+            default_snapshot_path(id, &field.name, chrono::Utc::now().date_naive())
+        }
+        (None, Some(_), None) => unreachable!("a requested user field must have one response"),
+        (None, None, _) => bail!("a full user-field pull requires a destination path"),
+    };
     if path.exists() && !force {
         bail!(
             "{} already exists; use --force to overwrite",
             path.display()
         );
     }
-    let discourse = select_discourse(config, Some(discourse_name))?;
-    ensure_api_credentials(discourse)?;
-    let fields = DiscourseClient::new(discourse)?.list_user_fields()?;
     let file = UserFieldsFile {
         version: SNAPSHOT_VERSION,
         source: normalize_baseurl(&discourse.baseurl),
-        user_fields: fields.iter().map(field_from_value).collect::<Result<_>>()?,
+        user_fields,
     };
     let content = if path.extension().is_some_and(|ext| ext == "json") {
         serde_json::to_string_pretty(&file)?
     } else {
         serde_yaml::to_string(&file)?
     };
-    fs::write(path, content).with_context(|| format!("writing {}", path.display()))?;
+    fs::write(&path, content).with_context(|| format!("writing {}", path.display()))?;
     println!(
         "Wrote {} user field definition(s) to {}",
         file.user_fields.len(),
         path.display()
     );
     Ok(())
+}
+
+fn default_snapshot_path(id: i64, name: &str, date: chrono::NaiveDate) -> PathBuf {
+    PathBuf::from(format!("user-field-{id}-{}-{date}.yaml", slugify(name)))
 }
 
 pub fn user_field_diff(
@@ -420,6 +446,18 @@ mod tests {
         let error = validate(&file(vec![field])).expect_err("dropdown needs an option");
 
         assert!(error.to_string().contains("requires at least one option"));
+    }
+
+    #[test]
+    fn default_snapshot_path_is_dated_and_slugged() {
+        assert_eq!(
+            default_snapshot_path(
+                42,
+                "Côte d'Ivoire solidarity",
+                chrono::NaiveDate::from_ymd_opt(2026, 11, 3).expect("valid date"),
+            ),
+            PathBuf::from("user-field-42-cote-d-ivoire-solidarity-2026-11-03.yaml")
+        );
     }
 
     #[test]
