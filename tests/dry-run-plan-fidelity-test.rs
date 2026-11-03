@@ -84,12 +84,24 @@ settings:
 "#;
 
 /// Frozen server-side palette list, as `GET /admin/color_schemes.json` always
-/// returns it. Palette 19 is what the pushed file was pulled from.
+/// returns it. Palette 19 is what the pushed file was pulled from. Palette
+/// 23 is the one the create-path mock `POST` reports as created: the list is
+/// frozen, so it is already present for the real run's follow-up GET (the
+/// create plan reads no server state, so its presence cannot affect it).
 const SERVER_PALETTES_JSON: &str = r#"[{"id":19,"name":"Palette","colors":[
     {"name":"primary","hex":"000000"},
     {"name":"secondary","hex":"ffffff"},
     {"name":"tertiary","hex":"0088cc"}
+]},{"id":23,"name":"Fresh palette","colors":[
+    {"name":"primary","hex":"222222"},
+    {"name":"secondary","hex":"f0f0f0"}
 ]}]"#;
+
+/// Palette create file: no `id` and no pulled baseline, so `palette push`
+/// takes the create path and sends every colour.
+const PALETTE_CREATE_FILE: &str = r#"{"name":"Fresh palette",
+"colors":{"primary":"222222","secondary":"f0f0f0"}}
+"#;
 
 /// Palette file: renamed, `primary`/`tertiary` edited against the pulled
 /// baseline, `secondary` untouched (planned no-op).
@@ -435,6 +447,30 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
                 .push((name.to_string(), desc.to_string()));
         }
         ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
+    } else if method == "POST" && path == "/admin/color_schemes.json" {
+        // Same JSON shape as the update PUT; recorded as `create -> name`,
+        // `colors -> count`, plus `color -> hex`.
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let scheme = &payload["color_scheme"];
+        let colors = scheme["colors"].as_array().cloned().unwrap_or_default();
+        let mut recorder = recorder.lock().expect("recorder lock");
+        recorder.puts.push((
+            "create".to_string(),
+            scheme["name"].as_str().unwrap_or_default().to_string(),
+        ));
+        recorder
+            .puts
+            .push(("colors".to_string(), colors.len().to_string()));
+        for color in &colors {
+            recorder.puts.push((
+                color["name"].as_str().unwrap_or_default().to_string(),
+                color["hex"].as_str().unwrap_or_default().to_string(),
+            ));
+        }
+        (
+            "HTTP/1.1 200 OK",
+            r#"{"color_scheme":{"id":23}}"#.to_string(),
+        )
     } else if method == "PUT" && path == "/admin/color_schemes/19.json" {
         // JSON `{"color_scheme":{"name":?,"colors":[{"name","hex"}]}}`;
         // recorded as `name -> new name` plus `color -> hex`.
@@ -743,6 +779,72 @@ fn palette_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state(
             ("tertiary".to_string(), "abcdef".to_string()),
         ]),
     );
+}
+
+/// Parse `dsc palette push`'s create plan: the `  + create: "name" (N
+/// colors)` line into `create -> name` and `colors -> N`, and each
+/// `    + color: "hex"` line into `color -> hex`.
+fn parse_palette_create_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("+ ") else {
+            continue;
+        };
+        let Some((name, value)) = rest.split_once(": ") else {
+            continue;
+        };
+        if name == "create" {
+            let Some((palette, count)) = value.rsplit_once(" (") else {
+                continue;
+            };
+            let count = count.split_whitespace().next().unwrap_or_default();
+            changes.insert("create".to_string(), palette.trim_matches('"').to_string());
+            changes.insert("colors".to_string(), count.to_string());
+        } else {
+            changes.insert(name.to_string(), value.trim_matches('"').to_string());
+        }
+    }
+    changes
+}
+
+#[test]
+fn palette_push_create_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    // The real run rewrites its file with the assigned ID, so each phase
+    // gets its own identical copy.
+    let dry_path = write_file(&dir, "palette-create-dry.json", PALETTE_CREATE_FILE);
+    let real_path = write_file(&dir, "palette-create-real.json", PALETTE_CREATE_FILE);
+    let dry_file = dry_path.to_str().expect("utf-8 temp path");
+    let real_file = real_path.to_str().expect("utf-8 temp path");
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "palette", "push", "mock", dry_file],
+        &["palette", "push", "mock", real_file],
+        parse_palette_create_planned_changes,
+        &BTreeMap::from([
+            ("create".to_string(), "Fresh palette".to_string()),
+            ("colors".to_string(), "2".to_string()),
+            ("primary".to_string(), "222222".to_string()),
+            ("secondary".to_string(), "f0f0f0".to_string()),
+        ]),
+    );
+
+    // The plan also states the snapshot is rewritten with the assigned ID;
+    // the dry-run copy must be untouched and the real one must carry it.
+    assert_eq!(
+        std::fs::read_to_string(&dry_path).expect("read dry-run file"),
+        PALETTE_CREATE_FILE,
+        "dry-run must not rewrite the palette file"
+    );
+    let written: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&real_path).expect("read real-run file"))
+            .expect("real-run palette file is JSON");
+    assert_eq!(written["id"], 23, "real run must record the assigned ID");
 }
 
 /// Parse `dsc tag push`'s `  ~ set description: name ("desc")` plan lines
