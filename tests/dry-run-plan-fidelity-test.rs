@@ -205,6 +205,20 @@ fn server_category_field(id: &str, field: &str) -> Option<String> {
     }
 }
 
+/// Frozen server-side theme for `theme field push`, as
+/// `GET /admin/themes/43.json` always returns it. `common/scss` exists (the
+/// update path), `common/header` does not (the create path), and
+/// `desktop/scss` already holds exactly what the unchanged-case file holds.
+const SERVER_THEME_FIELDS_JSON: &str = r#"{"theme":{"id":43,"name":"field theme","theme_fields":[
+    {"target":"common","name":"scss","value":"a { color: red; }","type_id":1},
+    {"target":"desktop","name":"scss","value":"same","type_id":1}
+]}}"#;
+
+/// `(target, name)` pairs present in `SERVER_THEME_FIELDS_JSON`, so the mock
+/// can classify a real-run upsert as an update or a create the same way the
+/// plan's verb claims to.
+const SERVER_THEME_FIELD_SPECS: &[(&str, &str)] = &[("common", "scss"), ("desktop", "scss")];
+
 #[derive(Default)]
 struct Recorder {
     /// Overrides the `GET /tag_groups.json` body when set; the default is
@@ -258,6 +272,37 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
         ("HTTP/1.1 200 OK", SERVER_SETTINGS_JSON.to_string())
     } else if method == "GET" && path == "/admin/themes/42.json" {
         ("HTTP/1.1 200 OK", SERVER_THEME_JSON.to_string())
+    } else if method == "GET" && path == "/admin/themes/43.json" {
+        ("HTTP/1.1 200 OK", SERVER_THEME_FIELDS_JSON.to_string())
+    } else if method == "PUT" && path == "/admin/themes/43.json" {
+        // `theme field push`: JSON `{"theme":{"theme_fields":[{target,name,
+        // value,type_id}]}}`; recorded per field as `<verb> theme 43 field
+        // <target>/<name> -> value byte length`, the verb derived from
+        // whether the field exists in the frozen fixture.
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let mut recorder = recorder.lock().expect("recorder lock");
+        for field in payload["theme"]["theme_fields"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let target = field["target"].as_str().unwrap_or_default();
+            let name = field["name"].as_str().unwrap_or_default();
+            let verb = if SERVER_THEME_FIELD_SPECS.contains(&(target, name)) {
+                "update"
+            } else {
+                "create"
+            };
+            recorder.puts.push((
+                format!("{verb} theme 43 field {target}/{name}"),
+                field["value"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .len()
+                    .to_string(),
+            ));
+        }
+        ("HTTP/1.1 200 OK", r#"{"theme":{"id":43}}"#.to_string())
     } else if method == "GET" && path == "/admin/color_schemes.json" {
         ("HTTP/1.1 200 OK", SERVER_PALETTES_JSON.to_string())
     } else if method == "GET" && path == "/tags.json" {
@@ -1337,4 +1382,79 @@ fn category_def_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_s
             ("update General".to_string(), "color, position".to_string()),
         ]),
     );
+}
+
+/// Parse `dsc theme field push`'s `[dry-run] <forum>: would <verb> theme <id>
+/// field <spec> (<old> -> <new> bytes)` line into
+/// `<verb> theme <id> field <spec> -> <new>`.
+fn parse_theme_field_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let Some((_, rest)) = line.split_once(": would ") else {
+            continue;
+        };
+        let Some((target, sizes)) = rest.split_once(" (") else {
+            continue;
+        };
+        let Some(new_bytes) = sizes
+            .strip_suffix(" bytes)")
+            .and_then(|s| s.split_once(" -> "))
+            .map(|(_, new)| new)
+        else {
+            continue;
+        };
+        changes.insert(target.to_string(), new_bytes.to_string());
+    }
+    changes
+}
+
+#[test]
+fn theme_field_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    // Each run pushes one field, so cover the update, create and unchanged
+    // paths as separate frozen-state comparisons. The update body is
+    // multi-byte, so the planned size must be bytes, not chars.
+    /// `(field spec, pushed file content, expected plan entries)`.
+    type Case<'a> = (&'a str, &'a str, &'a [(&'a str, &'a str)]);
+    let cases: &[Case] = &[
+        (
+            "common/scss",
+            "a { content: \"\u{e9}\u{2014}\u{1f600}\"; }\n",
+            &[("update theme 43 field common/scss", "28")],
+        ),
+        (
+            "common/header",
+            "<div class=\"banner\">hi</div>\n",
+            &[("create theme 43 field common/header", "29")],
+        ),
+        ("desktop/scss", "same", &[]),
+    ];
+    for (spec, content, expected) in cases {
+        let recorder = Arc::new(Mutex::new(Recorder::default()));
+        let url = start_mock(Arc::clone(&recorder));
+        let dir = TempDir::new().expect("tempdir");
+        let config_path = mock_config(&dir, &url);
+        let file = write_file(&dir, "field.txt", content);
+        let file = file.to_str().expect("UTF-8 path");
+
+        assert_dry_run_plan_matches_real_run(
+            &config_path,
+            &recorder,
+            &[
+                "--dry-run",
+                "theme",
+                "field",
+                "push",
+                "mock",
+                "43",
+                spec,
+                file,
+            ],
+            &["theme", "field", "push", "mock", "43", spec, file, "--yes"],
+            parse_theme_field_planned_changes,
+            &expected
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
+    }
 }
