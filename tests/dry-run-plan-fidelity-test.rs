@@ -219,6 +219,46 @@ const SERVER_THEME_FIELDS_JSON: &str = r#"{"theme":{"id":43,"name":"field theme"
 /// plan's verb claims to.
 const SERVER_THEME_FIELD_SPECS: &[(&str, &str)] = &[("common", "scss"), ("desktop", "scss")];
 
+/// Frozen server-side user fields, as `GET /admin/config/user_fields.json`
+/// always returns them. `Location` is unrelated to the pushed file, so
+/// `user-field push` must plan around it rather than touch it. The list stays
+/// frozen after the real run's POSTs, so a re-plan never sees the new fields.
+const SERVER_USER_FIELDS_JSON: &str = r#"{"user_fields":[
+    {"id":1,"name":"Location","description":"Where are you?","field_type":"text","editable":true,"requirement":"optional","show_on_profile":true,"show_on_signup":false,"show_on_user_card":false,"searchable":false}
+]}"#;
+
+/// User field snapshot pushed in both phases (`{source}` is replaced with the
+/// mock URL, since `user-field push` refuses a snapshot from another forum).
+/// Two new fields: a multiselect with a deliberately unsorted option list and
+/// a multi-byte, quoted description, and a plain text field that must send no
+/// `options` key at all.
+const USER_FIELDS_FILE: &str = r#"version: 1
+source: {source}
+user_fields:
+  - name: Movements
+    description: "Which \"movements\" é— do you work with?"
+    field_type: multiselect
+    editable: true
+    requirement: on_signup
+    show_on_profile: false
+    show_on_signup: true
+    show_on_user_card: false
+    searchable: true
+    options:
+      - Zebra
+      - Alpha
+      - "Café \"quoted\""
+  - name: Pronouns
+    description: How should we refer to you?
+    field_type: text
+    editable: false
+    requirement: optional
+    show_on_profile: true
+    show_on_signup: false
+    show_on_user_card: true
+    searchable: false
+"#;
+
 #[derive(Default)]
 struct Recorder {
     /// Overrides the `GET /tag_groups.json` body when set; the default is
@@ -303,6 +343,29 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
             ));
         }
         ("HTTP/1.1 200 OK", r#"{"theme":{"id":43}}"#.to_string())
+    } else if method == "GET" && path == "/admin/config/user_fields.json" {
+        ("HTTP/1.1 200 OK", SERVER_USER_FIELDS_JSON.to_string())
+    } else if method == "POST" && path == "/admin/config/user_fields.json" {
+        // `user-field push`: JSON `{"user_field":{...}}`; every key on the
+        // wire is recorded as `<name> <key> -> value` (strings as-is, other
+        // values as JSON), so an unplanned key such as a leaked `id` shows up
+        // as a mismatch, not only a wrong value.
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let field = &payload["user_field"];
+        let name = field["name"].as_str().unwrap_or_default().to_string();
+        let mut recorder = recorder.lock().expect("recorder lock");
+        for (key, value) in field.as_object().into_iter().flatten() {
+            let value = match value {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            recorder.puts.push((format!("{name} {key}"), value));
+        }
+        // Echo the name back so the apply path's post-write check passes.
+        (
+            "HTTP/1.1 200 OK",
+            serde_json::json!({"user_field": {"id": 50, "name": name}}).to_string(),
+        )
     } else if method == "GET" && path == "/admin/color_schemes.json" {
         ("HTTP/1.1 200 OK", SERVER_PALETTES_JSON.to_string())
     } else if method == "GET" && path == "/tags.json" {
@@ -1457,4 +1520,111 @@ fn theme_field_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_st
                 .collect(),
         );
     }
+}
+
+/// Parse `dsc user-field push`'s plan - a `+ create: "<name>"` line followed
+/// by indented `  <key>: <value>` lines and an optional `  options:` list of
+/// `    - "<option>"` lines - into `<name> <key> -> value`, with JSON-quoted
+/// strings decoded and the option list rendered as a JSON array, matching
+/// how the mock records the real run's POST body.
+fn parse_user_field_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    fn decode(s: &str) -> String {
+        serde_json::from_str::<String>(s).unwrap_or_else(|_| s.to_string())
+    }
+    fn flush(
+        current: Option<&String>,
+        options: &mut Option<Vec<String>>,
+        changes: &mut BTreeMap<String, String>,
+    ) {
+        if let (Some(name), Some(list)) = (current, options.take()) {
+            changes.insert(
+                format!("{name} options"),
+                serde_json::to_string(&list).expect("options JSON"),
+            );
+        }
+    }
+    let mut changes = BTreeMap::new();
+    let mut current: Option<String> = None;
+    let mut options: Option<Vec<String>> = None;
+    for line in stdout.lines() {
+        if let Some(name) = line.strip_prefix("+ create: ") {
+            flush(current.as_ref(), &mut options, &mut changes);
+            let name = decode(name);
+            changes.insert(format!("{name} name"), name.clone());
+            current = Some(name);
+        } else if let Some(option) = line.strip_prefix("    - ") {
+            if let Some(list) = options.as_mut() {
+                list.push(decode(option));
+            }
+        } else if let (Some(rest), Some(name)) = (line.strip_prefix("  "), current.as_ref()) {
+            if rest == "options:" {
+                options = Some(Vec::new());
+            } else if let Some((key, value)) = rest.split_once(": ") {
+                let value = if key == "description" {
+                    decode(value)
+                } else {
+                    value.to_string()
+                };
+                changes.insert(format!("{name} {key}"), value);
+            }
+        } else {
+            flush(current.as_ref(), &mut options, &mut changes);
+            current = None;
+        }
+    }
+    flush(current.as_ref(), &mut options, &mut changes);
+    changes
+}
+
+#[test]
+fn user_field_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    let file = write_file(
+        &dir,
+        "user-fields.yaml",
+        &USER_FIELDS_FILE.replace("{source}", &url),
+    );
+    let file = file.to_str().expect("UTF-8 path");
+
+    let options =
+        serde_json::to_string(&["Zebra", "Alpha", "Café \"quoted\""]).expect("options JSON");
+    let expected: BTreeMap<String, String> = [
+        ("Movements name", "Movements"),
+        (
+            "Movements description",
+            "Which \"movements\" é— do you work with?",
+        ),
+        ("Movements field_type", "multiselect"),
+        ("Movements editable", "true"),
+        ("Movements requirement", "on_signup"),
+        ("Movements show_on_profile", "false"),
+        ("Movements show_on_signup", "true"),
+        ("Movements show_on_user_card", "false"),
+        ("Movements searchable", "true"),
+        ("Movements options", options.as_str()),
+        ("Pronouns name", "Pronouns"),
+        ("Pronouns description", "How should we refer to you?"),
+        ("Pronouns field_type", "text"),
+        ("Pronouns editable", "false"),
+        ("Pronouns requirement", "optional"),
+        ("Pronouns show_on_profile", "true"),
+        ("Pronouns show_on_signup", "false"),
+        ("Pronouns show_on_user_card", "true"),
+        ("Pronouns searchable", "false"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "user-field", "push", "mock", file],
+        &["user-field", "push", "mock", file],
+        parse_user_field_planned_changes,
+        &expected,
+    );
 }
