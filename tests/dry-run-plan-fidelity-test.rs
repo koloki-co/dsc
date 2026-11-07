@@ -205,6 +205,60 @@ fn server_category_field(id: &str, field: &str) -> Option<String> {
     }
 }
 
+/// Frozen server-side theme for `theme field push`, as
+/// `GET /admin/themes/43.json` always returns it. `common/scss` exists (the
+/// update path), `common/header` does not (the create path), and
+/// `desktop/scss` already holds exactly what the unchanged-case file holds.
+const SERVER_THEME_FIELDS_JSON: &str = r#"{"theme":{"id":43,"name":"field theme","theme_fields":[
+    {"target":"common","name":"scss","value":"a { color: red; }","type_id":1},
+    {"target":"desktop","name":"scss","value":"same","type_id":1}
+]}}"#;
+
+/// `(target, name)` pairs present in `SERVER_THEME_FIELDS_JSON`, so the mock
+/// can classify a real-run upsert as an update or a create the same way the
+/// plan's verb claims to.
+const SERVER_THEME_FIELD_SPECS: &[(&str, &str)] = &[("common", "scss"), ("desktop", "scss")];
+
+/// Frozen server-side user fields, as `GET /admin/config/user_fields.json`
+/// always returns them. `Location` is unrelated to the pushed file, so
+/// `user-field push` must plan around it rather than touch it. The list stays
+/// frozen after the real run's POSTs, so a re-plan never sees the new fields.
+const SERVER_USER_FIELDS_JSON: &str = r#"{"user_fields":[
+    {"id":1,"name":"Location","description":"Where are you?","field_type":"text","editable":true,"requirement":"optional","show_on_profile":true,"show_on_signup":false,"show_on_user_card":false,"searchable":false}
+]}"#;
+
+/// User field snapshot pushed in both phases (`{source}` is replaced with the
+/// mock URL, since `user-field push` refuses a snapshot from another forum).
+/// Two new fields: a multiselect with a deliberately unsorted option list and
+/// a multi-byte, quoted description, and a plain text field that must send no
+/// `options` key at all.
+const USER_FIELDS_FILE: &str = r#"version: 1
+source: {source}
+user_fields:
+  - name: Movements
+    description: "Which \"movements\" é— do you work with?"
+    field_type: multiselect
+    editable: true
+    requirement: on_signup
+    show_on_profile: false
+    show_on_signup: true
+    show_on_user_card: false
+    searchable: true
+    options:
+      - Zebra
+      - Alpha
+      - "Café \"quoted\""
+  - name: Pronouns
+    description: How should we refer to you?
+    field_type: text
+    editable: false
+    requirement: optional
+    show_on_profile: true
+    show_on_signup: false
+    show_on_user_card: true
+    searchable: false
+"#;
+
 #[derive(Default)]
 struct Recorder {
     /// Overrides the `GET /tag_groups.json` body when set; the default is
@@ -258,6 +312,60 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
         ("HTTP/1.1 200 OK", SERVER_SETTINGS_JSON.to_string())
     } else if method == "GET" && path == "/admin/themes/42.json" {
         ("HTTP/1.1 200 OK", SERVER_THEME_JSON.to_string())
+    } else if method == "GET" && path == "/admin/themes/43.json" {
+        ("HTTP/1.1 200 OK", SERVER_THEME_FIELDS_JSON.to_string())
+    } else if method == "PUT" && path == "/admin/themes/43.json" {
+        // `theme field push`: JSON `{"theme":{"theme_fields":[{target,name,
+        // value,type_id}]}}`; recorded per field as `<verb> theme 43 field
+        // <target>/<name> -> value byte length`, the verb derived from
+        // whether the field exists in the frozen fixture.
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let mut recorder = recorder.lock().expect("recorder lock");
+        for field in payload["theme"]["theme_fields"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let target = field["target"].as_str().unwrap_or_default();
+            let name = field["name"].as_str().unwrap_or_default();
+            let verb = if SERVER_THEME_FIELD_SPECS.contains(&(target, name)) {
+                "update"
+            } else {
+                "create"
+            };
+            recorder.puts.push((
+                format!("{verb} theme 43 field {target}/{name}"),
+                field["value"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .len()
+                    .to_string(),
+            ));
+        }
+        ("HTTP/1.1 200 OK", r#"{"theme":{"id":43}}"#.to_string())
+    } else if method == "GET" && path == "/admin/config/user_fields.json" {
+        ("HTTP/1.1 200 OK", SERVER_USER_FIELDS_JSON.to_string())
+    } else if method == "POST" && path == "/admin/config/user_fields.json" {
+        // `user-field push`: JSON `{"user_field":{...}}`; every key on the
+        // wire is recorded as `<name> <key> -> value` (strings as-is, other
+        // values as JSON), so an unplanned key such as a leaked `id` shows up
+        // as a mismatch, not only a wrong value.
+        let payload: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+        let field = &payload["user_field"];
+        let name = field["name"].as_str().unwrap_or_default().to_string();
+        let mut recorder = recorder.lock().expect("recorder lock");
+        for (key, value) in field.as_object().into_iter().flatten() {
+            let value = match value {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            };
+            recorder.puts.push((format!("{name} {key}"), value));
+        }
+        // Echo the name back so the apply path's post-write check passes.
+        (
+            "HTTP/1.1 200 OK",
+            serde_json::json!({"user_field": {"id": 50, "name": name}}).to_string(),
+        )
     } else if method == "GET" && path == "/admin/color_schemes.json" {
         ("HTTP/1.1 200 OK", SERVER_PALETTES_JSON.to_string())
     } else if method == "GET" && path == "/tags.json" {
@@ -1336,5 +1444,187 @@ fn category_def_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_s
             ("create Fresh".to_string(), String::new()),
             ("update General".to_string(), "color, position".to_string()),
         ]),
+    );
+}
+
+/// Parse `dsc theme field push`'s `[dry-run] <forum>: would <verb> theme <id>
+/// field <spec> (<old> -> <new> bytes)` line into
+/// `<verb> theme <id> field <spec> -> <new>`.
+fn parse_theme_field_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    for line in stdout.lines() {
+        let Some((_, rest)) = line.split_once(": would ") else {
+            continue;
+        };
+        let Some((target, sizes)) = rest.split_once(" (") else {
+            continue;
+        };
+        let Some(new_bytes) = sizes
+            .strip_suffix(" bytes)")
+            .and_then(|s| s.split_once(" -> "))
+            .map(|(_, new)| new)
+        else {
+            continue;
+        };
+        changes.insert(target.to_string(), new_bytes.to_string());
+    }
+    changes
+}
+
+#[test]
+fn theme_field_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    // Each run pushes one field, so cover the update, create and unchanged
+    // paths as separate frozen-state comparisons. The update body is
+    // multi-byte, so the planned size must be bytes, not chars.
+    /// `(field spec, pushed file content, expected plan entries)`.
+    type Case<'a> = (&'a str, &'a str, &'a [(&'a str, &'a str)]);
+    let cases: &[Case] = &[
+        (
+            "common/scss",
+            "a { content: \"\u{e9}\u{2014}\u{1f600}\"; }\n",
+            &[("update theme 43 field common/scss", "28")],
+        ),
+        (
+            "common/header",
+            "<div class=\"banner\">hi</div>\n",
+            &[("create theme 43 field common/header", "29")],
+        ),
+        ("desktop/scss", "same", &[]),
+    ];
+    for (spec, content, expected) in cases {
+        let recorder = Arc::new(Mutex::new(Recorder::default()));
+        let url = start_mock(Arc::clone(&recorder));
+        let dir = TempDir::new().expect("tempdir");
+        let config_path = mock_config(&dir, &url);
+        let file = write_file(&dir, "field.txt", content);
+        let file = file.to_str().expect("UTF-8 path");
+
+        assert_dry_run_plan_matches_real_run(
+            &config_path,
+            &recorder,
+            &[
+                "--dry-run",
+                "theme",
+                "field",
+                "push",
+                "mock",
+                "43",
+                spec,
+                file,
+            ],
+            &["theme", "field", "push", "mock", "43", spec, file, "--yes"],
+            parse_theme_field_planned_changes,
+            &expected
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
+    }
+}
+
+/// Parse `dsc user-field push`'s plan - a `+ create: "<name>"` line followed
+/// by indented `  <key>: <value>` lines and an optional `  options:` list of
+/// `    - "<option>"` lines - into `<name> <key> -> value`, with JSON-quoted
+/// strings decoded and the option list rendered as a JSON array, matching
+/// how the mock records the real run's POST body.
+fn parse_user_field_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    fn decode(s: &str) -> String {
+        serde_json::from_str::<String>(s).unwrap_or_else(|_| s.to_string())
+    }
+    fn flush(
+        current: Option<&String>,
+        options: &mut Option<Vec<String>>,
+        changes: &mut BTreeMap<String, String>,
+    ) {
+        if let (Some(name), Some(list)) = (current, options.take()) {
+            changes.insert(
+                format!("{name} options"),
+                serde_json::to_string(&list).expect("options JSON"),
+            );
+        }
+    }
+    let mut changes = BTreeMap::new();
+    let mut current: Option<String> = None;
+    let mut options: Option<Vec<String>> = None;
+    for line in stdout.lines() {
+        if let Some(name) = line.strip_prefix("+ create: ") {
+            flush(current.as_ref(), &mut options, &mut changes);
+            let name = decode(name);
+            changes.insert(format!("{name} name"), name.clone());
+            current = Some(name);
+        } else if let Some(option) = line.strip_prefix("    - ") {
+            if let Some(list) = options.as_mut() {
+                list.push(decode(option));
+            }
+        } else if let (Some(rest), Some(name)) = (line.strip_prefix("  "), current.as_ref()) {
+            if rest == "options:" {
+                options = Some(Vec::new());
+            } else if let Some((key, value)) = rest.split_once(": ") {
+                let value = if key == "description" {
+                    decode(value)
+                } else {
+                    value.to_string()
+                };
+                changes.insert(format!("{name} {key}"), value);
+            }
+        } else {
+            flush(current.as_ref(), &mut options, &mut changes);
+            current = None;
+        }
+    }
+    flush(current.as_ref(), &mut options, &mut changes);
+    changes
+}
+
+#[test]
+fn user_field_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+    let file = write_file(
+        &dir,
+        "user-fields.yaml",
+        &USER_FIELDS_FILE.replace("{source}", &url),
+    );
+    let file = file.to_str().expect("UTF-8 path");
+
+    let options =
+        serde_json::to_string(&["Zebra", "Alpha", "Café \"quoted\""]).expect("options JSON");
+    let expected: BTreeMap<String, String> = [
+        ("Movements name", "Movements"),
+        (
+            "Movements description",
+            "Which \"movements\" é— do you work with?",
+        ),
+        ("Movements field_type", "multiselect"),
+        ("Movements editable", "true"),
+        ("Movements requirement", "on_signup"),
+        ("Movements show_on_profile", "false"),
+        ("Movements show_on_signup", "true"),
+        ("Movements show_on_user_card", "false"),
+        ("Movements searchable", "true"),
+        ("Movements options", options.as_str()),
+        ("Pronouns name", "Pronouns"),
+        ("Pronouns description", "How should we refer to you?"),
+        ("Pronouns field_type", "text"),
+        ("Pronouns editable", "false"),
+        ("Pronouns requirement", "optional"),
+        ("Pronouns show_on_profile", "true"),
+        ("Pronouns show_on_signup", "false"),
+        ("Pronouns show_on_user_card", "true"),
+        ("Pronouns searchable", "false"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect();
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "user-field", "push", "mock", file],
+        &["user-field", "push", "mock", file],
+        parse_user_field_planned_changes,
+        &expected,
     );
 }
