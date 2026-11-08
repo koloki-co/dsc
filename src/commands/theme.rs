@@ -304,6 +304,7 @@ pub fn theme_push(
                 name,
                 json_path.display()
             );
+            print_push_request_plan(&format!("PUT /admin/themes/{id}.json"), &push_data);
             return Ok(());
         }
         require_yes(
@@ -341,6 +342,13 @@ pub fn theme_push(
                 name,
                 json_path.display()
             );
+            print_push_request_plan("POST /admin/themes.json", &push_data);
+            if let Some(dark) = dark_palette_follow_up(&push_data) {
+                print_push_request_plan(
+                    "then PUT /admin/themes/<new id>.json",
+                    &json!({ "dark_color_scheme_id": dark }),
+                );
+            }
             return Ok(());
         }
         let new_id = create_theme_preserving_dark_palette(&client, &push_data)?;
@@ -384,10 +392,7 @@ fn create_theme_preserving_dark_palette(
     push_data: &Value,
 ) -> Result<u64> {
     let new_id = client.create_theme(push_data)?;
-    if let Some(dark_color_scheme_id) = push_data
-        .get("dark_color_scheme_id")
-        .filter(|value| !value.is_null())
-    {
+    if let Some(dark_color_scheme_id) = dark_palette_follow_up(push_data) {
         client
             .update_theme(
                 new_id as i64,
@@ -398,6 +403,44 @@ fn create_theme_preserving_dark_palette(
             })?;
     }
     Ok(new_id)
+}
+
+/// The dark palette a created theme needs assigned by a follow-up `PUT`:
+/// Discourse's `Themes::Create` accepts only the light palette, so a non-null
+/// `dark_color_scheme_id` in the create payload is applied afterwards. Shared
+/// by the create path and its dry-run plan so the two cannot disagree.
+fn dark_palette_follow_up(push_data: &Value) -> Option<&Value> {
+    push_data
+        .get("dark_color_scheme_id")
+        .filter(|value| !value.is_null())
+}
+
+/// Print one request of a `theme push` dry-run plan: the method and path,
+/// then every top-level key the payload sends under `theme`, in key order. Scalars print as compact JSON; each `theme_fields` entry prints as
+/// `theme_field <target>/<name>: <N> bytes` (or `no value` for a field
+/// without a text value, such as an upload reference), since a full SCSS or
+/// HTML body is not reviewable inline.
+fn print_push_request_plan(request: &str, payload: &Value) {
+    println!("  {request}");
+    let Some(map) = payload.as_object() else {
+        return;
+    };
+    for (key, value) in map {
+        if let (true, Some(fields)) = (key == "theme_fields", value.as_array()) {
+            for field in fields {
+                let target = field.get("target").and_then(Value::as_str).unwrap_or("?");
+                let name = field.get("name").and_then(Value::as_str).unwrap_or("?");
+                match field.get("value").and_then(Value::as_str) {
+                    Some(text) => {
+                        println!("    theme_field {target}/{name}: {} bytes", text.len())
+                    }
+                    None => println!("    theme_field {target}/{name}: no value"),
+                }
+            }
+        } else {
+            println!("    {key}: {value}");
+        }
+    }
 }
 
 /// Build a payload suitable for creating or updating a theme.

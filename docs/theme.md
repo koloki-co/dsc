@@ -67,6 +67,20 @@ Pushes a local JSON theme file to a Discourse instance.
 - If the JSON file contains an `id` field, `dsc` refuses to guess: pass that ID explicitly as `<theme-id>` to update, or remove the `id` to create a new theme. This prevents a file pulled from one forum from silently overwriting a same-numbered theme on another.
 - Otherwise (no `<theme-id>`, no `id` in the file) creates a new theme and prints the new ID.
 
+With `--dry-run`, the plan names the target and then lists each request a real run would send, with every top-level key it carries. Text fields are shown as byte counts rather than inline bodies. Read-only keys from a pulled file (`id`, `default`, `settings`, timestamps) are never sent, so they never appear. When a created theme has a dark palette, the plan also shows the follow-up `PUT` that assigns it:
+
+```text
+[dry-run] forum: would create theme "Fresh theme" from fresh.json
+  POST /admin/themes.json
+    color_scheme_id: 3
+    component: false
+    dark_color_scheme_id: 5
+    name: "Fresh theme"
+    theme_field desktop/header: 9 bytes
+  then PUT /admin/themes/<new id>.json
+    dark_color_scheme_id: 5
+```
+
 ## dsc theme duplicate
 
 ```
