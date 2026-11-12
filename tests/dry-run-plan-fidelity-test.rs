@@ -219,6 +219,60 @@ const SERVER_THEME_FIELDS_JSON: &str = r#"{"theme":{"id":43,"name":"field theme"
 /// plan's verb claims to.
 const SERVER_THEME_FIELD_SPECS: &[(&str, &str)] = &[("common", "scss"), ("desktop", "scss")];
 
+/// Frozen server-side theme for whole-theme `theme push` updates, as
+/// `GET /admin/themes/44.json` always returns it. The update plan reads only
+/// its name, so the request it states must come from the file, not from here.
+const SERVER_THEME_PUSH_JSON: &str = r#"{"theme":{"id":44,"name":"push theme","enabled":true}}"#;
+
+/// Whole-theme update file, shaped like a `theme pull` snapshot: it carries
+/// read-only keys (`id`, `default`, `settings`, `created_at`) that must be
+/// neither planned nor sent, a null dark palette that must be sent as null,
+/// a multi-byte SCSS field (so the planned size must be bytes, not chars),
+/// and an upload field with no text value.
+const THEME_PUSH_UPDATE_FILE: &str = r#"{"id":44,"name":"Renamed é theme","default":true,
+"enabled":false,"user_selectable":true,"component":false,
+"color_scheme_id":3,"dark_color_scheme_id":null,
+"created_at":"2026-01-01T00:00:00Z",
+"settings":[{"setting":"x","value":"y"}],
+"theme_fields":[
+  {"target":"common","name":"scss","value":"a { content: \"é—\"; }","type_id":1},
+  {"target":"common","name":"logo","type_id":2,"upload_id":17}
+]}"#;
+
+/// Whole-theme create file: no `id`, and a non-null dark palette, which
+/// Discourse's create service ignores, so `theme push` must both send it on
+/// the `POST` and apply it with a follow-up `PUT` - and the plan must say so.
+const THEME_PUSH_CREATE_FILE: &str = r#"{"name":"Fresh theme","component":false,
+"color_scheme_id":3,"dark_color_scheme_id":5,
+"theme_fields":[{"target":"desktop","name":"header","value":"<b>hi</b>","type_id":0}]}"#;
+
+/// Record every top-level key of a whole-theme `{"theme":{...}}` request body
+/// as `<request> <key> -> value`, in the same rendering `theme push`'s plan
+/// uses: compact JSON for scalars, and `theme_field <target>/<name> ->
+/// "<N> bytes"` (or `"no value"`) per field.
+fn record_theme_push_request(recorder: &Mutex<Recorder>, request: &str, body: &str) {
+    let payload: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let mut recorder = recorder.lock().expect("recorder lock");
+    for (key, value) in payload["theme"].as_object().into_iter().flatten() {
+        if key == "theme_fields" {
+            for field in value.as_array().into_iter().flatten() {
+                let target = field["target"].as_str().unwrap_or_default();
+                let name = field["name"].as_str().unwrap_or_default();
+                let size = field["value"]
+                    .as_str()
+                    .map_or_else(|| "no value".to_string(), |v| format!("{} bytes", v.len()));
+                recorder
+                    .puts
+                    .push((format!("{request} theme_field {target}/{name}"), size));
+            }
+        } else {
+            recorder
+                .puts
+                .push((format!("{request} {key}"), value.to_string()));
+        }
+    }
+}
+
 /// Frozen server-side user fields, as `GET /admin/config/user_fields.json`
 /// always returns them. `Location` is unrelated to the pushed file, so
 /// `user-field push` must plan around it rather than touch it. The list stays
@@ -312,6 +366,20 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
         ("HTTP/1.1 200 OK", SERVER_SETTINGS_JSON.to_string())
     } else if method == "GET" && path == "/admin/themes/42.json" {
         ("HTTP/1.1 200 OK", SERVER_THEME_JSON.to_string())
+    } else if method == "GET" && path == "/admin/themes/44.json" {
+        ("HTTP/1.1 200 OK", SERVER_THEME_PUSH_JSON.to_string())
+    } else if method == "PUT" && path == "/admin/themes/44.json" {
+        record_theme_push_request(recorder, "PUT /admin/themes/44.json", &body);
+        ("HTTP/1.1 200 OK", r#"{"theme":{"id":44}}"#.to_string())
+    } else if method == "POST" && path == "/admin/themes.json" {
+        record_theme_push_request(recorder, "POST /admin/themes.json", &body);
+        ("HTTP/1.1 200 OK", r#"{"theme":{"id":900}}"#.to_string())
+    } else if method == "PUT" && path == "/admin/themes/900.json" {
+        // The follow-up to the create above. The plan cannot know the
+        // assigned ID, so map it back to the plan's `<new id>` placeholder -
+        // but only for the ID the create actually returned.
+        record_theme_push_request(recorder, "then PUT /admin/themes/<new id>.json", &body);
+        ("HTTP/1.1 200 OK", r#"{"theme":{"id":900}}"#.to_string())
     } else if method == "GET" && path == "/admin/themes/43.json" {
         ("HTTP/1.1 200 OK", SERVER_THEME_FIELDS_JSON.to_string())
     } else if method == "PUT" && path == "/admin/themes/43.json" {
@@ -1627,4 +1695,96 @@ fn user_field_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_sta
         parse_user_field_planned_changes,
         &expected,
     );
+}
+
+/// Parse `dsc theme push`'s plan: an indented `  <METHOD> <path>` request
+/// line followed by `    <key>: <value>` lines, into `<request> <key> ->
+/// value`, matching how the mock records each real request body.
+fn parse_theme_push_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    let mut changes = BTreeMap::new();
+    let mut request: Option<&str> = None;
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("    ") {
+            if let (Some(request), Some((key, value))) = (request, rest.split_once(": ")) {
+                changes.insert(format!("{request} {key}"), value.to_string());
+            }
+        } else if let Some(rest) = line.strip_prefix("  ") {
+            request = Some(rest);
+        } else {
+            request = None;
+        }
+    }
+    changes
+}
+
+#[test]
+fn theme_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    /// `(file content, theme ID argument, expected plan entries)`.
+    type Case<'a> = (&'a str, Option<&'a str>, &'a [(&'a str, &'a str)]);
+    let cases: &[Case] = &[
+        (
+            THEME_PUSH_UPDATE_FILE,
+            Some("44"),
+            &[
+                ("PUT /admin/themes/44.json name", "\"Renamed é theme\""),
+                ("PUT /admin/themes/44.json enabled", "false"),
+                ("PUT /admin/themes/44.json user_selectable", "true"),
+                ("PUT /admin/themes/44.json component", "false"),
+                ("PUT /admin/themes/44.json color_scheme_id", "3"),
+                ("PUT /admin/themes/44.json dark_color_scheme_id", "null"),
+                (
+                    "PUT /admin/themes/44.json theme_field common/scss",
+                    "23 bytes",
+                ),
+                (
+                    "PUT /admin/themes/44.json theme_field common/logo",
+                    "no value",
+                ),
+            ],
+        ),
+        (
+            THEME_PUSH_CREATE_FILE,
+            None,
+            &[
+                ("POST /admin/themes.json name", "\"Fresh theme\""),
+                ("POST /admin/themes.json component", "false"),
+                ("POST /admin/themes.json color_scheme_id", "3"),
+                ("POST /admin/themes.json dark_color_scheme_id", "5"),
+                (
+                    "POST /admin/themes.json theme_field desktop/header",
+                    "9 bytes",
+                ),
+                (
+                    "then PUT /admin/themes/<new id>.json dark_color_scheme_id",
+                    "5",
+                ),
+            ],
+        ),
+    ];
+    for (content, theme_id, expected) in cases {
+        let recorder = Arc::new(Mutex::new(Recorder::default()));
+        let url = start_mock(Arc::clone(&recorder));
+        let dir = TempDir::new().expect("tempdir");
+        let config_path = mock_config(&dir, &url);
+        let file = write_file(&dir, "theme.json", content);
+        let file = file.to_str().expect("UTF-8 path");
+
+        let mut dry_run_args = vec!["--dry-run", "theme", "push", "mock", file];
+        let mut real_args = vec!["theme", "push", "mock", file];
+        if let Some(id) = theme_id {
+            dry_run_args.push(id);
+            real_args.extend([*id, "--yes"]);
+        }
+        assert_dry_run_plan_matches_real_run(
+            &config_path,
+            &recorder,
+            &dry_run_args,
+            &real_args,
+            parse_theme_push_planned_changes,
+            &expected
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
+    }
 }
