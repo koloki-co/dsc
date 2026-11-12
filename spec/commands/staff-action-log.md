@@ -65,3 +65,38 @@ aggregation is `R20`'s job, not this command's.
 - Not yet covered: custom/plugin action types, `--action-id` (the numeric
   code, vs. the validated symbolic `--action` name), pagination, substring
   subject search, and cross-forum aggregation - add on demand.
+
+## Investigation follow-up (R83)
+
+> **Status: proposed, not implemented.** Field driver: a November 2026 account-history investigation using `dsc 0.24.0` against Discourse `2026.11.0-latest`. The existing actor/target filters successfully established role changes and account/post deletions, but required separate requests and local date filtering. The current serializer intentionally drops metadata that is useful for incident evidence, not merely presentation.
+
+Tentative additive surface:
+
+```text
+dsc log staff <forum> --user <username> --since <timestamp> --until <timestamp>
+    [--include-context] [--include-email] [--include-ip] --format json
+```
+
+- `--user` means actor **or** target. Fetch both existing filtered streams, deduplicate by log-entry ID and order deterministically. Reject combination with `--acting-user`/`--target-user` rather than silently changing their established AND semantics. Self-initiated email events may have only an actor; a target-only search must not masquerade as complete account history.
+- `--until` supplies a bounded historical end date. Resolve relative `--since` once; require a precise ISO timestamp for `--until`, reject reversed windows and document inclusivity. The source controller accepts `start_date`, `end_date`, `page` and `limit`, but the currently installed CLI exposes only the lower date bound and one page.
+- Design bounded pagination with an explicit completeness state. Preserve the existing `--limit` contract; verify the live paging/total-count contract before introducing a larger export option. Preserve date/action/user filters explicitly on every page: do not blindly follow a `load_more` URL that might omit them. R65 owns any durable bundle envelope.
+- `--include-context` preserves available `context`, post/topic/category/reviewable IDs, action IDs and custom-type metadata in an opt-in expanded result. Default output remains backward compatible. In this investigation the omitted context could have helped distinguish a user-deletion cascade from individual post deletion; timestamps and source inspection were used instead. Never manufacture a causal link when the source supplies none.
+- Email and IP fields require separate explicit opt-ins and ordinary permission checks. These are personal-data fields, not presentation-only fields. No token or credential output. Preserve server redaction and distinguish absent/withheld/unknown data where the API permits.
+
+### Evidence and validation
+
+Observed through existing CLI requests, with account parameters redacted:
+
+```text
+GET /admin/logs/staff_action_logs.json?acting_user={username}&limit=200
+GET /admin/logs/staff_action_logs.json?target_user={username}&limit=200
+GET /admin/logs/staff_action_logs.json?action_name=grant_moderation&start_date={timestamp}&limit=200
+```
+
+The results were below the requested limit; pagination did not block this particular investigation. End-date/paging support and additional serialized fields are source-derived contracts requiring live test-account verification. Current `StaffActionLog` preserves `details` and old/new values but omits `context`, linkage IDs and response completeness metadata.
+
+- [ ] Capture sanitized live evidence for upper date bounds, paging, total counts, optional fields and redaction without creating production moderation events.
+- [ ] Test actor-or-target union, self-actions with null targets, duplicate IDs, stable ordering, date-window boundaries, page/filter retention, budget exhaustion and no false completeness claims.
+- [ ] Test default output compatibility, opt-in metadata, withheld sensitive fields and absence of mutations.
+
+No automation attribution is inferred from log timing. Account deletion can emit many associated post-deletion rows automatically, and an actor username alone cannot distinguish a browser click, API client or account takeover.
