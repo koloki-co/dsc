@@ -4,7 +4,7 @@
 
 use super::client::{DiscourseClient, PageCursor, ResponseBody, json_page_path};
 use super::error::http_error;
-use super::models::{CreatePostResponse, TopicResponse};
+use super::models::{CreatePostResponse, TopicResponse, deserialize_tag_names};
 use anyhow::{Context, Result, anyhow};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -91,7 +91,7 @@ struct DeletedTopicRow {
     posts_count: u64,
     #[serde(default)]
     category_id: Option<u64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_tag_names")]
     tags: Option<Vec<String>>,
 }
 

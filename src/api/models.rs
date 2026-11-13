@@ -413,3 +413,122 @@ pub struct CreateGroupResponse {
 pub struct CreatedGroup {
     pub id: u64,
 }
+
+/// Deserialize a topic-list row's `tags` field into tag names.
+///
+/// Discourse has returned this field in two shapes: a legacy array of tag-name
+/// strings, and (current releases, observed on `2026.11.0-latest.1`) an array
+/// of tag objects such as `{"id": 1, "name": "bug", "slug": "bug"}`. Both are
+/// accepted; an object contributes its `name`, falling back to `slug`. A
+/// missing or `null` field is `None`. Any other shape (a non-array value, or an
+/// entry that is neither a string nor an object carrying a string `name` or
+/// `slug`) is rejected with a shape-only error that never echoes the payload,
+/// rather than being silently dropped or coerced.
+pub(crate) fn deserialize_tag_names<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    use serde_json::Value;
+
+    let Some(value) = Option::<Value>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+    let Value::Array(items) = value else {
+        return Err(D::Error::custom(format!(
+            "unsupported topic `tags` shape: expected an array, got {}",
+            json_kind(&value)
+        )));
+    };
+    items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| match item {
+            Value::String(name) => Ok(name.clone()),
+            Value::Object(map) => ["name", "slug"]
+                .iter()
+                .find_map(|key| map.get(*key).and_then(Value::as_str))
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    D::Error::custom(format!(
+                        "unsupported topic tag object at index {index}: expected a string `name` or `slug`"
+                    ))
+                }),
+            other => Err(D::Error::custom(format!(
+                "unsupported topic tag entry at index {index}: expected a string or tag object, got {}",
+                json_kind(other)
+            ))),
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+fn json_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "a boolean",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
+    }
+}
+
+#[cfg(test)]
+mod tag_name_tests {
+    use super::deserialize_tag_names;
+    use serde::Deserialize;
+
+    #[derive(Debug, Deserialize)]
+    struct Row {
+        #[serde(default, deserialize_with = "deserialize_tag_names")]
+        tags: Option<Vec<String>>,
+    }
+
+    fn parse(json: &str) -> Result<Option<Vec<String>>, String> {
+        serde_json::from_str::<Row>(json)
+            .map(|row| row.tags)
+            .map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn accepts_legacy_string_tags() {
+        assert_eq!(
+            parse(r#"{"tags":["bug","ops"]}"#).unwrap(),
+            Some(vec!["bug".to_string(), "ops".to_string()])
+        );
+    }
+
+    #[test]
+    fn accepts_current_tag_objects_preferring_name_then_slug() {
+        assert_eq!(
+            parse(r#"{"tags":[{"id":1,"name":"Bug","slug":"bug"},{"id":2,"slug":"ops"}]}"#)
+                .unwrap(),
+            Some(vec!["Bug".to_string(), "ops".to_string()])
+        );
+    }
+
+    #[test]
+    fn missing_null_and_empty_tags() {
+        assert_eq!(parse(r#"{}"#).unwrap(), None);
+        assert_eq!(parse(r#"{"tags":null}"#).unwrap(), None);
+        assert_eq!(parse(r#"{"tags":[]}"#).unwrap(), Some(vec![]));
+    }
+
+    #[test]
+    fn rejects_unknown_shapes_without_echoing_content() {
+        let err = parse(r#"{"tags":"private-tag"}"#).unwrap_err();
+        assert!(err.contains("expected an array, got a string"), "{err}");
+        assert!(!err.contains("private-tag"), "{err}");
+
+        let err = parse(r#"{"tags":[{"id":7,"label":"private-tag"}]}"#).unwrap_err();
+        assert!(err.contains("tag object at index 0"), "{err}");
+        assert!(!err.contains("private-tag"), "{err}");
+
+        let err = parse(r#"{"tags":["ok",42]}"#).unwrap_err();
+        assert!(err.contains("index 1"), "{err}");
+        assert!(err.contains("got a number"), "{err}");
+    }
+}
