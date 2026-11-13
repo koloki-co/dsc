@@ -4,6 +4,7 @@
 
 use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
+use super::models::deserialize_tag_names;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -20,7 +21,7 @@ pub struct SearchHit {
     pub posts_count: u64,
     #[serde(default)]
     pub category_id: Option<u64>,
-    #[serde(default, deserialize_with = "deserialize_search_tags")]
+    #[serde(default, deserialize_with = "deserialize_tag_names")]
     pub tags: Option<Vec<String>>,
 }
 
@@ -65,37 +66,6 @@ impl DiscourseClient {
     }
 }
 
-fn deserialize_search_tags<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
-    let Some(value) = value else {
-        return Ok(None);
-    };
-    let Some(items) = value.as_array() else {
-        return Ok(None);
-    };
-    let tags = items
-        .iter()
-        .filter_map(|item| {
-            item.as_str()
-                .map(|s| s.to_string())
-                .or_else(|| {
-                    item.get("name")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                })
-                .or_else(|| {
-                    item.get("slug")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                })
-        })
-        .collect();
-    Ok(Some(tags))
-}
-
 /// Minimal `application/x-www-form-urlencoded` encoder for the query string.
 /// Avoids pulling in an extra crate just for one field.
 pub(super) fn urlencode_form(input: &str) -> String {
@@ -115,12 +85,12 @@ pub(super) fn urlencode_form(input: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{deserialize_search_tags, urlencode_form};
+    use super::{deserialize_tag_names, urlencode_form};
     use serde::Deserialize;
 
     #[derive(Debug, Deserialize)]
     struct TagsWrapper {
-        #[serde(default, deserialize_with = "deserialize_search_tags")]
+        #[serde(default, deserialize_with = "deserialize_tag_names")]
         tags: Option<Vec<String>>,
     }
 
