@@ -35,6 +35,8 @@ pub enum LogKind {
     Current,
     SkippedRecent,
     SkippedRebuild,
+    ReportingFailed,
+    Reported,
     Failed,
 }
 
@@ -46,6 +48,8 @@ impl LogKind {
             LogKind::Current => "current",
             LogKind::SkippedRecent => "skipped-recent",
             LogKind::SkippedRebuild => "skipped-rebuild",
+            LogKind::ReportingFailed => "reporting-failed",
+            LogKind::Reported => "reported",
             LogKind::Failed => "failed",
         }
     }
@@ -57,6 +61,8 @@ impl LogKind {
             "current" => LogKind::Current,
             "skipped-recent" => LogKind::SkippedRecent,
             "skipped-rebuild" => LogKind::SkippedRebuild,
+            "reporting-failed" => LogKind::ReportingFailed,
+            "reported" => LogKind::Reported,
             "failed" => LogKind::Failed,
             _ => return None,
         })
@@ -64,7 +70,10 @@ impl LogKind {
 
     /// A pass that confirmed the forum is up to date - counts for skip-recent.
     fn is_success(self) -> bool {
-        matches!(self, LogKind::Updated | LogKind::Current)
+        matches!(
+            self,
+            LogKind::Updated | LogKind::Current | LogKind::Reported
+        )
     }
 }
 
@@ -154,6 +163,17 @@ pub fn read_records() -> Vec<LogRecord> {
         return Vec::new();
     };
     content.lines().filter_map(parse_line).collect()
+}
+
+/// The most recent terminal record for `forum` requires an explicit reporting
+/// reconciliation. A later outcome always supersedes it, preventing a second
+/// reporting-only post after the original failure has been resolved.
+pub fn pending_reporting_failure(forum: &str) -> Option<LogRecord> {
+    read_records()
+        .into_iter()
+        .rev()
+        .find(|record| record.forum == forum)
+        .filter(|record| record.outcome == LogKind::ReportingFailed.as_str())
 }
 
 /// Parse a duration like `24h`, `6h`, `7d`, `30m`, `90s`. A bare number is hours.
@@ -343,7 +363,9 @@ mod tests {
     fn is_success_only_for_updated_and_current() {
         assert!(LogKind::Updated.is_success());
         assert!(LogKind::Current.is_success());
+        assert!(LogKind::Reported.is_success());
         assert!(!LogKind::Started.is_success());
+        assert!(!LogKind::ReportingFailed.is_success());
         assert!(!LogKind::Failed.is_success());
         assert!(!LogKind::SkippedRecent.is_success());
     }

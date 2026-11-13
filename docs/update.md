@@ -5,6 +5,7 @@ Runs remote OS and Discourse update workflows over SSH.
 ```
 dsc update <name|all> [-p [N]] [--skip-recent [DUR]] [--force] [--no-changelog] [--yes] [--branch <BRANCH>]
 dsc update log [--latest] [--since <DUR>] [--format text|md|json]
+dsc update report <name> <payload.md> [--yes]
 ```
 
 ## Flags
@@ -28,7 +29,8 @@ dsc update log [--latest] [--since <DUR>] [--format text|md|json]
 8. Run the Discourse rebuild (`./launcher rebuild app`) when step 7 cannot prove the running commit is current. This includes an unavailable GitHub comparison or unknown running commit, which deliberately fail open to a rebuild. A raw SSH exit 255 is not retried because it cannot prove whether launcher started.
 9. Require Discourse to serve version information again. When a newer target commit was known, refuse success if the running commit remained unchanged after the rebuild.
 10. Run Docker cleanup (`docker container prune -f && docker image prune -f`) and report root disk usage.
-11. Optionally post a changelog checklist to the configured topic.
+11. When changelog posting is enabled, read the configured topic before any remote mutation. A deleted, closed, archived, or inaccessible configured topic stops the run before OS update, reboot, or rebuild. Reply permission can still change after this read; any resulting post failure is recorded separately.
+12. Post the changelog checklist only after maintenance verifies healthy.
 
 If the OS update command fails, `dsc update` aborts after attempting the rollback command (when configured).
 
@@ -80,7 +82,7 @@ For an unattended pass that can be rerun after fixing a failed host, use:
 dsc update all -y --skip-recent
 ```
 
-`-y` confirms changelog posting without prompting. Before any update starts, `dsc` lists every target forum whose changelog will be skipped (missing `changelog_topic_id`, `apikey` or `api_username`), so an unattended run reports the gap up front rather than only after each forum finishes. `--skip-recent` silently skips forums successfully completed within the last 24 hours, so a rerun resumes with the failed and not-yet-started forums. Increase or reduce that window with `--skip-recent 6h`, for example. Do not use `--force` for routine recovery: it bypasses both the recent-success guard and the pre-existing rebuild guard.
+`-y` confirms changelog posting without prompting. Before any update starts, `dsc` lists every target forum whose changelog will be skipped (missing `changelog_topic_id`, `apikey` or `api_username`) and validates every configured topic, so an unattended run reports a reporting gap before maintenance begins. `--skip-recent` silently skips forums successfully completed within the last 24 hours, so a rerun resumes with the failed and not-yet-started forums. A post that fails after healthy maintenance is recorded as `reporting-failed` and is deliberately not skipped. Increase or reduce that window with `--skip-recent 6h`, for example. Do not use `--force` for routine recovery: it bypasses both the recent-success guard and the pre-existing rebuild guard.
 
 ## Rootless Docker
 
@@ -107,9 +109,19 @@ dsc update log --latest   # one row per forum (most recent state) - a fleet chec
 dsc update log --since 7d --format md
 ```
 
-- Outcomes recorded: `started` (an update pass began), `updated`, `current` (already on latest), `skipped-recent`, `skipped-rebuild`, `failed`. Normal passes have a terminal record after `started`; a lone `started` record means the local process was interrupted before it could record an outcome.
+- Outcomes recorded: `started` (an update pass began), `updated`, `current` (already on latest), `skipped-recent`, `skipped-rebuild`, `reporting-failed`, `reported`, `failed`. `updated` and `current` mean both maintenance and the required changelog post completed. `reporting-failed` means maintenance completed but the post did not; it never counts for `--skip-recent`. A lone `started` record means the local process was interrupted before it could record an outcome.
 - Format: tab-separated, timestamp-first (greppable/`tail`-able); the pretty view is rendered by `update log`.
 - Location: `$XDG_STATE_HOME/dsc/update.log` (default `~/.local/state/dsc/update.log`), overridable with `DSC_UPDATE_LOG`.
+
+## Reporting-only recovery
+
+If the post fails after maintenance, do not re-run `dsc update`. Fix or explicitly choose the reporting destination, save the printed update summary as a reviewed Markdown file, then run:
+
+```bash
+dsc update report myforum ./changelog-reconciliation.md --yes
+```
+
+This command only reads the configured topic and creates the reply. It refuses unless the most recent update-log record for that forum is `reporting-failed`, and it never opens SSH, updates packages, reboots, or rebuilds. On success it appends `reported`, preserving the maintenance versions and making the forum eligible for `--skip-recent`; it does not restore, reopen, replace, or otherwise alter a deleted/closed/archived topic.
 
 ## Environment variables
 

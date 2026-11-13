@@ -724,6 +724,8 @@ mod tests {
             posts_count: None,
             category_id: None,
             deleted_at: None,
+            closed: false,
+            archived: false,
             post_stream: PostStream { posts, stream },
         }
     }
@@ -848,6 +850,8 @@ mod tests {
             posts_count: None,
             category_id: None,
             deleted_at: None,
+            closed: false,
+            archived: false,
             post_stream: PostStream::default(),
         };
         assert_eq!(topic_display_title(&t2, 42), "my-slug");
@@ -859,6 +863,8 @@ mod tests {
             posts_count: None,
             category_id: None,
             deleted_at: None,
+            closed: false,
+            archived: false,
             post_stream: PostStream::default(),
         };
         assert_eq!(topic_display_title(&t3, 42), "topic-42");

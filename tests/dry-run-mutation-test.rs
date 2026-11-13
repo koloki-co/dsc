@@ -571,6 +571,7 @@ const CASES: &[Case] = &[
         false,
     ),
     ("update", &["update", "mock"], true),
+    ("update report", &["update", "report", "mock", "BODY"], true),
     // SSH-driven mutations: a dry run must describe the remote command only.
     (
         "theme install",

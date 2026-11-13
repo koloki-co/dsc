@@ -17,6 +17,7 @@ use reqwest::blocking::Client;
 use std::collections::{HashSet, VecDeque};
 use std::io::{self, Write};
 use std::io::{BufRead, BufReader, IsTerminal};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -94,7 +95,7 @@ pub fn update_one(
         return Ok(());
     }
 
-    warn_changelog_preflight(std::slice::from_ref(discourse), post_changelog);
+    changelog_preflight(std::slice::from_ref(discourse), post_changelog)?;
     let branch = resolve_branch(discourse, branch_override);
     update_and_log(discourse, post_changelog, yes, force, &branch)
 }
@@ -131,7 +132,7 @@ pub fn update_all(
         .into_iter()
         .filter(|d| !skip_set.contains(&d.name))
         .collect();
-    warn_changelog_preflight(&to_update, post_changelog);
+    changelog_preflight(&to_update, post_changelog)?;
 
     let Some(width) = parallel else {
         for discourse in &to_update {
@@ -260,6 +261,17 @@ fn update_and_log(
             } else {
                 LogKind::Current
             };
+            let payload = print_update_summary(discourse, &metadata);
+            if post_changelog && let Err(error) = handle_changelog_post(discourse, &payload, yes) {
+                update_log::append(
+                    &discourse.name,
+                    LogKind::ReportingFailed,
+                    metadata.before_version.as_deref().unwrap_or("-"),
+                    metadata.after_version.as_deref().unwrap_or("-"),
+                    &failure_log_detail(&error),
+                );
+                return Err(error);
+            }
             update_log::append(
                 &discourse.name,
                 kind,
@@ -267,10 +279,6 @@ fn update_and_log(
                 metadata.after_version.as_deref().unwrap_or("-"),
                 "-",
             );
-            let payload = print_update_summary(discourse, &metadata);
-            if post_changelog {
-                handle_changelog_post(discourse, &payload, yes)?;
-            }
             Ok(())
         }
         Ok(UpdateOutcome::SkippedRebuildInProgress) => {
@@ -288,6 +296,39 @@ fn update_and_log(
             Err(e)
         }
     }
+}
+
+/// Reconcile a changelog post that failed after maintenance succeeded. This is
+/// deliberately API-only: it neither has an SSH target nor invokes any update
+/// workflow, so retrying it cannot reboot or rebuild a forum.
+pub fn report(config: &Config, name: &str, payload_path: &Path, yes: bool) -> Result<()> {
+    let discourse =
+        find_discourse(config, name).ok_or_else(|| anyhow!("discourse not found: {name}"))?;
+    let pending = update_log::pending_reporting_failure(&discourse.name).ok_or_else(|| {
+        anyhow!(
+            "{} has no pending reporting failure; refusing to create a duplicate changelog post",
+            discourse.name
+        )
+    })?;
+    let payload = std::fs::read_to_string(payload_path)
+        .with_context(|| format!("reading changelog payload {}", payload_path.display()))?;
+    if payload.trim().is_empty() {
+        return Err(anyhow!(
+            "changelog payload {} is empty",
+            payload_path.display()
+        ));
+    }
+
+    changelog_preflight(std::slice::from_ref(discourse), true)?;
+    handle_changelog_post(discourse, &payload, yes)?;
+    update_log::append(
+        &discourse.name,
+        LogKind::Reported,
+        &pending.from_version,
+        &pending.to_version,
+        "reporting reconciled without repeating maintenance",
+    );
+    Ok(())
 }
 
 /// Single forum: skip it as recently updated? Explicit `--skip-recent` window
@@ -448,6 +489,20 @@ mod tests {
         let reason = changelog_skip_reason(&no_key).expect("missing key skips");
         assert!(reason.contains("apikey/api_username"), "{reason}");
         assert!(reason.contains("keyless"), "{reason}");
+    }
+
+    #[test]
+    fn changelog_topic_preflight_refuses_deleted_closed_and_archived_topics() {
+        for (deleted, closed, archived, expected) in [
+            (true, false, false, "deleted"),
+            (false, true, false, "closed"),
+            (false, false, true, "archived"),
+        ] {
+            let error = validate_changelog_topic(42, deleted, closed, archived)
+                .expect_err("unpostable topic must stop maintenance");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        validate_changelog_topic(42, false, false, false).expect("open topic is ready");
     }
 
     #[test]
@@ -2416,20 +2471,69 @@ fn changelog_skip_reason(discourse: &DiscourseConfig) -> Option<String> {
         .map(|err| err.to_string())
 }
 
-/// Warn before any slow work about forums whose changelog will be skipped,
-/// so an unattended run does not only reveal it after each update finishes.
-fn warn_changelog_preflight(targets: &[DiscourseConfig], post_changelog: bool) {
+/// Verify configured changelog topics before any disruptive work. Configuration
+/// omissions remain an explicit, documented opt-out; a configured topic must
+/// be readable and not deleted, closed, or archived before maintenance starts.
+fn changelog_preflight(targets: &[DiscourseConfig], post_changelog: bool) -> Result<()> {
     if !post_changelog {
-        return;
+        return Ok(());
     }
     let skipped: Vec<String> = targets.iter().filter_map(changelog_skip_reason).collect();
-    if skipped.is_empty() {
-        return;
+    if !skipped.is_empty() {
+        println!("Changelog will be skipped for {} forum(s):", skipped.len());
+        for reason in &skipped {
+            println!("  - {}", reason);
+        }
     }
-    println!("Changelog will be skipped for {} forum(s):", skipped.len());
-    for reason in &skipped {
-        println!("  - {}", reason);
+    for discourse in targets {
+        if changelog_skip_reason(discourse).is_none() {
+            check_changelog_topic(discourse)?;
+        }
     }
+    Ok(())
+}
+
+fn check_changelog_topic(discourse: &DiscourseConfig) -> Result<()> {
+    let topic_id = discourse
+        .changelog_topic_id
+        .expect("checked by changelog_skip_reason");
+    let client = DiscourseClient::new(discourse)?;
+    let topic = client.fetch_topic(topic_id, false).with_context(|| {
+        format!(
+            "cannot read configured changelog topic {topic_id} for {}; refusing maintenance before reporting can be verified",
+            discourse.name
+        )
+    })?;
+    validate_changelog_topic(
+        topic_id,
+        topic.deleted_at.is_some(),
+        topic.closed,
+        topic.archived,
+    )
+}
+
+fn validate_changelog_topic(
+    topic_id: u64,
+    deleted: bool,
+    closed: bool,
+    archived: bool,
+) -> Result<()> {
+    if deleted {
+        return Err(anyhow!(
+            "configured changelog topic {topic_id} is deleted; refusing maintenance"
+        ));
+    }
+    if closed {
+        return Err(anyhow!(
+            "configured changelog topic {topic_id} is closed; refusing maintenance"
+        ));
+    }
+    if archived {
+        return Err(anyhow!(
+            "configured changelog topic {topic_id} is archived; refusing maintenance"
+        ));
+    }
+    Ok(())
 }
 
 fn handle_changelog_post(discourse: &DiscourseConfig, payload: &str, yes: bool) -> Result<()> {

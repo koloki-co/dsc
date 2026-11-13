@@ -90,7 +90,8 @@ pub enum Commands {
   dsc update all -p                # update every forum in parallel
   dsc update all --skip-recent     # skip forums updated in the last 24h
   dsc update all -y --skip-recent  # unattended, resumable fleet pass
-  dsc update log --latest          # one row per forum, most recent state")]
+   dsc update log --latest          # one row per forum, most recent state
+   dsc update report myforum report.md -y  # reconcile a failed changelog post")]
     Update {
         /// View the append-only update log instead of updating.
         #[command(subcommand)]
@@ -779,6 +780,7 @@ impl Commands {
             } => Some("dsc list tidy"),
             Commands::Update { command, .. } => match command {
                 Some(UpdateCommand::Log { .. }) => None,
+                Some(UpdateCommand::Report { .. }) => Some("dsc update report"),
                 None => Some("dsc update"),
             },
             Commands::Emoji {
@@ -897,6 +899,18 @@ pub enum UpdateCommand {
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: UpdateLogFormat,
+    },
+    /// Post a reviewed changelog payload for a prior reporting failure. This
+    /// never connects over SSH or repeats maintenance work.
+    Report {
+        /// Discourse name.
+        discourse: String,
+        /// Markdown payload to post as a reply to the configured changelog topic.
+        #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
+        payload: PathBuf,
+        /// Auto-confirm posting (non-interactive mode).
+        #[arg(long, short = 'y')]
+        yes: bool,
     },
 }
 

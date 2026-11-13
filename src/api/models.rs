@@ -44,6 +44,10 @@ pub struct TopicResponse {
     pub category_id: Option<u64>,
     #[serde(default)]
     pub deleted_at: Option<String>,
+    #[serde(default)]
+    pub closed: bool,
+    #[serde(default)]
+    pub archived: bool,
     pub post_stream: PostStream,
 }
 

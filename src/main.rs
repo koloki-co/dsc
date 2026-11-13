@@ -218,6 +218,11 @@ fn main() -> Result<()> {
                     .transpose()?;
                 commands::update_log::render(latest, since, format)
             }
+            Some(UpdateCommand::Report {
+                discourse,
+                payload,
+                yes,
+            }) => commands::update::report(&config, &discourse, &payload, yes),
             None => {
                 let skip_recent = skip_recent
                     .map(|s| commands::update_log::parse_duration(&s))
