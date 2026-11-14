@@ -59,6 +59,9 @@ pub struct StaffActionLogFilter<'a> {
     pub subject: Option<&'a str>,
     /// Only entries at or after this RFC 3339 timestamp.
     pub start_date: Option<&'a str>,
+    /// Only entries at or before this RFC 3339 timestamp (Discourse applies
+    /// `created_at <= end_date`, so the bound is inclusive).
+    pub end_date: Option<&'a str>,
     /// Rows to fetch. The CLI validates the server's `1..=200` range.
     pub limit: u16,
 }
@@ -103,6 +106,9 @@ fn build_query(filter: &StaffActionLogFilter) -> String {
     if let Some(v) = filter.start_date {
         params.push(format!("start_date={}", urlencode_form(v)));
     }
+    if let Some(v) = filter.end_date {
+        params.push(format!("end_date={}", urlencode_form(v)));
+    }
     params.join("&")
 }
 
@@ -136,11 +142,12 @@ mod tests {
             target_user: Some("bob smith"),
             subject: Some("login required"),
             start_date: Some("2026-07-01T12:30:00Z"),
+            end_date: Some("2026-07-31T23:59:59Z"),
             limit: 10,
         };
         assert_eq!(
             build_query(&filter),
-            "limit=10&action_name=change_site_setting&acting_user=alice&target_user=bob+smith&subject=login+required&start_date=2026-07-01T12%3A30%3A00Z"
+            "limit=10&action_name=change_site_setting&acting_user=alice&target_user=bob+smith&subject=login+required&start_date=2026-07-01T12%3A30%3A00Z&end_date=2026-07-31T23%3A59%3A59Z"
         );
     }
 

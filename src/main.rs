@@ -655,6 +655,7 @@ fn main() -> Result<()> {
                 target_user,
                 subject,
                 since,
+                until,
                 limit,
                 format,
             } => commands::log::log_staff(
@@ -666,6 +667,7 @@ fn main() -> Result<()> {
                     target_user: target_user.as_deref(),
                     subject: subject.as_deref(),
                     since: since.as_deref(),
+                    until: until.as_deref(),
                     limit,
                     format,
                 },
