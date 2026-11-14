@@ -11,7 +11,7 @@ use crate::commands::common::{emit_with, ensure_api_credentials, select_discours
 use crate::config::Config;
 use crate::utils::parse_since_cutoff;
 use anyhow::{Result, anyhow};
-use chrono::SecondsFormat;
+use chrono::{DateTime, SecondsFormat, Utc};
 
 /// Inputs controlling one `dsc log staff` request.
 #[derive(Clone, Copy)]
@@ -26,6 +26,8 @@ pub struct StaffLogOptions<'a> {
     pub subject: Option<&'a str>,
     /// Relative duration or ISO-8601 cutoff.
     pub since: Option<&'a str>,
+    /// Inclusive RFC 3339 upper bound.
+    pub until: Option<&'a str>,
     /// Maximum newest-first rows to return, from 1 through 200.
     pub limit: u16,
     /// Rendering format.
@@ -159,17 +161,18 @@ const CORE_STAFF_ACTIONS: &[&str] = &[
 /// given fewer rows than they requested.
 pub fn log_staff(config: &Config, discourse_name: &str, options: StaffLogOptions) -> Result<()> {
     let action = validate_core_action(options.action)?;
+    let (start_date, end_date) = resolve_window(options.since, options.until)?;
     let discourse = select_discourse(config, Some(discourse_name))?;
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
 
-    let start_date = since_to_start_date(options.since)?;
     let filter = StaffActionLogFilter {
         action_name: action,
         acting_user: options.acting_user,
         target_user: options.target_user,
         subject: options.subject,
         start_date: start_date.as_deref(),
+        end_date: end_date.as_deref(),
         limit: options.limit,
     };
     let entries = client.fetch_staff_action_logs(&filter)?;
@@ -222,18 +225,51 @@ fn validate_core_action(action: Option<&str>) -> Result<Option<&str>> {
     ))
 }
 
-/// Convert a `--since` value (relative duration or ISO-8601) into the RFC 3339
-/// timestamp Discourse's `start_date` filter parses with `to_time`.
-fn since_to_start_date(since: Option<&str>) -> Result<Option<String>> {
-    since
-        .map(parse_since_cutoff)
-        .transpose()
-        .map(|cutoff| cutoff.map(|time| time.to_rfc3339_opts(SecondsFormat::Secs, true)))
+/// Convert an `--until` value into the RFC 3339 timestamp sent as Discourse's
+/// inclusive `end_date`. Only a full RFC 3339 timestamp is accepted: a bare
+/// date would silently mean midnight at the *start* of that day and exclude
+/// the rest of it, and a relative duration is ambiguous as an upper bound.
+fn until_to_end_date(until: &str) -> Result<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(until.trim())
+        .map(|time| time.with_timezone(&Utc))
+        .map_err(|_| {
+            anyhow!(
+                "unrecognised --until value: {until:?}\n\
+                 hint: `--until` needs a full RFC 3339 timestamp such as \
+                 `2026-11-01T23:59:59Z`; it is an inclusive upper bound."
+            )
+        })
+}
+
+/// Resolve `--since` (once, as the same relative-or-ISO cutoff used by
+/// `analytics`) and `--until` into `start_date`/`end_date`
+/// query values, rejecting a reversed window before any request is made.
+fn resolve_window(
+    since: Option<&str>,
+    until: Option<&str>,
+) -> Result<(Option<String>, Option<String>)> {
+    let start = since.map(parse_since_cutoff).transpose()?;
+    let end = until.map(until_to_end_date).transpose()?;
+    if let (Some(start), Some(end)) = (start, end)
+        && start > end
+    {
+        return Err(anyhow!(
+            "--since ({}) is later than --until ({}); the window is empty",
+            start.to_rfc3339_opts(SecondsFormat::Secs, true),
+            end.to_rfc3339_opts(SecondsFormat::Secs, true)
+        ));
+    }
+    let render = |time: DateTime<Utc>| time.to_rfc3339_opts(SecondsFormat::Secs, true);
+    Ok((start.map(render), end.map(render)))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{since_to_start_date, validate_core_action};
+    use super::{resolve_window, validate_core_action};
+
+    fn since_to_start_date(since: Option<&str>) -> anyhow::Result<Option<String>> {
+        resolve_window(since, None).map(|(start, _)| start)
+    }
     use chrono::{DateTime, Utc};
 
     #[test]
@@ -282,5 +318,37 @@ mod tests {
                 .contains("unknown or unsupported core staff action")
         );
         assert!(validate_core_action(Some("custom_staff")).is_err());
+    }
+
+    #[test]
+    fn until_is_sent_as_an_inclusive_utc_end_date() {
+        let (start, end) =
+            resolve_window(Some("2026-10-01"), Some("2026-10-31T23:59:59+01:00")).unwrap();
+        assert_eq!(start.as_deref(), Some("2026-10-01T00:00:00Z"));
+        assert_eq!(end.as_deref(), Some("2026-10-31T22:59:59Z"));
+    }
+
+    #[test]
+    fn until_alone_is_allowed() {
+        let (start, end) = resolve_window(None, Some("2026-10-31T00:00:00Z")).unwrap();
+        assert_eq!(start, None);
+        assert_eq!(end.as_deref(), Some("2026-10-31T00:00:00Z"));
+    }
+
+    #[test]
+    fn until_rejects_bare_dates_and_durations() {
+        assert!(resolve_window(None, Some("2026-10-31")).is_err());
+        assert!(resolve_window(None, Some("7d")).is_err());
+    }
+
+    #[test]
+    fn reversed_window_is_rejected() {
+        let error = resolve_window(Some("2026-11-02"), Some("2026-11-01T00:00:00Z")).unwrap_err();
+        assert!(error.to_string().contains("later than --until"));
+    }
+
+    #[test]
+    fn equal_bounds_are_a_valid_single_instant_window() {
+        assert!(resolve_window(Some("2026-11-01"), Some("2026-11-01T00:00:00Z")).is_ok());
     }
 }

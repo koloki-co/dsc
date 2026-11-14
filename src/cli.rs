@@ -213,7 +213,8 @@ pub enum Commands {
     #[command(after_help = "Examples:
   dsc log staff myforum
   dsc log staff myforum --action change_site_setting --acting-user alice
-  dsc log staff myforum --since 7d -f json")]
+  dsc log staff myforum --since 7d -f json
+  dsc log staff myforum --since 2026-10-01T00:00:00Z --until 2026-10-31T23:59:59Z")]
     Log {
         #[command(subcommand)]
         command: LogCommand,
@@ -2403,6 +2404,10 @@ pub enum LogCommand {
         /// ISO-8601 date/timestamp.
         #[arg(long, value_name = "DUR")]
         since: Option<String>,
+        /// Only entries at or before this RFC 3339 timestamp, e.g.
+        /// `2026-11-01T00:00:00Z` (inclusive; a bare date is rejected).
+        #[arg(long, value_name = "TIMESTAMP")]
+        until: Option<String>,
         /// Max newest-first rows to fetch (1–200; older entries may exist).
         #[arg(
             long,

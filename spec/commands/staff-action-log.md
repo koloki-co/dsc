@@ -14,7 +14,7 @@ the answer be piped, diffed, or scripted like the rest of `dsc`.
 ```
 dsc log staff <discourse> [--action <name>] [--acting-user <username>]
                            [--target-user <username>] [--subject <text>]
-                           [--since <dur>] [--limit <n>] [--format text|json|yaml]
+                           [--since <dur>] [--until <timestamp>] [--limit <n>] [--format text|json|yaml]
 ```
 
 All filters are optional and AND together, mirroring Discourse's own
@@ -35,6 +35,16 @@ All filters are optional and AND together, mirroring Discourse's own
 - `--since` - relative duration (`7d`, `24h`) or an ISO-8601 date/timestamp,
   parsed with the same `parse_since_cutoff` used by `analytics` and
   `update log`, then sent as a precise UTC RFC 3339 `start_date` timestamp.
+- `--until` - inclusive upper bound (R83 slice, implemented 2026-11-14). Only
+  a full RFC 3339 timestamp is accepted; it is normalised to UTC and sent as
+  `end_date`. Discourse applies `created_at <= end_date`
+  (`UserHistory.staff_action_records`, and the controller slices
+  `:start_date, :end_date` from params - confirmed against `main` source on
+  2026-11-14). A bare date is rejected because it would mean midnight at the
+  start of that day and silently exclude the rest of it; a relative duration
+  is rejected as ambiguous. `--since` is resolved once, and a reversed window
+  (`--since` later than `--until`) is refused before any request. Equal
+  bounds are allowed.
 - `--limit` - newest-first rows to fetch, default 50, validated to `1..=200`
   rather than silently clamped. When the response reaches the requested limit,
   `dsc` writes a stderr warning that older matching entries may exist.
@@ -78,7 +88,7 @@ dsc log staff <forum> --user <username> --since <timestamp> --until <timestamp>
 ```
 
 - `--user` means actor **or** target. Fetch both existing filtered streams, deduplicate by log-entry ID and order deterministically. Reject combination with `--acting-user`/`--target-user` rather than silently changing their established AND semantics. Self-initiated email events may have only an actor; a target-only search must not masquerade as complete account history.
-- `--until` supplies a bounded historical end date. Resolve relative `--since` once; require a precise ISO timestamp for `--until`, reject reversed windows and document inclusivity. The source controller accepts `start_date`, `end_date`, `page` and `limit`, but the currently installed CLI exposes only the lower date bound and one page.
+- [x] `--until` supplies a bounded historical end date. **Implemented 2026-11-14** (see Command surface above): relative `--since` resolved once, RFC 3339-only `--until`, reversed windows rejected with zero requests, inclusivity documented. Covered by unit tests and a mock-server test asserting the exact query. Still unverified against a live forum. Note from source: the controller's `load_more_staff_action_logs` URL permits only `staff_filters`, so it drops `start_date`/`end_date` - confirming the pagination rule below.
 - Design bounded pagination with an explicit completeness state. Preserve the existing `--limit` contract; verify the live paging/total-count contract before introducing a larger export option. Preserve date/action/user filters explicitly on every page: do not blindly follow a `load_more` URL that might omit them. R65 owns any durable bundle envelope.
 - `--include-context` preserves available `context`, post/topic/category/reviewable IDs, action IDs and custom-type metadata in an opt-in expanded result. Default output remains backward compatible. In this investigation the omitted context could have helped distinguish a user-deletion cascade from individual post deletion; timestamps and source inspection were used instead. Never manufacture a causal link when the source supplies none.
 - Email and IP fields require separate explicit opt-ins and ordinary permission checks. These are personal-data fields, not presentation-only fields. No token or credential output. Preserve server redaction and distinguish absent/withheld/unknown data where the API permits.
@@ -96,7 +106,7 @@ GET /admin/logs/staff_action_logs.json?action_name=grant_moderation&start_date={
 The results were below the requested limit; pagination did not block this particular investigation. End-date/paging support and additional serialized fields are source-derived contracts requiring live test-account verification. Current `StaffActionLog` preserves `details` and old/new values but omits `context`, linkage IDs and response completeness metadata.
 
 - [ ] Capture sanitized live evidence for upper date bounds, paging, total counts, optional fields and redaction without creating production moderation events.
-- [ ] Test actor-or-target union, self-actions with null targets, duplicate IDs, stable ordering, date-window boundaries, page/filter retention, budget exhaustion and no false completeness claims.
+- [ ] Test actor-or-target union, self-actions with null targets, duplicate IDs, stable ordering, date-window boundaries (query construction done; live boundary behaviour pending), page/filter retention, budget exhaustion and no false completeness claims.
 - [ ] Test default output compatibility, opt-in metadata, withheld sensitive fields and absence of mutations.
 
 No automation attribution is inferred from log timing. Account deletion can emit many associated post-deletion rows automatically, and an actor username alone cannot distinguish a browser click, API client or account takeover.
