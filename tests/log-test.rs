@@ -149,3 +149,138 @@ fn log_staff_rejects_reversed_or_imprecise_windows_without_requesting() {
         "invalid windows must not reach the forum"
     );
 }
+
+/// Mock answering `acting_user=bob` and `target_user=bob` with overlapping
+/// pages (entry 5 is a self-action present in both), recording every path.
+fn start_user_union_mock() -> (String, Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock listener");
+    let addr = listener.local_addr().expect("mock addr");
+    let paths = Arc::new(Mutex::new(Vec::new()));
+    let thread_paths = Arc::clone(&paths);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+            let mut request_line = String::new();
+            if reader.read_line(&mut request_line).is_err() {
+                continue;
+            }
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_err() || line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            let path = request_line
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("")
+                .to_string();
+            let row = |id: u64, day: u8, actor: &str, target: &str| {
+                format!(
+                    r#"{{"id":{id},"action_name":"delete_post","acting_user":{{"id":1,"username":"{actor}"}},"target_user":{target},"created_at":"2026-11-0{day}T00:00:00.000Z"}}"#
+                )
+            };
+            let bob = r#"{"id":2,"username":"bob"}"#;
+            let rows = if path.contains("acting_user=bob") {
+                vec![row(5, 5, "bob", bob), row(2, 2, "bob", "null")]
+            } else if path.contains("target_user=bob") {
+                vec![
+                    row(6, 6, "alice", bob),
+                    row(5, 5, "bob", bob),
+                    row(1, 1, "alice", bob),
+                ]
+            } else {
+                Vec::new()
+            };
+            thread_paths.lock().unwrap().push(path);
+            let body = format!(r#"{{"staff_action_logs":[{}]}}"#, rows.join(","));
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+        }
+    });
+    (format!("http://{addr}"), paths)
+}
+
+#[test]
+fn log_staff_user_unions_actor_and_target_streams_with_shared_filters() {
+    let (baseurl, paths) = start_user_union_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &baseurl);
+
+    let output = run_dsc(
+        &[
+            "log",
+            "staff",
+            "mock",
+            "--user",
+            "bob",
+            "--action",
+            "delete_post",
+            "--since",
+            "2026-11-01",
+            "--until",
+            "2026-11-30T00:00:00Z",
+            "--limit",
+            "3",
+            "-f",
+            "json",
+        ],
+        &config_path,
+    );
+    assert!(
+        output.status.success(),
+        "log staff --user failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON output");
+    let ids: Vec<u64> = parsed
+        .as_array()
+        .expect("array")
+        .iter()
+        .map(|entry| entry["id"].as_u64().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        [6, 5, 2],
+        "deduplicated, newest first, truncated to limit"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("older entries may exist"),
+        "a full target stream must warn of possible truncation: {stderr}"
+    );
+
+    let paths = paths.lock().unwrap();
+    let window = "action_name=delete_post";
+    let dates = "start_date=2026-11-01T00%3A00%3A00Z&end_date=2026-11-30T00%3A00%3A00Z";
+    assert_eq!(
+        *paths,
+        [
+            format!("/admin/logs/staff_action_logs.json?limit=3&{window}&acting_user=bob&{dates}"),
+            format!("/admin/logs/staff_action_logs.json?limit=3&{window}&target_user=bob&{dates}"),
+        ]
+    );
+}
+
+#[test]
+fn log_staff_user_conflicts_with_actor_and_target_filters() {
+    let (baseurl, paths) = start_staff_log_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &baseurl);
+
+    for flag in ["--acting-user", "--target-user"] {
+        let output = run_dsc(
+            &["log", "staff", "mock", "--user", "bob", flag, "alice"],
+            &config_path,
+        );
+        assert!(
+            !output.status.success(),
+            "--user with {flag} must be refused"
+        );
+    }
+    assert!(paths.lock().unwrap().is_empty(), "no request may be made");
+}
