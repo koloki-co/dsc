@@ -5,7 +5,7 @@
 //! `dsc log staff` — read-only access to the staff action log (the admin
 //! audit trail behind `/admin/logs/staff-action-logs` in the web UI).
 
-use crate::api::{DiscourseClient, StaffActionLogFilter};
+use crate::api::{DiscourseClient, StaffActionLog, StaffActionLogFilter};
 use crate::cli::ListFormat;
 use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
@@ -22,6 +22,9 @@ pub struct StaffLogOptions<'a> {
     pub acting_user: Option<&'a str>,
     /// Username targeted by the action.
     pub target_user: Option<&'a str>,
+    /// Username that is either the actor or the target (union of both
+    /// filtered streams). Mutually exclusive with `acting_user`/`target_user`.
+    pub user: Option<&'a str>,
     /// Exact value of the log entry's subject field.
     pub subject: Option<&'a str>,
     /// Relative duration or ISO-8601 cutoff.
@@ -166,6 +169,11 @@ pub fn log_staff(config: &Config, discourse_name: &str, options: StaffLogOptions
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
 
+    if options.user.is_some() && (options.acting_user.is_some() || options.target_user.is_some()) {
+        return Err(anyhow!(
+            "--user cannot be combined with --acting-user or --target-user"
+        ));
+    }
     let filter = StaffActionLogFilter {
         action_name: action,
         acting_user: options.acting_user,
@@ -175,9 +183,34 @@ pub fn log_staff(config: &Config, discourse_name: &str, options: StaffLogOptions
         end_date: end_date.as_deref(),
         limit: options.limit,
     };
-    let entries = client.fetch_staff_action_logs(&filter)?;
+    let (entries, maybe_truncated) = match options.user {
+        None => {
+            let entries = client.fetch_staff_action_logs(&filter)?;
+            let full = entries.len() == usize::from(options.limit);
+            (entries, full)
+        }
+        Some(user) => {
+            // Both requests keep every other filter; only the user predicate
+            // differs. Each stream's newest `limit` rows contain the union's
+            // newest `limit` rows, so merging and truncating is exact.
+            let as_actor = client.fetch_staff_action_logs(&StaffActionLogFilter {
+                acting_user: Some(user),
+                ..filter.clone()
+            })?;
+            let as_target = client.fetch_staff_action_logs(&StaffActionLogFilter {
+                target_user: Some(user),
+                ..filter.clone()
+            })?;
+            let full = as_actor.len() == usize::from(options.limit)
+                || as_target.len() == usize::from(options.limit);
+            (
+                merge_user_streams(as_actor, as_target, usize::from(options.limit)),
+                full,
+            )
+        }
+    };
 
-    if entries.len() == usize::from(options.limit) {
+    if maybe_truncated {
         eprintln!(
             "Showing up to {} newest matching entries; older entries may exist.",
             options.limit
@@ -208,6 +241,38 @@ pub fn log_staff(config: &Config, discourse_name: &str, options: StaffLogOptions
         }
         Ok(())
     })
+}
+
+/// Union two newest-first staff-log streams: de-duplicate by entry ID (a
+/// self-action appears in both), order newest first with ties broken by
+/// descending ID for deterministic output, and keep the newest `limit` rows.
+fn merge_user_streams(
+    as_actor: Vec<StaffActionLog>,
+    as_target: Vec<StaffActionLog>,
+    limit: usize,
+) -> Vec<StaffActionLog> {
+    let mut seen = std::collections::HashSet::new();
+    let mut merged: Vec<StaffActionLog> = as_actor
+        .into_iter()
+        .chain(as_target)
+        .filter(|entry| seen.insert(entry.id))
+        .collect();
+    merged.sort_by(|a, b| {
+        created_at_key(&b.created_at)
+            .cmp(&created_at_key(&a.created_at))
+            .then(b.id.cmp(&a.id))
+    });
+    merged.truncate(limit);
+    merged
+}
+
+/// Sort key for a `created_at` value: the parsed instant when it is RFC 3339
+/// (Discourse's normal form), so differing precision or offsets compare
+/// correctly; unparseable values sort as oldest rather than failing.
+fn created_at_key(created_at: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(created_at)
+        .ok()
+        .map(|time| time.with_timezone(&Utc))
 }
 
 fn validate_core_action(action: Option<&str>) -> Result<Option<&str>> {
@@ -265,7 +330,71 @@ fn resolve_window(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_window, validate_core_action};
+    use super::{merge_user_streams, resolve_window, validate_core_action};
+    use crate::api::{StaffActionLog, StaffLogUser};
+
+    fn entry(id: u64, created_at: &str, actor: &str, target: Option<&str>) -> StaffActionLog {
+        let user = |name: &str| StaffLogUser {
+            id: 1,
+            username: name.to_string(),
+        };
+        StaffActionLog {
+            id,
+            action_name: "delete_post".to_string(),
+            acting_user: Some(user(actor)),
+            target_user: target.map(user),
+            subject: None,
+            details: None,
+            previous_value: None,
+            new_value: None,
+            created_at: created_at.to_string(),
+        }
+    }
+
+    fn ids(entries: &[StaffActionLog]) -> Vec<u64> {
+        entries.iter().map(|entry| entry.id).collect()
+    }
+
+    #[test]
+    fn user_union_deduplicates_self_actions_and_orders_newest_first() {
+        let as_actor = vec![
+            entry(5, "2026-11-05T00:00:00.000Z", "bob", Some("bob")),
+            entry(2, "2026-11-02T00:00:00.000Z", "bob", None),
+        ];
+        let as_target = vec![
+            entry(6, "2026-11-06T00:00:00.000Z", "alice", Some("bob")),
+            entry(5, "2026-11-05T00:00:00.000Z", "bob", Some("bob")),
+            entry(1, "2026-11-01T00:00:00.000Z", "alice", Some("bob")),
+        ];
+        assert_eq!(
+            ids(&merge_user_streams(as_actor, as_target, 50)),
+            [6, 5, 2, 1]
+        );
+    }
+
+    #[test]
+    fn user_union_is_truncated_to_the_newest_limit_rows() {
+        let as_actor = vec![
+            entry(4, "2026-11-04T00:00:00.000Z", "bob", None),
+            entry(3, "2026-11-03T00:00:00.000Z", "bob", None),
+        ];
+        let as_target = vec![
+            entry(9, "2026-11-09T00:00:00.000Z", "alice", Some("bob")),
+            entry(1, "2026-11-01T00:00:00.000Z", "alice", Some("bob")),
+        ];
+        assert_eq!(ids(&merge_user_streams(as_actor, as_target, 2)), [9, 4]);
+    }
+
+    #[test]
+    fn user_union_compares_instants_and_breaks_ties_by_id() {
+        let as_actor = vec![entry(7, "2026-11-01T01:00:00+01:00", "bob", None)];
+        let as_target = vec![
+            entry(8, "2026-11-01T00:00:00.000Z", "alice", Some("bob")),
+            entry(3, "2026-11-01T00:30:00Z", "alice", Some("bob")),
+        ];
+        // 7 and 8 are the same instant; the higher ID sorts first.
+        assert_eq!(ids(&merge_user_streams(as_actor, as_target, 50)), [3, 8, 7]);
+    }
 
     fn since_to_start_date(since: Option<&str>) -> anyhow::Result<Option<String>> {
         resolve_window(since, None).map(|(start, _)| start)

@@ -214,7 +214,8 @@ pub enum Commands {
   dsc log staff myforum
   dsc log staff myforum --action change_site_setting --acting-user alice
   dsc log staff myforum --since 7d -f json
-  dsc log staff myforum --since 2026-10-01T00:00:00Z --until 2026-10-31T23:59:59Z")]
+  dsc log staff myforum --since 2026-10-01T00:00:00Z --until 2026-10-31T23:59:59Z
+  dsc log staff myforum --user bob --since 30d -f json")]
     Log {
         #[command(subcommand)]
         command: LogCommand,
@@ -2396,6 +2397,12 @@ pub enum LogCommand {
         /// Only entries targeting this username.
         #[arg(long = "target-user")]
         target_user: Option<String>,
+        /// Only entries where this username is the actor *or* the target.
+        /// Fetches both filtered streams, de-duplicates by entry ID and
+        /// returns the newest `--limit` rows. Cannot be combined with
+        /// `--acting-user`/`--target-user`, which keep their AND semantics.
+        #[arg(long, value_name = "USERNAME", conflicts_with_all = ["acting_user", "target_user"])]
+        user: Option<String>,
         /// Only entries whose subject exactly matches this text (e.g. a
         /// setting name).
         #[arg(long)]
