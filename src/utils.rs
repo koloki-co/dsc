@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use anyhow::{Context, Result, anyhow};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{IsTerminal, Write};
@@ -74,6 +75,49 @@ fn home_dir() -> Option<PathBuf> {
 /// Trim trailing slashes from a base URL.
 pub fn normalize_baseurl(baseurl: &str) -> String {
     baseurl.trim_end_matches('/').to_string()
+}
+
+/// Credential-free information about the tool and site which produced a
+/// declarative snapshot. It is informational only: consumers must never use
+/// it to decide whether a snapshot can be applied to another site.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotProvenance {
+    /// Normalized source site URL, with any URL user-info removed.
+    pub source: String,
+    /// Version of `dsc` that wrote the snapshot.
+    pub exporter_version: String,
+}
+
+/// Create the common, credential-free provenance header for a snapshot.
+pub fn snapshot_provenance(baseurl: &str) -> SnapshotProvenance {
+    SnapshotProvenance {
+        source: snapshot_source(baseurl),
+        exporter_version: env!("CARGO_PKG_VERSION").to_string(),
+    }
+}
+
+/// Normalize a configured site URL for local snapshot provenance without
+/// retaining credentials that may have been embedded in its authority.
+fn snapshot_source(baseurl: &str) -> String {
+    let normalized = normalize_baseurl(baseurl);
+    match reqwest::Url::parse(&normalized) {
+        Ok(mut url) => {
+            let _ = url.set_username("");
+            let _ = url.set_password(None);
+            normalize_baseurl(url.as_str())
+        }
+        // `DiscourseClient` will reject malformed URLs before a pull reaches
+        // this helper. Keep the fallback credential-free for callers/tests
+        // that construct provenance independently.
+        Err(_) => match normalized.split_once("://") {
+            Some((scheme, rest)) => match rest.rsplit_once('@') {
+                Some((_, host_and_path)) => format!("{scheme}://{host_and_path}"),
+                None => normalized,
+            },
+            None => normalized,
+        },
+    }
 }
 
 /// Create a URL-safe slug from arbitrary input.
@@ -771,6 +815,20 @@ mod tests {
     #[test]
     fn normalize_baseurl_preserves_no_trailing() {
         assert_eq!(normalize_baseurl(""), "");
+    }
+
+    #[test]
+    fn snapshot_provenance_normalizes_and_redacts_source_credentials() {
+        let provenance = snapshot_provenance("https://admin:secret@example.com/forum///");
+        assert_eq!(provenance.source, "https://example.com/forum");
+        assert_eq!(provenance.exporter_version, env!("CARGO_PKG_VERSION"));
+
+        let yaml = serde_yaml::to_string(&provenance).expect("serialize provenance");
+        assert!(!yaml.contains("admin") && !yaml.contains("secret"));
+        assert_eq!(
+            serde_yaml::from_str::<SnapshotProvenance>(&yaml).expect("deserialize provenance"),
+            provenance
+        );
     }
 
     #[test]

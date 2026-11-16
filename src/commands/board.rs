@@ -53,6 +53,10 @@ pub fn board_show(
 #[serde(deny_unknown_fields)]
 pub struct BoardSnapshot {
     pub version: u32,
+    /// Informational origin of the snapshot. It is deliberately not a guard:
+    /// later board sync may intentionally copy reviewed snapshots cross-site.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::utils::SnapshotProvenance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub board_id: Option<i64>,
     pub board_name: String,
@@ -210,6 +214,7 @@ pub fn board_pull(
 
     let snapshot = BoardSnapshot {
         version: 1,
+        provenance: Some(crate::utils::snapshot_provenance(&discourse.baseurl)),
         board_id: Some(detail.board.id),
         board_name: detail.board.name,
         discourse_version,
@@ -454,6 +459,7 @@ columns:
         .expect("valid board snapshot");
 
         assert!(snapshot.board_id.is_none());
+        assert!(snapshot.provenance.is_none());
         assert!(snapshot.columns[0].id.is_none());
         assert!(snapshot.columns[0].cards[0].id.is_none());
         assert!(matches!(

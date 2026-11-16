@@ -533,6 +533,10 @@ fn theme_setting_entries(theme: &Value) -> Vec<ThemeSettingEntry> {
 #[derive(Debug, Serialize, Deserialize)]
 struct ThemeSettingsFile {
     version: u32,
+    /// Informational origin of the snapshot. Theme settings may deliberately
+    /// be copied between sites, so push never enforces this value.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    provenance: Option<crate::utils::SnapshotProvenance>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     discourse_version: Option<String>,
     theme_id: i64,
@@ -756,6 +760,7 @@ pub fn theme_setting_pull(
 
     let file = ThemeSettingsFile {
         version: 1,
+        provenance: Some(crate::utils::snapshot_provenance(&discourse.baseurl)),
         discourse_version: client.fetch_version().ok().flatten(),
         theme_id,
         theme_name,
@@ -1764,6 +1769,10 @@ mod tests {
     fn theme_settings_file_round_trips_through_yaml() {
         let file = ThemeSettingsFile {
             version: 1,
+            provenance: Some(crate::utils::SnapshotProvenance {
+                source: "https://forum.example.test".into(),
+                exporter_version: "0.24.0".into(),
+            }),
             discourse_version: Some("3.x".into()),
             theme_id: 17,
             theme_name: Some("Dropdown Header".into()),
@@ -1778,11 +1787,21 @@ mod tests {
         let yaml = serde_yaml::to_string(&file).unwrap();
         let back: ThemeSettingsFile = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(back.version, 1);
+        assert_eq!(back.provenance, file.provenance);
         assert_eq!(back.theme_id, 17);
         assert_eq!(back.settings.len(), 1);
         assert_eq!(back.settings[0].setting, "header_links");
         assert!(back.settings[0].value.is_array());
         assert_eq!(back.settings[0].value[0]["title"], json!("A"));
+    }
+
+    #[test]
+    fn theme_settings_snapshot_without_provenance_remains_readable() {
+        let file: ThemeSettingsFile = serde_yaml::from_str(
+            "version: 1\ntheme_id: 17\nsettings:\n  - setting: title\n    value: Example\n",
+        )
+        .expect("legacy theme settings snapshot");
+        assert!(file.provenance.is_none());
     }
 
     #[test]

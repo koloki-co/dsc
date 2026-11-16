@@ -272,6 +272,10 @@ pub fn list_site_settings(
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SettingsFile {
     pub version: u32,
+    /// Informational origin of the snapshot. Never enforced: copying a
+    /// reviewed settings file between sites is an intentional workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::utils::SnapshotProvenance>,
     /// True only when the pull contained the complete settings catalogue.
     /// Filtered snapshots must never be used with `--reset-unlisted`.
     #[serde(default)]
@@ -347,6 +351,7 @@ pub fn pull_settings(
 
     let file = SettingsFile {
         version: 1,
+        provenance: Some(crate::utils::snapshot_provenance(&discourse.baseurl)),
         complete: !changed_only && category.is_none(),
         discourse_version,
         pulled_at: Some(pulled_at),
@@ -900,5 +905,33 @@ mod tests {
     fn audit_text_empty_when_no_forums_match() {
         let out = render_audit_text("title", &[]);
         assert!(out.contains("No forums matched"));
+    }
+
+    #[test]
+    fn settings_snapshot_without_provenance_remains_readable() {
+        let file: SettingsFile = serde_yaml::from_str(
+            "version: 1\ncomplete: false\nsettings:\n  - name: title\n    value: Example\n",
+        )
+        .expect("legacy settings snapshot");
+        assert!(file.provenance.is_none());
+    }
+
+    #[test]
+    fn settings_snapshot_round_trips_provenance() {
+        let file = SettingsFile {
+            version: 1,
+            provenance: Some(crate::utils::SnapshotProvenance {
+                source: "https://forum.example.test".into(),
+                exporter_version: "0.24.0".into(),
+            }),
+            complete: false,
+            discourse_version: None,
+            pulled_at: None,
+            settings: vec![],
+        };
+        let yaml = serde_yaml::to_string(&file).expect("serialize settings snapshot");
+        let round_trip: SettingsFile =
+            serde_yaml::from_str(&yaml).expect("parse settings snapshot");
+        assert_eq!(round_trip.provenance, file.provenance);
     }
 }

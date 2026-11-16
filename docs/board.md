@@ -54,6 +54,9 @@ board_id: 3
 board_name: Roadmap
 discourse_version: 2026.9.0
 pulled_at: "2026-09-07T02:00:00Z"
+provenance:
+  source: https://forum.example.com
+  exporter_version: 0.24.0
 board:
   name: Roadmap
   slug: roadmap
@@ -92,7 +95,7 @@ columns:
         assigned_to: null
 ```
 
-Schema v1 contains only stable, mutable board fields and identity fields needed for later reconciliation. Board, column, and card IDs identify pulled objects and may be omitted when authoring new objects for the later push phase. Assignees retain their `User`/`Group` type so equal user and group names cannot be confused. The schema deliberately omits opaque positions, tag IDs where names are available, embedded topic metadata, permissions, ACLs, timestamps, usernames that record creation, and unrecognised API fields. JSON/YAML output from `board show` remains the appropriate way to inspect the full response model.
+Schema v1 contains only stable, mutable board fields and identity fields needed for later reconciliation. Board, column, and card IDs identify pulled objects and may be omitted when authoring new objects for the later push phase. Assignees retain their `User`/`Group` type so equal user and group names cannot be confused. `provenance` is informational, contains no URL credentials, and is not a future cross-site apply restriction. The schema deliberately omits opaque positions, tag IDs where names are available, embedded topic metadata, permissions, ACLs, timestamps, usernames that record creation, and unrecognised API fields. JSON/YAML output from `board show` remains the appropriate way to inspect the full response model.
 
 ## Notes
 

@@ -130,7 +130,7 @@ dsc theme setting pull <discourse> <theme-id> [<local-path>] [--force]
 dsc theme setting push <discourse> <theme-id> <local-path>   [--dry-run]
 ```
 
-- `pull` writes every setting to a file (YAML by default; a `.json` path writes JSON). **JSON-list settings are expanded to real arrays** - `header_links` becomes an editable list of entries, not one escaped string on a line. If `<local-path>` is omitted it writes `<theme-name>-settings.yml` in the current directory. Refuses to overwrite an existing file unless `--force` is given.
+- `pull` writes every setting to a file (YAML by default; a `.json` path writes JSON). **JSON-list settings are expanded to real arrays** - `header_links` becomes an editable list of entries, not one escaped string on a line. The informational `provenance` header records the credential-free source URL and dsc version, but is ignored by `push` so reviewed settings can be copied across sites. If `<local-path>` is omitted it writes `<theme-name>-settings.yml` in the current directory. Refuses to overwrite an existing file unless `--force` is given.
 - `push` re-serialises each list back to the JSON-string form Discourse expects and **PUTs only the settings that changed** (compared semantically, so reformatting and key-order don't count as edits - an untouched pull → push is a clean no-op). Settings in the file that no longer exist on the component are skipped with a warning. `--dry-run` prints the plan, summarising long list values by length so the terminal isn't flooded.
 
 This replaces the read-whole-array → change-one-field → PUT-it-back scripting that editing a header menu by hand otherwise needs.

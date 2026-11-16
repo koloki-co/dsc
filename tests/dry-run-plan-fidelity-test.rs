@@ -42,6 +42,9 @@ const SERVER_SETTINGS_JSON: &str = r#"{"site_settings":[
 /// the server (planned changes), `setting_b` matches it (planned no-op),
 /// `setting_d` does not exist on the server (planned skip).
 const SETTINGS_FILE: &str = r#"version: 1
+provenance:
+  source: https://reviewed-staging.example.test
+  exporter_version: 0.1.0
 complete: false
 settings:
   - name: setting_a
@@ -68,6 +71,9 @@ const SERVER_THEME_JSON: &str = r#"{"theme":{"id":42,"name":"mock theme","settin
 /// Theme settings file: `setting_a`/`setting_c` change, `setting_b` and
 /// `header_links` match the server, `setting_d` is unknown (skipped).
 const THEME_SETTINGS_FILE: &str = r#"version: 1
+provenance:
+  source: https://reviewed-staging.example.test
+  exporter_version: 0.1.0
 theme_id: 42
 settings:
   - setting: setting_a

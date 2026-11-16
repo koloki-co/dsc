@@ -43,7 +43,7 @@ dsc -n setting set --tags staging max_invites_per_day 50   # preview
 dsc setting pull <discourse> [path] [--changed-only] [--category <cat>] [--force]
 ```
 
-Snapshot all site settings to a local YAML (or JSON, by extension) file with full metadata: `default`, `type`, `category`, `description`. The file is self-documenting and stable-sorted by category then name.
+Snapshot all site settings to a local YAML (or JSON, by extension) file with full metadata: `default`, `type`, `category`, `description`. The file is self-documenting and stable-sorted by category then name. Its informational `provenance` header records the credential-free source URL and dsc version; it is ignored by `push` and `diff`, so approved cross-site copying remains supported.
 
 - Default path: `settings.yaml`.
 - `--changed-only` (`-c`): only include settings whose value differs from default. Produces a manageable file (~50-100 entries) suitable for version control.

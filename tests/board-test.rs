@@ -238,6 +238,11 @@ fn board_pull_snapshots_board_including_floater_cards() {
     assert_eq!(snapshot["board_name"], "Roadmap");
     assert_eq!(snapshot["discourse_version"], "2026.9.0");
     assert!(snapshot["pulled_at"].is_string());
+    assert_eq!(snapshot["provenance"]["source"], url);
+    assert_eq!(
+        snapshot["provenance"]["exporter_version"],
+        env!("CARGO_PKG_VERSION")
+    );
     assert_eq!(snapshot["board"]["category_ids"][0], 4);
     assert_eq!(snapshot["board"]["category_ids"][1], 9);
     assert_eq!(snapshot["board"]["require_confirmation"], true);

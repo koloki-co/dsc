@@ -73,6 +73,9 @@ dsc setting pull <discourse> [path] [--changed-only] [--category <cat>]
 
 ```yaml
 version: 1
+provenance:
+  source: "https://forum.example.com"
+  exporter_version: "0.24.0"
 discourse_version: "2026.6.0"
 pulled_at: "2026-06-07T14:30:00Z"
 
@@ -103,7 +106,7 @@ settings:
 
 Design notes:
 - `default`, `type`, `description` are metadata pulled from the API. They make the file self-documenting and LLM-friendly. `push` ignores them (only `name` and `value` matter on write).
-- `discourse_version` and `pulled_at` are informational stamps - not enforced on push.
+- `provenance`, `discourse_version`, and `pulled_at` are informational stamps - not enforced on push. `provenance.source` is credential-free and records the normalized source site; `provenance.exporter_version` records the dsc exporter version. Older v1 files may omit it.
 - Category comment separators are cosmetic in YAML output for human scanning.
 
 ### Phase 2: `dsc setting push` (write)
