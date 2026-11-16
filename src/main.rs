@@ -658,6 +658,7 @@ fn main() -> Result<()> {
                 since,
                 until,
                 limit,
+                include_context,
                 format,
             } => commands::log::log_staff(
                 &config,
@@ -671,6 +672,7 @@ fn main() -> Result<()> {
                     since: since.as_deref(),
                     until: until.as_deref(),
                     limit,
+                    include_context,
                     format,
                 },
             ),

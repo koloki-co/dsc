@@ -5,13 +5,24 @@
 //! `dsc log staff` — read-only access to the staff action log (the admin
 //! audit trail behind `/admin/logs/staff-action-logs` in the web UI).
 
-use crate::api::{DiscourseClient, StaffActionLog, StaffActionLogFilter};
+use crate::api::{DiscourseClient, StaffActionLog, StaffActionLogFilter, StaffLogLinkage};
 use crate::cli::ListFormat;
 use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
 use crate::utils::parse_since_cutoff;
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, SecondsFormat, Utc};
+use serde::Serialize;
+
+/// `--include-context` row: the default entry plus its linkage fields, all
+/// emitted (as `null` when Discourse supplied none) so absence is explicit.
+#[derive(Serialize)]
+struct ExpandedEntry<'a> {
+    #[serde(flatten)]
+    entry: &'a StaffActionLog,
+    #[serde(flatten)]
+    linkage: &'a StaffLogLinkage,
+}
 
 /// Inputs controlling one `dsc log staff` request.
 #[derive(Clone, Copy)]
@@ -33,6 +44,8 @@ pub struct StaffLogOptions<'a> {
     pub until: Option<&'a str>,
     /// Maximum newest-first rows to return, from 1 through 200.
     pub limit: u16,
+    /// Also emit source context and linkage metadata (never email/IP).
+    pub include_context: bool,
     /// Rendering format.
     pub format: ListFormat,
 }
@@ -217,30 +230,87 @@ pub fn log_staff(config: &Config, discourse_name: &str, options: StaffLogOptions
         );
     }
 
+    if options.include_context {
+        let expanded: Vec<ExpandedEntry> = entries
+            .iter()
+            .map(|entry| ExpandedEntry {
+                entry,
+                linkage: &entry.linkage,
+            })
+            .collect();
+        return emit_with(options.format, &expanded, || {
+            print_text(&entries, true);
+            Ok(())
+        });
+    }
     emit_with(options.format, &entries, || {
-        if entries.is_empty() {
-            println!("No staff action log entries found.");
-            return Ok(());
-        }
-        for entry in &entries {
-            let actor = entry
-                .acting_user
-                .as_ref()
-                .map(|user| user.username.as_str())
-                .unwrap_or("-");
-            let target = entry
-                .target_user
-                .as_ref()
-                .map(|user| user.username.as_str())
-                .unwrap_or("-");
-            let subject = entry.subject.as_deref().unwrap_or("");
-            println!(
-                "{}  {:<28}  actor={:<16}  target={:<16}  {}",
-                entry.created_at, entry.action_name, actor, target, subject
-            );
-        }
+        print_text(&entries, false);
         Ok(())
     })
+}
+
+/// Text rendering: one line per entry; with `include_context`, available
+/// linkage IDs are appended and any recorded context follows, indented.
+fn print_text(entries: &[StaffActionLog], include_context: bool) {
+    if entries.is_empty() {
+        println!("No staff action log entries found.");
+        return;
+    }
+    for entry in entries {
+        let actor = entry
+            .acting_user
+            .as_ref()
+            .map(|user| user.username.as_str())
+            .unwrap_or("-");
+        let target = entry
+            .target_user
+            .as_ref()
+            .map(|user| user.username.as_str())
+            .unwrap_or("-");
+        let subject = entry.subject.as_deref().unwrap_or("");
+        let line = format!(
+            "{}  {:<28}  actor={:<16}  target={:<16}  {}",
+            entry.created_at, entry.action_name, actor, target, subject
+        );
+        if !include_context {
+            println!("{line}");
+            continue;
+        }
+        let links = linkage_tokens(&entry.linkage);
+        if links.is_empty() {
+            println!("{line}");
+        } else {
+            println!("{}  [{links}]", line.trim_end());
+        }
+        if let Some(context) = entry.linkage.context.as_deref().map(str::trim)
+            && !context.is_empty()
+        {
+            for context_line in context.lines() {
+                println!("    context: {context_line}");
+            }
+        }
+    }
+}
+
+/// `key=value` tokens for the linkage IDs Discourse supplied, in a fixed order.
+fn linkage_tokens(linkage: &StaffLogLinkage) -> String {
+    let ids = [
+        ("topic", linkage.topic_id),
+        ("post", linkage.post_id),
+        ("category", linkage.category_id),
+        ("reviewable", linkage.reviewable_id),
+    ];
+    let mut tokens: Vec<String> = ids
+        .iter()
+        .filter_map(|(name, id)| id.map(|id| format!("{name}={id}")))
+        .collect();
+    if let Some(custom_type) = linkage.custom_type.as_deref() {
+        tokens.push(format!("custom_type={custom_type}"));
+    }
+    if let Some(expires_at) = linkage.expires_at.as_deref() {
+        tokens.push(format!("expires_at={expires_at}"));
+    }
+    tokens.join(" ")
 }
 
 /// Union two newest-first staff-log streams: de-duplicate by entry ID (a
@@ -348,6 +418,7 @@ mod tests {
             previous_value: None,
             new_value: None,
             created_at: created_at.to_string(),
+            linkage: Default::default(),
         }
     }
 

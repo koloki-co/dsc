@@ -51,7 +51,7 @@ pub use post_revisions::{PostRevision, REVISION_VISIBILITY_LIMIT, revert_path};
 pub use reports::{AdminReport, ReportPoint};
 pub use search::SearchHit;
 pub use settings::SiteSettingDetail;
-pub use staff_action_logs::{StaffActionLog, StaffActionLogFilter, StaffLogUser};
+pub use staff_action_logs::{StaffActionLog, StaffActionLogFilter, StaffLogLinkage, StaffLogUser};
 pub use tags::TagGroupInfo;
 pub use tags::TagInfo;
 pub use topics::{DeletedTopicSummary, PmTopicSummary, PostEditOptions, PostInfo};
