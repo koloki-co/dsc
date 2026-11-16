@@ -5,7 +5,7 @@ View admin audit trails.
 ## dsc log staff
 
 ```text
-dsc log staff <discourse> [--action <name>] [--acting-user <username>] [--target-user <username>] [--user <username>] [--subject <text>] [--since <dur>] [--until <timestamp>] [--limit <n>] [--format text|json|yaml]
+dsc log staff <discourse> [--action <name>] [--acting-user <username>] [--target-user <username>] [--user <username>] [--subject <text>] [--since <dur>] [--until <timestamp>] [--limit <n>] [--include-context] [--format text|json|yaml]
 ```
 
 Lists entries from the staff action log — the same audit trail behind `/admin/logs/staff-action-logs` in the web UI: setting changes, suspensions, deletions, admin grants, and the rest of Discourse's `UserHistory` records.
@@ -20,6 +20,8 @@ All filters are optional and combine (AND):
 - `--since` — relative duration (`7d`, `24h`) or an ISO-8601 date/timestamp; sent to Discourse as a precise UTC `start_date` timestamp.
 - `--until` — inclusive upper bound, as a full RFC 3339 timestamp (e.g. `2026-10-31T23:59:59Z`); sent as `end_date`. Bare dates and relative durations are rejected because they are ambiguous as an end point, and a window whose `--since` is later than `--until` is refused before any request is made.
 - `--limit` — newest-first rows to fetch, default 50; must be from 1 through 200. If exactly this many are returned, `dsc` warns on stderr that older matching entries may exist.
+
+`--include-context` is an output option, not a filter. It adds the source context and linkage metadata Discourse records with each entry: `context`, `topic_id`, `post_id`, `category_id`, `reviewable_id`, the numeric `action` code, `custom_type` and `expires_at`. In JSON/YAML every one of these keys is present on every row, as `null` when Discourse supplied nothing — Discourse also returns `null` when it redacts `context`/`expires_at` for the viewer, and the two cases cannot be told apart. In text output, available IDs are appended as `[topic=… post=…]` and any context follows on indented `context:` lines. Email addresses and IP addresses are never emitted, with or without this flag. Without it, output is exactly as before.
 
 ```bash
 # Recent activity, most recent first
@@ -36,6 +38,9 @@ dsc log staff myforum --target-user bob --since 2026-10-01 --until 2026-10-31T23
 
 # Everything bob did or had done to them in the last 30 days
 dsc log staff myforum --user bob --since 30d -f json
+
+# Post deletions with the topic/post IDs and recorded context
+dsc log staff myforum --action delete_post --include-context
 ```
 
 ## Notes

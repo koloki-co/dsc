@@ -215,7 +215,8 @@ pub enum Commands {
   dsc log staff myforum --action change_site_setting --acting-user alice
   dsc log staff myforum --since 7d -f json
   dsc log staff myforum --since 2026-10-01T00:00:00Z --until 2026-10-31T23:59:59Z
-  dsc log staff myforum --user bob --since 30d -f json")]
+  dsc log staff myforum --user bob --since 30d -f json
+  dsc log staff myforum --action delete_post --include-context")]
     Log {
         #[command(subcommand)]
         command: LogCommand,
@@ -2422,6 +2423,12 @@ pub enum LogCommand {
             value_parser = clap::value_parser!(u16).range(1..=200)
         )]
         limit: u16,
+        /// Also show each entry's source context and linkage metadata
+        /// (`context`, `topic_id`, `post_id`, `category_id`, `reviewable_id`,
+        /// numeric `action`, `custom_type`, `expires_at`). Email and IP
+        /// address are never included.
+        #[arg(long)]
+        include_context: bool,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,

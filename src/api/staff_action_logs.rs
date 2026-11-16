@@ -41,6 +41,41 @@ pub struct StaffActionLog {
     #[serde(default)]
     pub new_value: Option<Value>,
     pub created_at: String,
+    /// Source context and linkage metadata. Always parsed, but omitted from
+    /// default output so the established JSON/YAML shape is unchanged; the
+    /// `--include-context` view serializes it explicitly.
+    #[serde(flatten, skip_serializing)]
+    pub linkage: StaffLogLinkage,
+}
+
+/// Opt-in context and linkage fields from Discourse's `UserHistorySerializer`
+/// (source-confirmed against `main` on 2026-11-16). Every field is optional:
+/// Discourse returns `null` both when a value was never recorded and when it
+/// redacts `context`/`expires_at` for the viewer, and the API does not let a
+/// client tell those apart. Email and IP address are deliberately absent -
+/// they are personal data and need their own explicit opt-ins.
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq)]
+pub struct StaffLogLinkage {
+    /// Free-text context recorded with the action (server may mask IPs).
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
+    pub topic_id: Option<i64>,
+    #[serde(default)]
+    pub post_id: Option<i64>,
+    #[serde(default)]
+    pub category_id: Option<i64>,
+    #[serde(default)]
+    pub reviewable_id: Option<i64>,
+    /// Numeric `UserHistory.actions` code behind `action_name`.
+    #[serde(default)]
+    pub action: Option<i64>,
+    /// Custom/plugin action type name, when the action is `custom`/`custom_staff`.
+    #[serde(default)]
+    pub custom_type: Option<String>,
+    /// Expiry recorded with the action, e.g. a suspension end.
+    #[serde(default)]
+    pub expires_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

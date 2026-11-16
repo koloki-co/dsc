@@ -14,7 +14,8 @@ the answer be piped, diffed, or scripted like the rest of `dsc`.
 ```
 dsc log staff <discourse> [--action <name>] [--acting-user <username>]
                            [--target-user <username>] [--subject <text>]
-                           [--since <dur>] [--until <timestamp>] [--limit <n>] [--format text|json|yaml]
+                           [--since <dur>] [--until <timestamp>] [--limit <n>]
+                           [--include-context] [--format text|json|yaml]
 ```
 
 All filters are optional and AND together, mirroring Discourse's own
@@ -64,8 +65,11 @@ aggregation is `R20`'s job, not this command's.
   `previous_value` and `new_value` preserve either scalar strings or structured
   JSON values as returned by Discourse. Field set matches Discourse's
   `UserHistorySerializer` minus a few
-  presentation-only fields (`ip_address`, `email`, `context`, `custom_type`)
-  not needed for the audit-trail use case.
+  fields: `ip_address` and `email` (personal data, never emitted) and the
+  context/linkage fields, which are opt-in via `--include-context` (R83,
+  implemented 2026-11-16): `context`, `topic_id`, `post_id`, `category_id`,
+  `reviewable_id`, `action`, `custom_type`, `expires_at` are then added to
+  every row, explicitly `null` when absent. Default output is unchanged.
 
 ## Notes
 
@@ -90,7 +94,7 @@ dsc log staff <forum> --user <username> --since <timestamp> --until <timestamp>
 - [x] `--user` means actor **or** target. **Implemented 2026-11-15:** two requests sharing every other filter and `--limit`, merged by entry ID, ordered newest first by parsed `created_at` with descending-ID ties, truncated to `--limit` (exact, because each stream's newest N contain the union's newest N); clap refuses `--acting-user`/`--target-user` alongside it with zero requests; the may-be-truncated warning fires if either stream was full. Covered by unit tests (self-action dedupe, truncation, mixed-offset ordering) and a mock-server test asserting both exact queries. Still unverified against a live forum. Original design: Fetch both existing filtered streams, deduplicate by log-entry ID and order deterministically. Reject combination with `--acting-user`/`--target-user` rather than silently changing their established AND semantics. Self-initiated email events may have only an actor; a target-only search must not masquerade as complete account history.
 - [x] `--until` supplies a bounded historical end date. **Implemented 2026-11-14** (see Command surface above): relative `--since` resolved once, RFC 3339-only `--until`, reversed windows rejected with zero requests, inclusivity documented. Covered by unit tests and a mock-server test asserting the exact query. Still unverified against a live forum. Note from source: the controller's `load_more_staff_action_logs` URL permits only `staff_filters`, so it drops `start_date`/`end_date` - confirming the pagination rule below.
 - Design bounded pagination with an explicit completeness state. Preserve the existing `--limit` contract; verify the live paging/total-count contract before introducing a larger export option. Preserve date/action/user filters explicitly on every page: do not blindly follow a `load_more` URL that might omit them. R65 owns any durable bundle envelope.
-- `--include-context` preserves available `context`, post/topic/category/reviewable IDs, action IDs and custom-type metadata in an opt-in expanded result. Default output remains backward compatible. In this investigation the omitted context could have helped distinguish a user-deletion cascade from individual post deletion; timestamps and source inspection were used instead. Never manufacture a causal link when the source supplies none.
+- [x] **Implemented 2026-11-16:** `--include-context` adds exactly the serializer's `context`, `topic_id`, `post_id`, `category_id`, `reviewable_id`, `action`, `custom_type` and `expires_at` (field set confirmed against Discourse `main` `UserHistorySerializer` on 2026-11-16, which nulls `context`/`expires_at` when it redacts content and masks IPs inside `context` for viewers without IP access). Every key is always emitted in JSON/YAML, `null` when absent, because Discourse's `null` cannot distinguish never-recorded from redacted. Text output appends `[topic=… post=…]` and indented `context:` lines. The default JSON/YAML key set is pinned by a mock-server test; another asserts email/IP returned by the server never reach any output format. Still unverified against a live forum. Original design: `--include-context` preserves available `context`, post/topic/category/reviewable IDs, action IDs and custom-type metadata in an opt-in expanded result. Default output remains backward compatible. In this investigation the omitted context could have helped distinguish a user-deletion cascade from individual post deletion; timestamps and source inspection were used instead. Never manufacture a causal link when the source supplies none.
 - Email and IP fields require separate explicit opt-ins and ordinary permission checks. These are personal-data fields, not presentation-only fields. No token or credential output. Preserve server redaction and distinguish absent/withheld/unknown data where the API permits.
 
 ### Evidence and validation

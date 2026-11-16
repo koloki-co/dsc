@@ -284,3 +284,155 @@ fn log_staff_user_conflicts_with_actor_and_target_filters() {
     }
     assert!(paths.lock().unwrap().is_empty(), "no request may be made");
 }
+
+/// Mock answering every staff-log request with two rows: one carrying context,
+/// linkage IDs and the personal-data fields `email`/`ip_address`, and one with
+/// no linkage at all.
+fn start_context_mock() -> (String, Arc<Mutex<Vec<String>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind mock listener");
+    let addr = listener.local_addr().expect("mock addr");
+    let paths = Arc::new(Mutex::new(Vec::new()));
+    let thread_paths = Arc::clone(&paths);
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut reader = BufReader::new(stream.try_clone().expect("clone stream"));
+            let mut request_line = String::new();
+            if reader.read_line(&mut request_line).is_err() {
+                continue;
+            }
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_err() || line == "\r\n" || line == "\n" {
+                    break;
+                }
+            }
+            let path = request_line
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("")
+                .to_string();
+            thread_paths.lock().unwrap().push(path);
+            let body = r#"{"staff_action_logs":[
+                {"id":9,"action_name":"delete_post","action":12,"acting_user":{"id":1,"username":"alice"},
+                 "target_user":{"id":2,"username":"bob"},"subject":null,"details":"post deleted",
+                 "context":"user deletion cascade","topic_id":42,"post_id":420,"category_id":null,
+                 "reviewable_id":null,"custom_type":null,"expires_at":null,
+                 "email":"bob@example.invalid","ip_address":"192.0.2.1",
+                 "created_at":"2026-11-02T00:00:00.000Z"},
+                {"id":8,"action_name":"change_site_setting","acting_user":{"id":1,"username":"alice"},
+                 "subject":"title","created_at":"2026-11-01T00:00:00.000Z"}
+            ]}"#;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+        }
+    });
+    (format!("http://{addr}"), paths)
+}
+
+const LINKAGE_KEYS: &[&str] = &[
+    "context",
+    "topic_id",
+    "post_id",
+    "category_id",
+    "reviewable_id",
+    "action",
+    "custom_type",
+    "expires_at",
+];
+
+#[test]
+fn log_staff_default_json_omits_context_and_personal_data() {
+    let (baseurl, paths) = start_context_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &baseurl);
+
+    let output = run_dsc(&["log", "staff", "mock", "-f", "json"], &config_path);
+    assert!(
+        output.status.success(),
+        "log staff failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).expect("JSON output");
+    let row = parsed[0].as_object().expect("object row");
+    let mut keys: Vec<&str> = row.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "acting_user",
+            "action_name",
+            "created_at",
+            "details",
+            "id",
+            "new_value",
+            "previous_value",
+            "subject",
+            "target_user"
+        ],
+        "default output shape must be unchanged"
+    );
+    assert_eq!(paths.lock().unwrap().len(), 1, "one GET only");
+}
+
+#[test]
+fn log_staff_include_context_adds_linkage_but_never_email_or_ip() {
+    let (baseurl, paths) = start_context_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &baseurl);
+
+    for format in ["json", "yaml"] {
+        let output = run_dsc(
+            &["log", "staff", "mock", "--include-context", "-f", format],
+            &config_path,
+        );
+        assert!(
+            output.status.success(),
+            "log staff --include-context failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("example.invalid") && !stdout.contains("192.0.2.1"),
+            "email/IP must never be emitted ({format}): {stdout}"
+        );
+        if format != "json" {
+            assert!(
+                stdout.contains("context: user deletion cascade"),
+                "{stdout}"
+            );
+            continue;
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&stdout).expect("JSON output");
+        let rows = parsed.as_array().expect("array");
+        assert_eq!(rows[0]["context"], "user deletion cascade");
+        assert_eq!(rows[0]["topic_id"], 42);
+        assert_eq!(rows[0]["post_id"], 420);
+        assert_eq!(rows[0]["action"], 12);
+        assert_eq!(rows[0]["id"], 9, "default fields are retained");
+        for key in LINKAGE_KEYS {
+            assert!(
+                rows[1].get(*key).is_some_and(serde_json::Value::is_null),
+                "absent {key} must be an explicit null, not dropped: {}",
+                rows[1]
+            );
+        }
+        for row in rows {
+            assert!(row.get("email").is_none() && row.get("ip_address").is_none());
+        }
+    }
+
+    let text = run_dsc(&["log", "staff", "mock", "--include-context"], &config_path);
+    assert!(text.status.success());
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(stdout.contains("[topic=42 post=420]"), "{stdout}");
+    assert!(
+        stdout.contains("    context: user deletion cascade"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("192.0.2.1"), "{stdout}");
+    assert_eq!(paths.lock().unwrap().len(), 3, "one GET per invocation");
+}
