@@ -833,8 +833,24 @@ fn main() -> Result<()> {
             UserCommand::Info {
                 discourse,
                 username,
+                admin,
+                include_email,
+                include_ip,
                 format,
-            } => commands::user::user_info(&config, &discourse, &username, format),
+            } => {
+                if admin {
+                    commands::user::user_info_admin(
+                        &config,
+                        &discourse,
+                        &username,
+                        include_email,
+                        include_ip,
+                        format,
+                    )
+                } else {
+                    commands::user::user_info(&config, &discourse, &username, format)
+                }
+            }
             UserCommand::Find {
                 email,
                 tags,

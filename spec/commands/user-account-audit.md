@@ -1,6 +1,6 @@
 # Targeted account inspection
 
-> **Status: proposed, R82.** No new commands have been implemented. Authentication-history access is a discovery question, not a promised API capability.
+> **Status: R82 Phase 1 verified on `koloki-demo` (2026-11-17).** `dsc user info --admin [--include-ip] [--include-email]` has mock and authorized live-test evidence. Phase 2 (authentication-history access) remains a discovery question, not a promised API capability.
 
 ## Motivation
 
@@ -42,16 +42,24 @@ GET /admin/logs/staff_action_logs.json?acting_user={username}&limit=200
 
 The public-profile CLI result included account identity, current roles, creation/last-seen timestamps and groups, with `email: null`. Actor- and target-filtered staff-log requests returned fewer than 200 rows. They established role grants/revocation and deletions, not the operator's identity or a complete email/login history.
 
-`GET /admin/users/{id}.json` is an existing client capability, but its live response was not captured during this investigation. Verify its current response, optional fields, permission failures and any audited reads before implementation. No raw admin API, database or SSH workaround was used.
+`GET /admin/users/{id}.json` is an existing client capability used by `dsc sar`. No raw admin API, database or SSH workaround was used.
 
 ## Phases and completion criteria
 
 ### Phase 1 - targeted admin view
 
-- [ ] Verify the minimal admin-detail and explicit email/IP read contracts on an authorized test account, retaining only sanitized evidence.
-- [ ] Add the targeted opt-in admin view, preserving the old command contract.
-- [ ] Test public/admin selection, exact account resolution, missing permissions, omitted/null fields, explicit sensitive-field inclusion, and exclusion of all credential material using mock responses.
-- [ ] Document actual read side effects and ensure `--dry-run` cannot accidentally trigger an audited sensitive read.
+- [x] Verify the minimal admin-detail and explicit email/IP read contracts on an authorized test account, retaining only sanitized evidence. On `koloki-demo` (2026-11-17), the built-in `system` account returned the implemented allowlist's account flags, counters and timestamps where available; unavailable fields remained explicit. `--include-ip` returned both allowlisted IP fields without an email section. A staff-log comparison around `GET /admin/users/-1.json` found no new target-account entry. The subsequent `GET /u/system/emails.json` added exactly one target-account `check_email` entry. Raw responses, addresses and credentials were not retained.
+- [x] Add the targeted opt-in admin view, preserving the old command contract. Without `--admin`, `user info` makes the same single `/u/{username}.json` request and emits the same `UserDetail` shape.
+- [x] Test public/admin selection, exact account resolution, missing permissions, omitted/null fields, explicit sensitive-field inclusion, and exclusion of all credential material using mock responses (`tests/user-info-admin-test.rs`).
+- [x] Document read side effects and ensure `--dry-run` cannot trigger an audited sensitive read: `--include-email` is in the CLI's dry-run refusal list, so it fails before any request.
+
+#### Implementation notes (2026-11-17)
+
+- Resolution: `GET /u/{username}.json` gives the id; the command refuses if the returned username differs (case-insensitively) from the requested one, and again if the admin detail's `id`/`username` do not match. A mismatch prints nothing on stdout.
+- Allowlist (`ADMIN_ACCOUNT_FIELDS` in `src/commands/user.rs`): `id, username, name, active, approved, staged, admin, moderator, trust_level, manual_locked_trust_level, created_at, last_seen_at, last_emailed_at, suspended_at, suspended_till, suspend_reason, silenced_till, silence_reason, post_count, topic_count, days_visited, posts_read_count, topics_entered, time_read, flags_given_count, flags_received_count, warnings_received_count, second_factor_enabled, api_key_count, penalty_counts`. Field names came from Discourse's `AdminUserListSerializer`/`AdminDetailedUserSerializer` and were verified against the authorized `koloki-demo` response on 2026-11-17; option- and permission-gated omissions remain `unavailable`.
+- `--include-ip` adds `ip_address`, `registration_ip_address` from the same response; no extra request.
+- `--include-email` reads `GET /u/{username}/emails.json` (`UsersController#check_emails`, which calls `StaffActionLogger#log_check_email`) and keeps only `email`, `secondary_emails`, `unconfirmed_emails`; `associated_accounts` is dropped. Email fields present in the admin-detail payload are never used, so the only email source is the explicitly audited one.
+- Output: `{username, user_id, source: {endpoints, retrieved_at}, account: {...}, email?: {...}, unavailable: [...]}`. Explicit nulls pass through; allowlisted fields the server omits are listed in `unavailable` (email fields prefixed `email.`). No server-version provenance yet - it would cost an extra request; add it with R65 if needed.
 
 ### Phase 2 - authentication and email-history discovery
 
