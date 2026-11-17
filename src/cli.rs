@@ -856,6 +856,13 @@ impl Commands {
                         ..
                     },
             } => Some("dsc post pull"),
+            Commands::User {
+                command:
+                    UserCommand::Info {
+                        include_email: true,
+                        ..
+                    },
+            } => Some("dsc user info --include-email"),
             Commands::Open { .. } => Some("dsc open"),
             Commands::Upload { .. } => Some("dsc upload"),
             Commands::Config {
@@ -2744,12 +2751,36 @@ pub enum UserCommand {
         format: ListFormat,
     },
     /// Show detailed info for a user.
-    #[command(visible_alias = "i")]
+    ///
+    /// Without `--admin`, reads the public profile (`/u/{username}.json`).
+    /// `--admin` reads the admin detail view and emits a privacy-scoped
+    /// allowlist of account flags, timestamps, counters, MFA state and API
+    /// key count; IPs and emails each need their own opt-in.
+    #[command(
+        visible_alias = "i",
+        after_help = "Examples:
+  dsc user info myforum jane
+  dsc user info myforum jane --admin --format json
+  dsc user info myforum jane --admin --include-ip
+  dsc user info myforum jane --admin --include-email   # audited: logs check_email"
+    )]
     Info {
         /// Discourse name.
         discourse: String,
         /// Username.
         username: String,
+        /// Read the admin detail view (needs an admin API key) and emit an
+        /// allowlisted account-inspection view.
+        #[arg(long)]
+        admin: bool,
+        /// With --admin: also read the account's email addresses via
+        /// `/u/{username}/emails.json`. Discourse records a `check_email`
+        /// staff-log entry for this read; refused under --dry-run.
+        #[arg(long, requires = "admin")]
+        include_email: bool,
+        /// With --admin: also include last and registration IP addresses.
+        #[arg(long, requires = "admin")]
+        include_ip: bool,
         /// Output format.
         #[arg(long, short = 'f', value_enum, default_value = "text")]
         format: ListFormat,

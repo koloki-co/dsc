@@ -129,6 +129,25 @@ impl DiscourseClient {
         serde_json::from_str(&text).context("parsing admin user detail response")
     }
 
+    /// Fetch a user's email addresses (`GET /u/{username}/emails.json`).
+    ///
+    /// Discourse's `UsersController#check_emails` serves this for staff and
+    /// records a `check_email` entry in the staff action log on every call,
+    /// so it is an audited read: callers must only issue it on an explicit
+    /// opt-in and never under `--dry-run`.
+    pub fn fetch_user_emails(&self, username: &str) -> Result<Value> {
+        let path = format!("/u/{}/emails.json", encode_query_value(username));
+        let response = self.get(&path)?;
+        let status = response.status();
+        let text = response
+            .text_capped()
+            .context("reading user emails response")?;
+        if !status.is_success() {
+            return Err(http_error("user emails request", status, &text));
+        }
+        serde_json::from_str(&text).context("parsing user emails response")
+    }
+
     /// Search users by a free-text filter (username, name, or email) via
     /// `GET /admin/users/list/all.json?filter=…`. Used to resolve an email
     /// address to an account.

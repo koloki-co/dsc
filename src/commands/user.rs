@@ -115,6 +115,200 @@ pub fn user_info(
     })
 }
 
+/// Account fields `user info --admin` copies out of the admin detail
+/// payload (`GET /admin/users/{id}.json`). An explicit allowlist: the raw
+/// payload also carries emails, IPs, SSO records, external IDs, associated
+/// accounts and custom fields, none of which may leak through by default.
+const ADMIN_ACCOUNT_FIELDS: &[&str] = &[
+    "id",
+    "username",
+    "name",
+    "active",
+    "approved",
+    "staged",
+    "admin",
+    "moderator",
+    "trust_level",
+    "manual_locked_trust_level",
+    "created_at",
+    "last_seen_at",
+    "last_emailed_at",
+    "suspended_at",
+    "suspended_till",
+    "suspend_reason",
+    "silenced_till",
+    "silence_reason",
+    "post_count",
+    "topic_count",
+    "days_visited",
+    "posts_read_count",
+    "topics_entered",
+    "time_read",
+    "flags_given_count",
+    "flags_received_count",
+    "warnings_received_count",
+    "second_factor_enabled",
+    "api_key_count",
+    "penalty_counts",
+];
+
+/// Admin-detail fields added only with `--include-ip`.
+const ADMIN_IP_FIELDS: &[&str] = &["ip_address", "registration_ip_address"];
+
+/// Fields copied out of `GET /u/{username}/emails.json` with
+/// `--include-email`. `associated_accounts` is deliberately excluded.
+const EMAIL_FIELDS: &[&str] = &["email", "secondary_emails", "unconfirmed_emails"];
+
+/// Privacy-scoped `user info --admin` view (R82).
+#[derive(Debug, Serialize)]
+struct AdminUserView {
+    username: String,
+    user_id: i64,
+    source: AdminViewSource,
+    /// Allowlisted fields exactly as the server sent them; a `null` stays
+    /// `null` rather than being coerced to false/zero.
+    account: serde_json::Map<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<serde_json::Map<String, serde_json::Value>>,
+    /// Requested fields the server did not return at all (unknown, not
+    /// false/zero/absent-on-the-account).
+    unavailable: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AdminViewSource {
+    endpoints: Vec<String>,
+    retrieved_at: String,
+}
+
+/// Copy `fields` from `payload` into a fresh map, recording any field the
+/// payload does not carry in `unavailable` (prefixed for disambiguation).
+fn pick_fields(
+    payload: &serde_json::Value,
+    fields: &[&str],
+    prefix: &str,
+    unavailable: &mut Vec<String>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut out = serde_json::Map::new();
+    for field in fields {
+        match payload.get(*field) {
+            Some(value) => {
+                out.insert((*field).to_string(), value.clone());
+            }
+            None => unavailable.push(format!("{prefix}{field}")),
+        }
+    }
+    out
+}
+
+/// `dsc user info --admin`: resolve exactly one account, then read the
+/// admin detail view and emit only allowlisted fields. IP addresses and
+/// email addresses each need their own opt-in; the email read is a
+/// separate, audited request (`check_email` staff-log entry) and the CLI
+/// refuses it under `--dry-run` before any request is made.
+pub fn user_info_admin(
+    config: &Config,
+    discourse_name: &str,
+    username: &str,
+    include_email: bool,
+    include_ip: bool,
+    format: ListFormat,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+
+    let public = client.fetch_user_detail(username)?;
+    if !public.username.eq_ignore_ascii_case(username) {
+        return Err(anyhow!(
+            "username {:?} resolved to a different account ({:?}, id {}); refusing to inspect it",
+            username,
+            public.username,
+            public.id
+        ));
+    }
+    let user_id = public.id;
+    let admin_endpoint = format!("/admin/users/{}.json", user_id);
+    let admin = client.fetch_admin_user_detail(user_id).with_context(|| {
+        format!(
+            "reading the admin view of {:?} (needs an admin API key)",
+            public.username
+        )
+    })?;
+    let admin_id = admin.get("id").and_then(|v| v.as_i64());
+    let admin_username = admin.get("username").and_then(|v| v.as_str());
+    if admin_id != Some(user_id)
+        || !admin_username.is_some_and(|u| u.eq_ignore_ascii_case(&public.username))
+    {
+        return Err(anyhow!(
+            "admin detail for id {} did not identify {:?}; refusing to report it",
+            user_id,
+            public.username
+        ));
+    }
+
+    let mut unavailable = Vec::new();
+    let mut account = pick_fields(&admin, ADMIN_ACCOUNT_FIELDS, "", &mut unavailable);
+    if include_ip {
+        account.extend(pick_fields(&admin, ADMIN_IP_FIELDS, "", &mut unavailable));
+    }
+
+    let mut endpoints = vec![format!("/u/{}.json", public.username), admin_endpoint];
+    let email = if include_email {
+        let payload = client.fetch_user_emails(&public.username)?;
+        endpoints.push(format!("/u/{}/emails.json", public.username));
+        Some(pick_fields(
+            &payload,
+            EMAIL_FIELDS,
+            "email.",
+            &mut unavailable,
+        ))
+    } else {
+        None
+    };
+
+    let view = AdminUserView {
+        username: public.username.clone(),
+        user_id,
+        source: AdminViewSource {
+            endpoints,
+            retrieved_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        },
+        account,
+        email,
+        unavailable,
+    };
+
+    emit_with(format, &view, || {
+        println!("id:          {}", view.user_id);
+        println!("username:    {}", view.username);
+        for (key, value) in &view.account {
+            if key == "id" || key == "username" {
+                continue;
+            }
+            println!("{:<26} {}", format!("{key}:"), render_scalar(value));
+        }
+        if let Some(email) = &view.email {
+            for (key, value) in email {
+                println!("{:<26} {}", format!("{key}:"), render_scalar(value));
+            }
+        }
+        if !view.unavailable.is_empty() {
+            println!("unavailable: {}", view.unavailable.join(", "));
+        }
+        println!("retrieved:   {}", view.source.retrieved_at);
+        Ok(())
+    })
+}
+
+fn render_scalar(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
 /// GDPR "which forum has this person" lookup: search every configured forum
 /// (or, with `tags`, every forum matching those tags) for an account whose
 /// email matches, and print forum-tagged matches. Continues past per-forum

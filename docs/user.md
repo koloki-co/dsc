@@ -19,9 +19,25 @@ dsc user list myforum --listing suspended --format json
 
 ```text
 dsc user info <discourse> <username> [--format text|json|yaml]
+dsc user info <discourse> <username> --admin [--include-ip] [--include-email] [--format text|json|yaml]
 ```
 
-Shows id, username, name, email (if returned by the server), trust level, role, suspension / silence state, last-seen, created-at, post count, and group count.
+Shows id, username, name, email (if returned by the server), trust level, role, suspension / silence state, last-seen, created-at, post count, and group count. This reads the public profile (`/u/{username}.json`); a null email there is not evidence that the account has no address.
+
+`--admin` (needs an admin API key) is a targeted account inspection that avoids running a whole [`dsc sar`](sar.md). It resolves the username to exactly one account, reads `GET /admin/users/{id}.json`, and emits only an allowlist: account flags (active, approved, staged, admin, moderator), trust levels, timestamps the server supplies (created, last seen, last emailed, suspended/silenced until and their reasons), reading/visit counters, flag/warning counts, penalty counts, MFA state and API-key count. Values are passed through exactly as returned: an explicit `null` stays `null`, and any allowlisted field the server did not send is listed under `unavailable` rather than reported as false or zero. Output also records the endpoints read and a `retrieved_at` timestamp.
+
+Emails, IPs, SSO records, external IDs, associated accounts and custom fields in the admin payload are never emitted by default, and credential material is never emitted at all.
+
+- `--include-ip` adds `ip_address` and `registration_ip_address` from the same admin response (no extra request).
+- `--include-email` makes an extra request to `GET /u/{username}/emails.json` and adds `email`, `secondary_emails` and `unconfirmed_emails`. **Discourse records a `check_email` entry in the staff action log for this read.** Because of that audit side effect, `--dry-run` refuses `--include-email` before any request is made.
+
+Both opt-ins require `--admin`. No posts, messages, likes, Chat content or backups are read.
+
+```bash
+dsc user info myforum jane --admin --format json
+dsc user info myforum jane --admin --include-ip
+dsc user info myforum jane --admin --include-email   # logs check_email
+```
 
 ## dsc user find
 
