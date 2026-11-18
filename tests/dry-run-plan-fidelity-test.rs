@@ -319,6 +319,12 @@ user_fields:
     searchable: false
 "#;
 
+/// Frozen server-side custom emojis, as `GET /admin/customize/emojis.json`
+/// returns them before any delete. Mixed case so the request's
+/// case-insensitive name resolution must plan (and delete) the server's
+/// spelling, not the operator's.
+const SERVER_EMOJI_NAMES: &[&str] = &["PartyTime", "shipit", "keep_me"];
+
 #[derive(Default)]
 struct Recorder {
     /// Overrides the `GET /tag_groups.json` body when set; the default is
@@ -329,6 +335,10 @@ struct Recorder {
     tags_json: Option<String>,
     /// (setting name, value sent) for every PUT received, in arrival order.
     puts: Vec<(String, String)>,
+    /// Custom emoji names a real `emoji delete` run has removed. Only the
+    /// post-delete verification list can see this: the dry-run issues no
+    /// DELETE, so the list both phases plan from is identical.
+    deleted_emojis: Vec<String>,
 }
 
 fn start_mock(recorder: Arc<Mutex<Recorder>>) -> String {
@@ -370,6 +380,31 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
 
     let (status, out) = if method == "GET" && path == "/admin/site_settings.json" {
         ("HTTP/1.1 200 OK", SERVER_SETTINGS_JSON.to_string())
+    } else if method == "GET" && path == "/admin/customize/emojis.json" {
+        let recorder = recorder.lock().expect("recorder lock");
+        let remaining: Vec<serde_json::Value> = SERVER_EMOJI_NAMES
+            .iter()
+            .filter(|name| !recorder.deleted_emojis.iter().any(|d| d == *name))
+            .map(|name| serde_json::json!({"name": name, "url": format!("/uploads/{name}.png")}))
+            .collect();
+        (
+            "HTTP/1.1 200 OK",
+            serde_json::Value::Array(remaining).to_string(),
+        )
+    } else if method == "DELETE"
+        && let Some(name) = path
+            .strip_prefix("/admin/config/emoji/")
+            .and_then(|rest| rest.strip_suffix(".json"))
+    {
+        // `emoji delete`: recorded as the request the plan line names, so a
+        // delete of a differently-cased or duplicated name shows up as a
+        // mismatch rather than collapsing into the planned entry.
+        let mut recorder = recorder.lock().expect("recorder lock");
+        recorder
+            .puts
+            .push((format!("DELETE emoji {name}"), "deleted".to_string()));
+        recorder.deleted_emojis.push(name.to_string());
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
     } else if method == "GET" && path == "/admin/themes/42.json" {
         ("HTTP/1.1 200 OK", SERVER_THEME_JSON.to_string())
     } else if method == "GET" && path == "/admin/themes/44.json" {
@@ -1793,4 +1828,55 @@ fn theme_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() 
                 .collect(),
         );
     }
+}
+
+/// Parse `dsc emoji delete`'s `[dry-run] <forum>: would delete emoji <name>
+/// (...)` lines into `DELETE emoji <name> -> deleted`, matching how the mock
+/// records each real `DELETE /admin/config/emoji/:name.json`.
+fn parse_emoji_delete_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    stdout
+        .lines()
+        .filter_map(|line| line.split_once(": would delete emoji "))
+        .filter_map(|(_, rest)| rest.split_whitespace().next())
+        .map(|name| (format!("DELETE emoji {name}"), "deleted".to_string()))
+        .collect()
+}
+
+#[test]
+fn emoji_delete_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+
+    // Requested in the operator's own casing, with `shipit` named twice: the
+    // plan must resolve each to the server's spelling exactly once, and
+    // `keep_me` (not requested) must be neither planned nor deleted.
+    let names = ["partytime", "shipit", "SHIPIT"];
+    let mut dry_run_args = vec!["--dry-run", "emoji", "delete", "mock"];
+    dry_run_args.extend(names);
+    let mut real_args = vec!["emoji", "delete", "mock"];
+    real_args.extend(names);
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &dry_run_args,
+        &real_args,
+        parse_emoji_delete_planned_changes,
+        &[
+            ("DELETE emoji PartyTime".to_string(), "deleted".to_string()),
+            ("DELETE emoji shipit".to_string(), "deleted".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    // The shared comparison collects into a map, which would hide a repeated
+    // DELETE of the same emoji; the real run must send exactly one per
+    // planned line.
+    assert_eq!(
+        recorder.lock().expect("recorder lock").puts.len(),
+        2,
+        "the real run must send exactly one DELETE per planned emoji"
+    );
 }
