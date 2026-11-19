@@ -190,6 +190,10 @@ fn validate_rename_names(old: &str, new: &str) -> Result<(String, String)> {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TaxonomyFile {
     pub version: u32,
+    /// Informational origin of the snapshot. Never enforced: pushing a
+    /// reviewed taxonomy to another site is an intentional workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::utils::SnapshotProvenance>,
     /// False when the pull could not read admin-only tag groups. Incomplete
     /// snapshots cannot safely drive `--prune`.
     #[serde(default)]
@@ -295,6 +299,7 @@ pub fn tag_pull(
 
     let taxonomy = TaxonomyFile {
         version: 1,
+        provenance: Some(crate::utils::snapshot_provenance(&discourse.baseurl)),
         complete,
         tags: tag_entries,
         tag_groups,
@@ -825,6 +830,33 @@ mod tests {
 
     fn s(items: &[&str]) -> Vec<String> {
         items.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn taxonomy_snapshot_without_provenance_remains_readable() {
+        let file: super::TaxonomyFile =
+            serde_yaml::from_str("version: 1\ncomplete: true\ntags:\n  - name: alpha\n")
+                .expect("legacy taxonomy");
+        assert!(file.provenance.is_none());
+        assert_eq!(file.tags.len(), 1);
+    }
+
+    #[test]
+    fn taxonomy_snapshot_round_trips_provenance() {
+        let file = super::TaxonomyFile {
+            version: 1,
+            provenance: Some(crate::utils::SnapshotProvenance {
+                source: "https://forum.example.com".to_string(),
+                exporter_version: "0.24.0".to_string(),
+            }),
+            complete: true,
+            tags: Vec::new(),
+            tag_groups: Vec::new(),
+        };
+        let yaml = serde_yaml::to_string(&file).expect("serialize taxonomy");
+        assert!(yaml.contains("provenance:\n  source: https://forum.example.com\n"));
+        let back: super::TaxonomyFile = serde_yaml::from_str(&yaml).expect("deserialize taxonomy");
+        assert_eq!(back.provenance, file.provenance);
     }
 
     fn set(items: &[&str]) -> BTreeSet<String> {

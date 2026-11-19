@@ -21,6 +21,16 @@ provenance:
 
 Provenance is informational only. Push and diff logic must ignore it: a reviewed snapshot may intentionally be copied from staging to production or between client forums. It must not create a semantic change, a warning-only write, or a same-site restriction.
 
-## Initial scope
+## Scope
 
-The initial R71 implementation covers `setting pull`, `theme setting pull`, and `board pull`. Other snapshot families remain inventory work; they should adopt this exact nested object where their file schemas gain provenance.
+The initial R71 implementation covered `setting pull`, `theme setting pull`, and `board pull`. `tag pull` (taxonomy) and `category def pull` (definitions) adopted the same nested object on 2026-11-19; `tests/snapshot-provenance-test.rs` pulls each from a mock forum configured with URL user-info, asserts the credential-free header, then retargets `provenance.source` to another site and confirms `push --dry-run` plans no change and sends only GETs. `category def`'s file keeps `deny_unknown_fields`, so the provenance object is strict too.
+
+### Remaining inventory
+
+| Family | Current origin fields | Status |
+| --- | --- | --- |
+| `user-field pull` | top-level `source` string from `normalize_baseurl` | Deliberately different: push *enforces* `source` as a same-site guard before creation, which is the opposite of informational provenance. Note that `source` is not stripped of URL user-info the way `provenance.source` is; any change needs both pull and the push comparison to strip together. Needs an author decision before adopting `provenance`. |
+| `palette pull` / `theme palette pull` | none (unversioned; carries a `pulled` baseline) | Candidate once the file gains a schema `version`. |
+| `theme pull` / `theme field pull` | none | Candidate; theme payload files mirror the API object, so a header needs push to strip it. |
+| `topic`/`post`/`category pull` (Markdown front matter) | `url`, `pulled_at` | Out of scope: the front-matter `url` already identifies the source. |
+| `emoji pull`, `backup pull` | binary assets/archives | Out of scope: no declarative document to carry a header. |

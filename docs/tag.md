@@ -34,6 +34,9 @@ dsc tag pull myforum tags.yaml --force
 
 ```yaml
 version: 1
+provenance: # written by pull; informational only
+  source: https://forum.example.com
+  exporter_version: 0.24.0
 
 tags:
   - name: covers
@@ -49,6 +52,8 @@ tag_groups:
       - guitarist
       - bassist
 ```
+
+`provenance` is written by `pull` and is informational only: `push` ignores it, so a taxonomy reviewed on one forum can be applied to another. Files without it remain valid. See [snapshot provenance](../spec/commands/snapshot-provenance.md).
 
 ## dsc tag push
 
