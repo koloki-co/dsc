@@ -171,6 +171,9 @@ to the top level.
 
 ```yaml
 version: 2
+provenance:                    # optional; written by `def pull`, ignored by push (see snapshot-provenance.md)
+  source: https://forum.example.com
+  exporter_version: 0.24.0
 
 categories:
   - name: Bands looking for musicians

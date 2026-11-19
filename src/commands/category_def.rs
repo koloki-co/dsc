@@ -59,6 +59,10 @@ const CATEGORIES_FILE_VERSION: u32 = 2;
 #[serde(deny_unknown_fields)]
 pub struct CategoriesFile {
     pub version: u32,
+    /// Informational origin of the snapshot. Never enforced: pushing a
+    /// reviewed definition file to another site is an intentional workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<crate::utils::SnapshotProvenance>,
     #[serde(default)]
     pub categories: Vec<CategoryDefEntry>,
 }
@@ -1478,6 +1482,7 @@ pub fn category_def_pull(
 
     let file = CategoriesFile {
         version: CATEGORIES_FILE_VERSION,
+        provenance: Some(crate::utils::snapshot_provenance(&discourse.baseurl)),
         categories: entries,
     };
 
@@ -2706,6 +2711,35 @@ mod tests {
     fn category_definition_rejects_unknown_fields() {
         let error = serde_yaml::from_str::<CategoriesFile>(
             "version: 1\ncategories:\n  - name: Marketplace\n    solved_enabled: true\n",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn category_definition_snapshot_provenance_is_optional_and_round_trips() {
+        let legacy: CategoriesFile =
+            serde_yaml::from_str("version: 2\ncategories:\n  - name: Marketplace\n").unwrap();
+        assert!(legacy.provenance.is_none());
+
+        let file = CategoriesFile {
+            version: CATEGORIES_FILE_VERSION,
+            provenance: Some(crate::utils::SnapshotProvenance {
+                source: "https://forum.example.com".to_string(),
+                exporter_version: "0.24.0".to_string(),
+            }),
+            categories: vec![entry("Marketplace")],
+        };
+        let yaml = serde_yaml::to_string(&file).unwrap();
+        let back: CategoriesFile = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(back.provenance, file.provenance);
+        let json = serde_json::to_string(&file).unwrap();
+        let back: CategoriesFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.provenance, file.provenance);
+
+        // The provenance object itself stays strict, like the rest of the file.
+        let error = serde_yaml::from_str::<CategoriesFile>(
+            "version: 2\nprovenance:\n  source: https://forum.example.com\n  exporter_version: 0.24.0\n  apikey: secret\ncategories: []\n",
         )
         .unwrap_err();
         assert!(error.to_string().contains("unknown field"));

@@ -37,6 +37,9 @@ dsc tag push <discourse> <path>    # apply file → server
 
 ```yaml
 version: 1
+provenance:        # optional; written by pull, ignored by push (see snapshot-provenance.md)
+  source: https://forum.example.com
+  exporter_version: 0.24.0
 
 tags:              # optional; per-tag metadata only. A tag named only inside a
   - name: covers   #   group still exists — these entries just attach a description.
