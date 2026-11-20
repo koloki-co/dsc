@@ -4,6 +4,7 @@
 
 use super::client::{DiscourseClient, ResponseBody};
 use super::error::http_error;
+use super::models::deserialize_tag_names;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -229,17 +230,7 @@ impl DiscourseClient {
         if !status.is_success() {
             return Err(http_error("topic request", status, &text));
         }
-        let value: Value = serde_json::from_str(&text).context("parsing topic response json")?;
-        let tags = value
-            .get("tags")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            })
-            .unwrap_or_default();
-        Ok(tags)
+        parse_topic_tags(&text)
     }
 
     /// Replace the full tag list on a topic. Returns the resulting tag set.
@@ -266,9 +257,64 @@ impl DiscourseClient {
     }
 }
 
+/// The `tags` field of a single-topic (`/t/{id}.json`) response.
+#[derive(Deserialize)]
+struct TopicTagsResponse {
+    #[serde(default, deserialize_with = "deserialize_tag_names")]
+    tags: Option<Vec<String>>,
+}
+
+/// Parse a topic's current tag names from a `/t/{id}.json` body.
+///
+/// Uses the shared [`deserialize_tag_names`] boundary so current tag objects
+/// (`{"id","name","slug"}`) and legacy strings both yield names. Any other
+/// shape is a hard error: `tag apply`/`tag remove` replace the whole tag list,
+/// so silently dropping an unrecognised entry here would delete that tag from
+/// the topic on the following PUT.
+fn parse_topic_tags(text: &str) -> Result<Vec<String>> {
+    let parsed: TopicTagsResponse =
+        serde_json::from_str(text).context("parsing topic response json")?;
+    Ok(parsed.tags.unwrap_or_default())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::TagsResponse;
+    use super::{TagsResponse, parse_topic_tags};
+
+    #[test]
+    fn topic_tags_accept_legacy_strings() {
+        assert_eq!(
+            parse_topic_tags(r#"{"id":1,"tags":["bug","ops"]}"#).unwrap(),
+            vec!["bug", "ops"]
+        );
+    }
+
+    #[test]
+    fn topic_tags_accept_current_tag_objects() {
+        assert_eq!(
+            parse_topic_tags(
+                r#"{"id":1,"tags":[{"id":3,"name":"bug","slug":"bug"},{"id":4,"slug":"ops"}]}"#
+            )
+            .unwrap(),
+            vec!["bug", "ops"]
+        );
+    }
+
+    #[test]
+    fn topic_tags_missing_or_null_are_empty() {
+        assert!(parse_topic_tags(r#"{"id":1}"#).unwrap().is_empty());
+        assert!(
+            parse_topic_tags(r#"{"id":1,"tags":null}"#)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn topic_tags_reject_unknown_entries_instead_of_dropping_them() {
+        let err = parse_topic_tags(r#"{"id":1,"tags":["ok",{"id":9,"label":"x"}]}"#).unwrap_err();
+        assert!(format!("{err:#}").contains("unsupported topic tag object"));
+    }
 
     #[test]
     fn tag_description_preserves_missing_vs_null() {
