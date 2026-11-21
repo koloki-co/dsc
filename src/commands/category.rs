@@ -1217,6 +1217,7 @@ mod tests {
             id,
             title: title.to_string(),
             slug: slug.to_string(),
+            bumped_at: None,
         }
     }
 

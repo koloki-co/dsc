@@ -456,21 +456,19 @@ dsc category push [OPTIONS] <DISCOURSE> <CATEGORY> <LOCAL_PATH>
 
 Options:
   --no-bump   Update post content without bumping the topic in the
-              activity feed. Passes no_bump=true to the API.
+              activity feed. Passes bypass_bump=true to the API.
               Use for silent maintenance edits.
 ```
 
-Implementation: add `"no_bump"` → `"true"` to the form payload in
+Implementation: add `"bypass_bump"` → `"true"` to the form payload in
 `update_post()` when the flag is set:
 
 ```rust
-// src/api/topics.rs  update_post()
-pub fn update_post(&self, post_id: u64, raw: &str, no_bump: bool) -> Result<()> {
-    let path = format!("/posts/{}.json", post_id);
-    let no_bump_str = no_bump.to_string();
+// src/api/topics.rs  post_edit_payload()
+fn post_edit_payload(raw: &str, opts: PostEditOptions) -> Vec<(&'static str, &str)> {
     let mut payload = vec![("post[raw]", raw)];
-    if no_bump {
-        payload.push(("post[no_bump]", no_bump_str.as_str()));
+    if opts.no_bump {
+        payload.push(("post[bypass_bump]", "true"));
     }
     // ...
 }
@@ -486,9 +484,9 @@ audit trail).
 ### Reference: API field names observed
 
 From the Discourse source and Meta documentation:
-- `post[no_bump]` = `"true"` — prevents topic bump on post edit
+- `post[bypass_bump]` = `"true"` — prevents topic bump on post edit
 - `post[skip_revision]` = `"true"` — prevents new revision entry
-- Neither is currently sent by `dsc`
+- Both are opt-in fields sent by `dsc topic push` and `dsc category push`
 
 ---
 

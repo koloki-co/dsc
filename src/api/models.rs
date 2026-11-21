@@ -251,6 +251,8 @@ pub struct TopicSummary {
     pub id: u64,
     pub title: String,
     pub slug: String,
+    #[serde(default)]
+    pub bumped_at: Option<String>,
 }
 
 /// Group summary.
