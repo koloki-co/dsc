@@ -325,6 +325,18 @@ user_fields:
 /// spelling, not the operator's.
 const SERVER_EMOJI_NAMES: &[&str] = &["PartyTime", "shipit", "keep_me"];
 
+/// `group destroy` fixtures. Group 77's numeric detail route 404s (the mock's
+/// default), so `group destroy` must recover its name from the admin list and
+/// fall back to the by-name detail route; group 3 is automatic and must be
+/// refused by both phases. `(id, name)` pairs; the DELETE handler maps an ID
+/// back to its frozen name so the real run's record is comparable with the
+/// plan's `("<name>")`.
+const SERVER_GROUPS: &[(u64, &str)] = &[(3, "staff"), (77, "volunteers")];
+const SERVER_GROUPS_JSON: &str = r#"{"groups":[{"id":3,"name":"staff","automatic":true},{"id":77,"name":"volunteers","automatic":false}]}"#;
+const SERVER_GROUP_VOLUNTEERS_JSON: &str =
+    r#"{"group":{"id":77,"name":"volunteers","full_name":"Volunteers","automatic":false}}"#;
+const SERVER_GROUP_STAFF_JSON: &str = r#"{"group":{"id":3,"name":"staff","automatic":true}}"#;
+
 #[derive(Default)]
 struct Recorder {
     /// Overrides the `GET /tag_groups.json` body when set; the default is
@@ -404,6 +416,33 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
             .puts
             .push((format!("DELETE emoji {name}"), "deleted".to_string()));
         recorder.deleted_emojis.push(name.to_string());
+        ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
+    } else if method == "GET" && path == "/admin/groups.json" {
+        ("HTTP/1.1 200 OK", SERVER_GROUPS_JSON.to_string())
+    } else if method == "GET" && path == "/groups/volunteers.json" {
+        // Only the by-name route answers for group 77; `/groups/77.json`
+        // falls through to the default 404.
+        ("HTTP/1.1 200 OK", SERVER_GROUP_VOLUNTEERS_JSON.to_string())
+    } else if method == "GET" && path == "/groups/3.json" {
+        ("HTTP/1.1 200 OK", SERVER_GROUP_STAFF_JSON.to_string())
+    } else if method == "DELETE"
+        && let Some(id) = path
+            .strip_prefix("/admin/groups/")
+            .and_then(|rest| rest.strip_suffix(".json"))
+    {
+        // `group destroy`: recorded as the request line the plan names,
+        // valued with the frozen name for that ID (or `<unknown>`), so a
+        // delete of the wrong ID cannot match the planned entry.
+        let name = id
+            .parse::<u64>()
+            .ok()
+            .and_then(|id| SERVER_GROUPS.iter().find(|(gid, _)| *gid == id))
+            .map_or("<unknown>", |(_, name)| *name);
+        recorder
+            .lock()
+            .expect("recorder lock")
+            .puts
+            .push((format!("DELETE {path}"), name.to_string()));
         ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
     } else if method == "GET" && path == "/admin/themes/42.json" {
         ("HTTP/1.1 200 OK", SERVER_THEME_JSON.to_string())
@@ -1878,5 +1917,83 @@ fn emoji_delete_dry_run_plan_matches_the_real_run_against_the_same_frozen_state(
         recorder.lock().expect("recorder lock").puts.len(),
         2,
         "the real run must send exactly one DELETE per planned emoji"
+    );
+}
+
+/// Parse `dsc group destroy`'s `[dry-run] <forum>: would delete group <id>
+/// ("<name>") via <METHOD> <path>` line into `<METHOD> <path> -> <name>`,
+/// matching how the mock records each real `DELETE /admin/groups/:id.json`.
+fn parse_group_destroy_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    stdout
+        .lines()
+        .filter_map(|line| line.split_once(": would delete group "))
+        .filter_map(|(_, rest)| {
+            let (_, quoted) = rest.split_once(" (\"")?;
+            let (name, via) = quoted.split_once("\") via ")?;
+            Some((via.trim().to_string(), name.to_string()))
+        })
+        .collect()
+}
+
+#[test]
+fn group_destroy_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+
+    // Group 77's numeric detail route 404s, so both phases must take the
+    // admin-list + by-name fallback; the plan must still name the group and
+    // request a real run then sends.
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "group", "destroy", "mock", "77"],
+        &["group", "destroy", "mock", "77"],
+        parse_group_destroy_planned_changes,
+        &[(
+            "DELETE /admin/groups/77.json".to_string(),
+            "volunteers".to_string(),
+        )]
+        .into_iter()
+        .collect(),
+    );
+    assert_eq!(
+        recorder.lock().expect("recorder lock").puts.len(),
+        1,
+        "the real run must send exactly one DELETE for the planned group"
+    );
+}
+
+#[test]
+fn group_destroy_automatic_group_is_refused_identically_by_plan_and_real_run() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+
+    // An automatic group must never appear as a planned delete: the dry-run
+    // refuses rather than printing a plan a real run would not carry out,
+    // and the real run refuses for the same reason without sending anything.
+    for args in [
+        &["--dry-run", "group", "destroy", "mock", "3"][..],
+        &["group", "destroy", "mock", "3"][..],
+    ] {
+        let output = run_dsc(args, &config_path);
+        assert!(!output.status.success(), "{args:?} must refuse");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            parse_group_destroy_planned_changes(&stdout).is_empty(),
+            "{args:?} must not print a delete plan: {stdout}"
+        );
+        assert!(
+            stderr.contains("automatic group"),
+            "{args:?} must name the refusal reason: {stderr}"
+        );
+    }
+    assert!(
+        recorder.lock().expect("recorder lock").puts.is_empty(),
+        "an automatic group must never be deleted"
     );
 }
