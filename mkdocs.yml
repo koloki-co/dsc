@@ -92,6 +92,7 @@ nav:
       - plugin: plugin.md
       - palette: palette.md
       - user-field: user-field.md
+      - ai: ai.md
       - log: log.md
       - notification: notification.md
   - Reports:

@@ -42,6 +42,7 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 | **Boards** | list, inspect, and snapshot Discourse Boards with columns, topic cards, and floater cards | guarded declarative push and prune |
 | **Tags** | pull / push the taxonomy, rename, per-topic tag / untag | — |
 | **Site settings** | get / set / list, pull / push snapshots, diff two sources, **audit one setting across every forum**, list / inspect / enable / disable hidden Upcoming Changes | validated `setting upload` |
+| **Discourse AI** | safe non-secret list / show of LLM definitions | reviewable definition sync, recipes, and explicitly authorised synthetic provider tests |
 | **Themes & palettes** | list / install / remove / pull / push / duplicate / show; component settings and fields; assets; enable / disable; attach / detach; colour palettes; remote update | — |
 | **Users & access** | list / info / find-by-email, suspend / silence, promote / demote, group membership, activity export, create, password reset, email change; invites; private messages; API keys; **one-shot SAR / GDPR export** | scoped API keys; deterministic Chat archival for SAR inclusion |
 | **Backups, emoji, uploads** | backup create / list / pull / push / restore, fleet backup creation and S3 health/setup, bulk emoji, file upload | S3 key rotation and retention |
@@ -167,6 +168,7 @@ dsc update myforum
   - [explorer](docs/explorer.md) — inspect and run saved Data Explorer queries
   - [board](docs/board.md) - list, inspect, and snapshot Discourse Boards
   - [upcoming-change](docs/upcoming-change.md) — list, inspect, enable and disable Discourse's hidden Upcoming Changes
+  - [ai](docs/ai.md) — inspect non-secret Discourse AI LLM definitions
   - [upload](docs/upload.md) — upload a file and return its short URL
   - [emoji](docs/emoji.md) — upload and list custom emoji
   - [topic](docs/topic.md) — pull, push, and sync topics as Markdown

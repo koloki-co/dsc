@@ -31,7 +31,7 @@ The target workflow is rapid, repeatable and reviewable:
 
 ## Current state and evidence gap
 
-`dsc 0.24.0` has no `ai` command family or LLM-definition client. `dsc setting` can manage visible site settings but not the plugin's separate definition records.
+`dsc 0.24.0` shipped with no `ai` command family or LLM-definition client. `dsc setting` can manage visible site settings but not the plugin's separate definition records. R88 Phase 1 starts with safe `ai llm list` and `show`: they use the list endpoint and emit an allowlisted public representation only. Pull, diff, push, recipes and tests remain unavailable.
 
 The reported editor URL, `/admin/plugins/discourse-ai/ai-llms/1/edit`, is a browser route. It does not establish a JSON endpoint, accepted request envelope, serializer, plugin-version compatibility or test route. No raw credential, response body or production configuration is needed to close this gap. Discovery must begin with the installed plugin source/version and then use an authorised disposable forum with synthetic values.
 
@@ -209,4 +209,23 @@ Out of scope for the initial feature:
 
 ## Reference: API calls observed in the field
 
-No supported Discourse AI admin API request has been captured yet. The 2026-11-19/20 operator report above is incident evidence only. Add redacted synthetic request/response captures, source links and tested version information here before implementation.
+### Source contract - 2026-11-21
+
+The current Discourse core commit [`ba3bd0d`](https://github.com/discourse/discourse/tree/ba3bd0d0d47622cf8a9d216d1d935cf93aaec41d) ships Discourse AI under `plugins/discourse-ai/`; the former standalone `discourse/discourse-ai` repository was folded into core in August 2026. The current [controller](https://github.com/discourse/discourse/blob/ba3bd0d0d47622cf8a9d216d1d935cf93aaec41d/plugins/discourse-ai/app/controllers/discourse_ai/admin/ai_llms_controller.rb), [routes](https://github.com/discourse/discourse/blob/ba3bd0d0d47622cf8a9d216d1d935cf93aaec41d/plugins/discourse-ai/config/routes.rb), [serializer](https://github.com/discourse/discourse/blob/ba3bd0d0d47622cf8a9d216d1d935cf93aaec41d/plugins/discourse-ai/app/serializers/llm_model_serializer.rb), and [request specs](https://github.com/discourse/discourse/blob/ba3bd0d0d47622cf8a9d216d1d935cf93aaec41d/plugins/discourse-ai/spec/requests/admin/ai_llms_controller_spec.rb) establish this source-derived contract:
+
+| Operation | Method and path | Finding |
+|---|---|---|
+| List | `GET /admin/plugins/discourse-ai/ai-llms.json` | Returns `ai_llms` plus `meta` with provider parameters, capabilities, tokenizers and AI Secret metadata. |
+| Browser edit | `GET /admin/plugins/discourse-ai/ai-llms/:id/edit` | Exists as a Rails resource route, but R88 does not need it: list returns full serialized definition rows. |
+| Create | `POST /admin/plugins/discourse-ai/ai-llms.json` | Expects an `ai_llm` envelope. Not implemented by R88 yet. |
+| Update | `PUT /admin/plugins/discourse-ai/ai-llms/:id.json` | Uses an `ai_llm` envelope. Quota/credit subrecords have replacement semantics and must not be managed until separately designed. |
+| Test | `POST /admin/plugins/discourse-ai/ai-llms/test.json` | Rate-limited to six requests/minute per user. It builds a model from submitted configuration, can test an existing seeded ID, and probes both non-streaming and streaming modes. It can contact a provider and is not implemented by R88 yet. |
+| Delete | `DELETE /admin/plugins/discourse-ai/ai-llms/:id.json` | Refuses definitions in use. Not implemented by R88. |
+
+The serializer exposes `api_key` directly for custom definitions, uses `********` for seeded ones, and returns provider-specific parameters plus AI Secret identifiers. This is a credential boundary, not an output model. R88's initial client parses the response privately and emits only an allowlisted summary: signed ID, display/model/provider names, tokenizer, redacted endpoint, API-key presence, AI Secret ID, seeded state and context limits. It does not emit `api_key`, provider parameters, AI Secret metadata, use references, quotas or unknown response fields.
+
+The old standalone-plugin source at commit [`b6630b6`](https://github.com/discourse/discourse-ai/tree/b6630b670f36fadcff1bc85d5f0d9dcf1e440420) used the same list/create/update/delete paths but a `GET` test route limited to three requests/minute and lacked current secret/credit fields. Do not use it as a current test contract.
+
+### Authorised read-only compatibility check - `koloki-demo`, 2026-11-21
+
+`dsc plugin list koloki-demo` reported the core `discourse-ai` plugin at version `0.0.1`, disabled. An authenticated `GET /admin/plugins/discourse-ai/ai-llms.json` returned HTTP 404. Its body was discarded without parsing or retention. No AI setting, definition, provider request or test was changed. This proves only that a disabled plugin returns an unavailable API response on this forum; it is not a success-shape capture and this forum must not be enabled merely for R88 discovery.

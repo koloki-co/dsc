@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 pub mod add;
+pub mod ai;
 pub mod analytics;
 pub mod api_key;
 pub mod app;

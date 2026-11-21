@@ -1029,6 +1029,8 @@ fn palette_push_rejects_an_empty_name_before_planning_or_writing() {
 /// run: `--dry-run` would go untested for it.
 const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "add",
+    "ai llm list",
+    "ai llm show",
     "analytics",
     "api-key list",
     "api-key show",

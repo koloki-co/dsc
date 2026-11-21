@@ -1126,6 +1126,19 @@ fn main() -> Result<()> {
             }
         },
 
+        Commands::Ai { command } => match command {
+            AiCommand::Llm { command } => match command {
+                AiLlmCommand::List { discourse, format } => {
+                    commands::ai::ai_llm_list(&config, &discourse, format)
+                }
+                AiLlmCommand::Show {
+                    discourse,
+                    llm_id,
+                    format,
+                } => commands::ai::ai_llm_show(&config, &discourse, llm_id, format),
+            },
+        },
+
         Commands::Theme { command } => match command {
             ThemeCommand::List {
                 discourse,

@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+mod ai;
 mod api_keys;
 mod backup;
 mod boards;
@@ -32,6 +33,7 @@ mod user_fields;
 mod users;
 mod webhooks;
 
+pub use ai::AiLlmSummary;
 pub use api_keys::{ApiKeySummary, CreatedApiKey};
 pub use boards::{
     Board, BoardAssignee, BoardCard, BoardCardTag, BoardCardTopic, BoardColumn, BoardDetail,

@@ -267,6 +267,14 @@ pub enum Commands {
         #[command(subcommand)]
         command: PluginCommand,
     },
+    /// Inspect non-secret Discourse AI configuration. Does not send provider requests.
+    #[command(after_help = "Examples:
+  dsc ai llm list myforum
+  dsc ai llm show myforum 1 --format yaml")]
+    Ai {
+        #[command(subcommand)]
+        command: AiCommand,
+    },
     /// List/install/remove/pull/push/duplicate themes.
     #[command(visible_alias = "th")]
     #[command(after_help = "Examples:
@@ -1972,6 +1980,41 @@ pub enum PaletteCommand {
         /// Palette ID to update (creates a new palette when omitted).
         #[arg(allow_negative_numbers = true)]
         palette_id: Option<i64>,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(next_display_order = None)]
+pub enum AiCommand {
+    /// Inspect LLM definitions without emitting credentials or provider parameters.
+    Llm {
+        #[command(subcommand)]
+        command: AiLlmCommand,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(next_display_order = None)]
+pub enum AiLlmCommand {
+    /// List non-secret LLM definition summaries.
+    #[command(visible_alias = "ls")]
+    List {
+        /// Discourse name.
+        discourse: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Show one non-secret LLM definition summary.
+    Show {
+        /// Discourse name.
+        discourse: String,
+        /// LLM definition ID. Built-in/seeded definitions can have negative IDs.
+        #[arg(allow_negative_numbers = true)]
+        llm_id: i64,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
     },
 }
 
