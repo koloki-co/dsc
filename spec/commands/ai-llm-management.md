@@ -99,6 +99,8 @@ Source identity is a guard, not a portability promise. An ID pulled from a diffe
 
 ## Recipes, configuration guidance and agent skill
 
+Operator request, 2026-11-21: credential setup should lead to provider model discovery and reviewable autofill of exact model IDs, supported context capacity, output limits and capabilities where authoritative metadata is available. Investigate a supported Discourse admin discovery API first; direct provider access requires separate product-boundary and secret-handling review. Distinguish a listed model from account entitlement and a successful inference test. Model-list APIs do not universally supply context/capability metadata: retain source/date, allow explicit overrides and represent missing values as unknown rather than guessing. Discovery must not silently create definitions, enable features or run paid inference; synthetic tests remain separate and explicit.
+
 A recipe is a secret-free, versioned local plan for a known provider setup. It is intended for a management repository or ignored local workspace, reviewed like other configuration. It is not a second configuration store and does not replace `dsc.toml` forum credentials.
 
 ```yaml
@@ -226,6 +228,8 @@ The serializer exposes `api_key` directly for custom definitions, uses `********
 
 The old standalone-plugin source at commit [`b6630b6`](https://github.com/discourse/discourse-ai/tree/b6630b670f36fadcff1bc85d5f0d9dcf1e440420) used the same list/create/update/delete paths but a `GET` test route limited to three requests/minute and lacked current secret/credit fields. Do not use it as a current test contract.
 
-### Authorised read-only compatibility check - `koloki-demo`, 2026-11-21
+### Authorised compatibility capture - `koloki-demo`, 2026-11-21
 
-`dsc plugin list koloki-demo` reported the core `discourse-ai` plugin at version `0.0.1`, disabled. An authenticated `GET /admin/plugins/discourse-ai/ai-llms.json` returned HTTP 404. Its body was discarded without parsing or retention. No AI setting, definition, provider request or test was changed. This proves only that a disabled plugin returns an unavailable API response on this forum; it is not a success-shape capture and this forum must not be enabled merely for R88 discovery.
+`koloki-demo` runs Discourse `2026.11.0-latest.2` commit `245058d98127bed02ba6ece3802879012e27d3f7`. Initial inspection found the bundled `discourse-ai` plugin at version `0.0.1`, disabled; an authenticated list request returned HTTP 404 and its body was discarded. With explicit authorisation, `dsc setting set koloki-demo discourse_ai_enabled true` enabled the plugin. `ai_bot_enabled` remains `false`.
+
+The enabled list endpoint returned the expected empty `ai_llms` envelope. Two uniquely marked synthetic OpenAI-compatible definitions were then created and deleted during the compatibility capture. They used `https://example.invalid/v1/chat/completions` and throwaway keys, with no provider test or external provider request. Create returned 201, delete returned 204, and the final list was empty. The live serializer returned the current fields listed above, including a non-empty raw `api_key` and object-valued `provider_params`; `dsc ai llm show --format json` reported only API-key presence and a safe endpoint, with neither value present. Raw responses, keys and temporary files were discarded. Discourse's durable staff-audit records for enablement, creation and deletion remain.
