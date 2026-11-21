@@ -58,7 +58,7 @@ Pushes the local Markdown file up to the specified topic, updating its first pos
 Flags:
 
 - `-n`, `--dry-run` — describe the edit without sending it.
-- `--no-bump` — update the post without bumping the topic to the top of the activity feed (sends `post[no_bump]=true`). Use for silent maintenance edits.
+- `--no-bump` — update the post without bumping the topic to the top of the activity feed (sends `post[bypass_bump]=true`). Use for silent maintenance edits.
 - `--skip-revision` — update without recording an edit-history revision (sends `post[skip_revision]=true`). Suppresses the online audit trail; use sparingly.
 
 ## dsc topic sync

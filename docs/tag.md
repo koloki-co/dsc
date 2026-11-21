@@ -53,7 +53,7 @@ tag_groups:
       - bassist
 ```
 
-`provenance` is written by `pull` and is informational only: `push` ignores it, so a taxonomy reviewed on one forum can be applied to another. Files without it remain valid. See [snapshot provenance](../spec/commands/snapshot-provenance.md).
+`provenance` is written by `pull` and is informational only: `push` ignores it, so a taxonomy reviewed on one forum can be applied to another. Files without it remain valid. See the [snapshot provenance spec](https://github.com/koloki-co/dsc/blob/main/spec/commands/snapshot-provenance.md).
 
 ## dsc tag push
 

@@ -347,6 +347,9 @@ struct Recorder {
     tags_json: Option<String>,
     /// (setting name, value sent) for every PUT received, in arrival order.
     puts: Vec<(String, String)>,
+    /// Encoded forms sent to the post-update endpoint. Kept separately from
+    /// `puts`, whose normalised entries drive plan-fidelity comparisons.
+    post_edit_forms: Vec<String>,
     /// Custom emoji names a real `emoji delete` run has removed. Only the
     /// post-delete verification list can see this: the dry-run issues no
     /// DELETE, so the list both phases plan from is identical.
@@ -627,11 +630,11 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
         // Form `post[raw]=...`; recorded as `topic 101 -> raw byte length`
         // (post 1001 is the OP of topic 101 in the frozen fixture).
         let raw = form_field(&body, "post[raw]");
+        let mut recorder = recorder.lock().expect("recorder lock");
         recorder
-            .lock()
-            .expect("recorder lock")
             .puts
             .push(("topic 101".to_string(), raw.len().to_string()));
+        recorder.post_edit_forms.push(body);
         ("HTTP/1.1 200 OK", r#"{"success":"OK"}"#.to_string())
     } else if method == "PUT" && path == "/posts/2002.json" {
         // `dsc post push`: form `post[raw]=...`; recorded as
@@ -821,6 +824,29 @@ fn form_field(body: &str, key: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).to_string()
+}
+
+fn form_keys(body: &str) -> BTreeSet<String> {
+    body.split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(key, _)| {
+            urlencoding_decode(key)
+                .replace("%5B", "[")
+                .replace("%5D", "]")
+        })
+        .collect()
+}
+
+fn assert_supported_no_bump_form(recorder: &Mutex<Recorder>) {
+    let recorder = recorder.lock().expect("recorder lock");
+    let forms = &recorder.post_edit_forms;
+    assert_eq!(forms.len(), 1, "expected exactly one post edit request");
+    assert_eq!(
+        form_keys(&forms[0]),
+        BTreeSet::from(["post[raw]".to_string(), "post[bypass_bump]".to_string()]),
+        "a no-bump edit must use only Discourse's supported bypass_bump field"
+    );
+    assert_eq!(form_field(&forms[0], "post[bypass_bump]"), "true");
 }
 
 fn mock_config(dir: &TempDir, url: &str) -> PathBuf {
@@ -1396,14 +1422,23 @@ fn category_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state
     assert_dry_run_plan_matches_real_run(
         &config_path,
         &recorder,
-        &["--dry-run", "category", "push", "mock", "7", docs],
-        &["category", "push", "mock", "7", docs],
+        &[
+            "--dry-run",
+            "category",
+            "push",
+            "mock",
+            "7",
+            docs,
+            "--no-bump",
+        ],
+        &["category", "push", "mock", "7", docs, "--no-bump"],
         parse_category_planned_changes,
         &BTreeMap::from([
             ("topic 101".to_string(), alpha_len),
             ("new \"Gamma\"".to_string(), gamma_len),
         ]),
     );
+    assert_supported_no_bump_form(&recorder);
 }
 
 /// Parse `dsc topic push`'s single plan line,
@@ -1462,6 +1497,7 @@ fn topic_push_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() 
         parse_topic_planned_changes,
         &BTreeMap::from([("topic 101".to_string(), body.len().to_string())]),
     );
+    assert_supported_no_bump_form(&recorder);
 }
 
 /// Parse `dsc post push`'s single plan line,

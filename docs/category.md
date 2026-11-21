@@ -59,7 +59,7 @@ Flags:
 
 - `-n`, `--dry-run` — print the plan without writing anything. Run this first and review before pushing for real.
 - `--updates-only` — only update existing topics; error with a hint instead of silently creating a new topic when a file has no remote match. Use for curated categories where accidental topic creation must be impossible.
-- `--no-bump` — update posts without bumping their topics to the top of the category activity feed (sends `post[no_bump]=true`). Use for silent bulk maintenance edits.
+- `--no-bump` — update posts without bumping their topics to the top of the category activity feed (sends `post[bypass_bump]=true`). Use for silent bulk maintenance edits.
 - `--skip-revision` — update posts without recording an edit-history revision (sends `post[skip_revision]=true`). Suppresses the online audit trail; use sparingly.
 - `-a`, `--convert-admonitions <quote-callouts|plain-blockquote>` — convert MkDocs/Zensical admonitions while pushing, or the selected generated form back while pulling. Omit it to preserve raw Markdown.
 - `--rewrite-links` — rewrite relative `.md` links such as `../versioning.md` to matching same-category forum topic URLs. Unresolved local targets are left intact and reported as warnings on stderr.

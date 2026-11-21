@@ -29,8 +29,8 @@ pub struct PostInfo {
 /// is an ordinary edit that bumps the topic and records a revision.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct PostEditOptions {
-    /// Send `post[no_bump]=true` so the edit does not bump the topic to the
-    /// top of the category activity feed. For quiet maintenance edits.
+    /// Send `post[bypass_bump]=true` so the edit does not bump the topic to
+    /// the top of the category activity feed. For quiet maintenance edits.
     pub no_bump: bool,
     /// Send `post[skip_revision]=true` so the edit does not create a revision
     /// (edit-history) entry. Suppresses the online audit trail; use sparingly.
@@ -663,7 +663,7 @@ fn delete_post_path(post_id: u64, force_destroy: bool) -> String {
 fn post_edit_payload<'a>(raw: &'a str, opts: PostEditOptions) -> Vec<(&'static str, &'a str)> {
     let mut payload: Vec<(&'static str, &'a str)> = vec![("post[raw]", raw)];
     if opts.no_bump {
-        payload.push(("post[no_bump]", "true"));
+        payload.push(("post[bypass_bump]", "true"));
     }
     if opts.skip_revision {
         payload.push(("post[skip_revision]", "true"));
@@ -719,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn no_bump_adds_form_field() {
+    fn no_bump_adds_supported_edit_form_field() {
         let payload = post_edit_payload(
             "hi",
             PostEditOptions {
@@ -729,7 +729,7 @@ mod tests {
         );
         assert_eq!(
             payload,
-            vec![("post[raw]", "hi"), ("post[no_bump]", "true")]
+            vec![("post[raw]", "hi"), ("post[bypass_bump]", "true")]
         );
     }
 
@@ -761,7 +761,7 @@ mod tests {
             payload,
             vec![
                 ("post[raw]", "x"),
-                ("post[no_bump]", "true"),
+                ("post[bypass_bump]", "true"),
                 ("post[skip_revision]", "true"),
             ]
         );

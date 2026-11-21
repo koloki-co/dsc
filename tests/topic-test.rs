@@ -52,6 +52,17 @@ fn topic_push() {
     };
     let disposable = create_disposable_topic(&test, "topic-push");
     vprintln("e2e_topic_push: write file, then push disposable topic");
+    let category_id = test.test_category_id.expect("test category ID");
+    let bumped_at_before = disposable
+        .client
+        .fetch_category(category_id)
+        .expect("category before push")
+        .topic_list
+        .topics
+        .into_iter()
+        .find(|topic| topic.id == disposable.id)
+        .and_then(|topic| topic.bumped_at)
+        .expect("disposable topic's category summary includes bumped_at");
     let dir = TempDir::new().expect("tempdir");
     let file_path = dir.path().join("push.md");
     let body = format!("# E2E Push\n\n{}", disposable.marker);
@@ -92,6 +103,20 @@ fn topic_push() {
         .and_then(|post| post.raw.as_deref())
         .expect("topic OP has raw content");
     assert_eq!(remote_body, body, "marker body not applied after push");
+    let bumped_at_after = disposable
+        .client
+        .fetch_category(category_id)
+        .expect("category after push")
+        .topic_list
+        .topics
+        .into_iter()
+        .find(|topic| topic.id == disposable.id)
+        .and_then(|topic| topic.bumped_at)
+        .expect("disposable topic's category summary includes bumped_at");
+    assert_eq!(
+        bumped_at_after, bumped_at_before,
+        "--no-bump must preserve the topic's category-summary bumped_at"
+    );
     if std::env::var("DSC_LIVE_TEST_FORCE_FAILURE").as_deref() == Ok("topic_push") {
         panic!("forced failure after topic creation for cleanup verification");
     }

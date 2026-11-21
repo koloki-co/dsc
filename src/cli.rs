@@ -1284,7 +1284,7 @@ pub enum TopicCommand {
         #[arg(value_parser = tilde_pathbuf, value_hint = ValueHint::FilePath)]
         local_path: PathBuf,
         /// Update the post without bumping the topic in the activity feed.
-        /// Use for silent maintenance edits (sends post[no_bump]=true).
+        /// Use for silent maintenance edits (sends post[bypass_bump]=true).
         #[arg(long)]
         no_bump: bool,
         /// Update the post without recording an edit-history revision
@@ -1516,7 +1516,7 @@ pub enum CategoryCommand {
         #[arg(long)]
         updates_only: bool,
         /// Update posts without bumping their topics in the activity feed.
-        /// Use for silent bulk maintenance edits (sends post[no_bump]=true).
+        /// Use for silent bulk maintenance edits (sends post[bypass_bump]=true).
         #[arg(long)]
         no_bump: bool,
         /// Update posts without recording edit-history revisions
