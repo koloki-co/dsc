@@ -309,6 +309,13 @@ fn enrich_custom_fields(client: &DiscourseClient, defs: &mut [CategoryDefinition
     Ok(())
 }
 
+/// Enrich one already-resolved definition with its complete custom-field map.
+/// Single-category commands use this after `find_def_index` so they issue one
+/// `/c/:id/show.json` read, not one per category on the forum (R91).
+fn enrich_one_custom_fields(client: &DiscourseClient, def: &mut CategoryDefinition) -> Result<()> {
+    enrich_custom_fields(client, std::slice::from_mut(def))
+}
+
 /// Build a JSON merge patch for category custom fields. Discourse removes a
 /// custom field when it receives a null value for that key.
 fn custom_fields_patch(
@@ -1782,18 +1789,26 @@ pub fn category_diff(
 // ─── Commands: show / get / set ───────────────────────────────────────────────
 
 fn find_def<'a>(defs: &'a [CategoryDefinition], category: &str) -> Result<&'a CategoryDefinition> {
+    find_def_index(defs, category).map(|index| &defs[index])
+}
+
+/// Resolve `category` (id, then unique slug, then unique name) to its index in
+/// `defs`, so callers can mutate or enrich only the selected definition.
+fn find_def_index(defs: &[CategoryDefinition], category: &str) -> Result<usize> {
     if let Ok(id) = category.parse::<u64>() {
         return defs
             .iter()
-            .find(|d| d.id == Some(id))
+            .position(|d| d.id == Some(id))
             .ok_or_else(|| not_found("category", category));
     }
     let slugs: Vec<_> = defs
         .iter()
-        .filter(|def| def.slug.as_deref() == Some(category))
+        .enumerate()
+        .filter(|(_, def)| def.slug.as_deref() == Some(category))
+        .map(|(index, _)| index)
         .collect();
     match slugs.as_slice() {
-        [category] => return Ok(*category),
+        [index] => return Ok(*index),
         [_, _, ..] => {
             return Err(anyhow!(
                 "category slug '{}' is ambiguous (matches {} categories); use an id",
@@ -1803,9 +1818,14 @@ fn find_def<'a>(defs: &'a [CategoryDefinition], category: &str) -> Result<&'a Ca
         }
         [] => {}
     }
-    let names: Vec<_> = defs.iter().filter(|def| def.name == category).collect();
+    let names: Vec<_> = defs
+        .iter()
+        .enumerate()
+        .filter(|(_, def)| def.name == category)
+        .map(|(index, _)| index)
+        .collect();
     match names.as_slice() {
-        [category] => Ok(*category),
+        [index] => Ok(*index),
         [_, _, ..] => Err(anyhow!(
             "category name '{}' is ambiguous (matches {} categories); use an id",
             category,
@@ -1821,12 +1841,12 @@ fn resolve_entry(
     include_custom_fields: bool,
 ) -> Result<CategoryDefEntry> {
     let mut defs = client.fetch_category_definitions()?;
+    let index = find_def_index(&defs, category)?;
     if include_custom_fields {
-        enrich_custom_fields(client, &mut defs)?;
+        enrich_one_custom_fields(client, &mut defs[index])?;
     }
     let id_to_slug = id_to_slug_map(&defs);
-    let def = find_def(&defs, category)?;
-    Ok(def_to_entry(def, &id_to_slug))
+    Ok(def_to_entry(&defs[index], &id_to_slug))
 }
 
 pub fn category_show(
@@ -1979,12 +1999,13 @@ pub fn category_set(
     let client = DiscourseClient::new(discourse)?;
 
     let mut defs = client.fetch_category_definitions()?;
+    let index = find_def_index(&defs, category)?;
     if field.trim() == "custom_fields" {
-        enrich_custom_fields(&client, &mut defs)?;
+        enrich_one_custom_fields(&client, &mut defs[index])?;
     }
     let slug_to_ids = slug_to_ids_map(&defs);
     let name_to_ids = name_to_ids_map(&defs);
-    let def = find_def(&defs, category)?;
+    let def = &defs[index];
     let id = def.id.ok_or_else(|| not_found("category", category))?;
 
     if field.trim() == "custom_fields" && list_edit.is_none() {
