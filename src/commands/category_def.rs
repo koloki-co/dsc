@@ -309,6 +309,28 @@ fn enrich_custom_fields(client: &DiscourseClient, defs: &mut [CategoryDefinition
     Ok(())
 }
 
+/// Enrich complete custom-field maps only for the existing categories targeted
+/// by a definition push. The category listing remains sufficient for matching,
+/// hierarchy validation and every non-custom-field comparison (R92).
+fn enrich_selected_custom_fields(
+    client: &DiscourseClient,
+    defs: &mut [CategoryDefinition],
+    ids: &HashSet<u64>,
+) -> Result<()> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    for def in defs {
+        let id = def
+            .id
+            .ok_or_else(|| anyhow!("category definition is missing its id"))?;
+        if ids.contains(&id) {
+            def.custom_fields = client.fetch_category_definition(id)?.custom_fields;
+        }
+    }
+    Ok(())
+}
+
 /// Enrich one already-resolved definition with its complete custom-field map.
 /// Single-category commands use this after `find_def_index` so they issue one
 /// `/c/:id/show.json` read, not one per category on the forum (R91).
@@ -1534,16 +1556,22 @@ pub fn category_def_push(
     validate_file_version(&file, contains_style_fields(&raw))?;
 
     let mut defs = client.fetch_category_definitions()?;
-    if file
+    let id_to_slug = id_to_slug_map(&defs);
+    let mut server_entries: Vec<CategoryDefEntry> =
+        defs.iter().map(|d| def_to_entry(d, &id_to_slug)).collect();
+
+    // Match before fetching complete custom-field maps. Only existing categories
+    // whose file entry declares custom fields need the per-category endpoint;
+    // creates have no current map to compare.
+    let initial_plan = plan_push(&file.categories, &server_entries)?;
+    let custom_field_ids: HashSet<u64> = file
         .categories
         .iter()
-        .any(|entry| entry.custom_fields.is_some())
-    {
-        enrich_custom_fields(&client, &mut defs)?;
-    }
-    let id_to_slug = id_to_slug_map(&defs);
-    let server_entries: Vec<CategoryDefEntry> =
-        defs.iter().map(|d| def_to_entry(d, &id_to_slug)).collect();
+        .zip(&initial_plan)
+        .filter_map(|(entry, action)| entry.custom_fields.as_ref().and(action.server_id))
+        .collect();
+    enrich_selected_custom_fields(&client, &mut defs, &custom_field_ids)?;
+    server_entries = defs.iter().map(|d| def_to_entry(d, &id_to_slug)).collect();
 
     let mut plan = plan_push(&file.categories, &server_entries)?;
     validate_styles(&file.categories, &server_entries)?;

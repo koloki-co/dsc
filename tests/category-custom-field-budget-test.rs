@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! R91 request-budget tests: single-category `show`, `get`, `set` and `diff`
+//! R91/R92 request-budget tests: single-category `show`, `get`, `set` and `diff`
 //! resolve the requested category from one `/categories.json` listing, then
 //! read `/c/:id/show.json` only for that category (and only when custom
 //! fields are needed). A regression to "enrich every category first" fails
@@ -306,4 +306,50 @@ fn diff_reads_one_show_per_side() {
             "GET /c/5/show.json".to_string()
         ]
     );
+}
+
+#[test]
+fn def_push_reads_custom_fields_only_for_matched_entries_that_declare_them() {
+    let mock = start_mock();
+    let file_dir = TempDir::new().expect("tempdir");
+    let file = file_dir.path().join("categories.yaml");
+    std::fs::write(
+        &file,
+        r#"version: 2
+categories:
+  - name: Docs
+    id: 4
+    custom_fields:
+      docs_index_id: "400"
+  - name: Archive
+    id: 5
+  - name: Archive
+    id: 6
+    custom_fields:
+      docs_index_id: "600"
+  - name: New category
+    custom_fields:
+      docs_index_id: "new"
+"#,
+    )
+    .expect("write category definitions");
+
+    let (output, ok) = mock.run(&[
+        "--dry-run",
+        "category",
+        "def",
+        "push",
+        "mock",
+        file.to_str().expect("UTF-8 path"),
+    ]);
+    assert!(ok, "category def push --dry-run failed: {output}");
+    assert_eq!(mock.list_reads(), 1);
+    assert_eq!(
+        mock.show_reads(),
+        vec![
+            "GET /c/4/show.json".to_string(),
+            "GET /c/6/show.json".to_string(),
+        ]
+    );
+    assert_eq!(mock.writes(), 0, "dry run must not write");
 }
