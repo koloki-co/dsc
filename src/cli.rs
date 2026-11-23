@@ -1392,6 +1392,22 @@ pub enum TopicCommand {
         /// Topic ID to restore. Use `topic list --deleted` to discover IDs.
         topic_id: u64,
     },
+    /// Close a topic to new replies, leaving archived and other status
+    /// untouched. No-op if already closed. Honours `--dry-run`.
+    Close {
+        /// Discourse name.
+        discourse: String,
+        /// Topic ID to close.
+        topic_id: u64,
+    },
+    /// Reopen a closed topic to new replies. No-op if already open.
+    /// Honours `--dry-run`.
+    Reopen {
+        /// Discourse name.
+        discourse: String,
+        /// Topic ID to reopen.
+        topic_id: u64,
+    },
     /// Add a tag to a topic.
     Tag {
         /// Discourse name.

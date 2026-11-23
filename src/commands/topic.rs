@@ -373,6 +373,98 @@ pub fn topic_restore(
     Ok(())
 }
 
+/// Close (`closed = true`) or reopen (`closed = false`) one topic.
+///
+/// Reads fresh state first and treats an already-matching state as a no-op
+/// with no write. Refuses soft-deleted topics (closing is not deletion, and
+/// the operator should restore first). Only the `closed` status is sent, and
+/// the post-write re-fetch verifies `closed` changed while `archived` did not.
+pub fn topic_set_closed(
+    config: &Config,
+    discourse_name: &str,
+    topic_id: u64,
+    closed: bool,
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+    let (verb, done, state) = if closed {
+        ("close", "closed", "closed")
+    } else {
+        ("reopen", "reopened", "open")
+    };
+
+    let before = client.fetch_topic(topic_id, false)?;
+    let title = topic_display_title(&before, topic_id);
+    if before.deleted_at.is_some() {
+        return Err(anyhow!(
+            "topic {} \"{}\" is deleted; restore it with `dsc topic restore {} {}` before trying to {} it",
+            topic_id,
+            title,
+            discourse.name,
+            topic_id,
+            verb
+        ));
+    }
+    if before.closed == closed {
+        println!(
+            "{}{}: topic {} \"{}\" is already {}; no change",
+            if dry_run { "[dry-run] " } else { "" },
+            discourse.name,
+            topic_id,
+            title,
+            state
+        );
+        return Ok(());
+    }
+
+    let note = if closed {
+        "note: Discourse adds a small-action \"closed\" post without bumping the topic, and cancels any pending close timer"
+    } else {
+        "note: Discourse adds a small-action \"opened\" post that bumps the topic, and re-applies the category's auto-close rule if one is set"
+    };
+    let archived = if before.archived { "yes" } else { "no" };
+
+    if dry_run {
+        println!(
+            "[dry-run] {}: would {} topic {} \"{}\" (PUT /t/{}/status.json status=closed enabled={}; archived: {}, unchanged)",
+            discourse.name, verb, topic_id, title, topic_id, closed, archived
+        );
+        println!("{}", note);
+        return Ok(());
+    }
+
+    client.set_topic_closed(topic_id, closed)?;
+
+    let after = client
+        .fetch_topic(topic_id, false)
+        .with_context(|| format!("re-reading topic {} to verify it was {}", topic_id, done))?;
+    if after.closed != closed {
+        return Err(anyhow!(
+            "Discourse accepted the {} request but topic {} is still {}",
+            verb,
+            topic_id,
+            if after.closed { "closed" } else { "open" }
+        ));
+    }
+    if after.archived != before.archived {
+        return Err(anyhow!(
+            "topic {} was {} but its archived status changed unexpectedly ({} → {})",
+            topic_id,
+            done,
+            before.archived,
+            after.archived
+        ));
+    }
+    println!(
+        "{} topic {} \"{}\" (archived: {}, unchanged)",
+        done, topic_id, title, archived
+    );
+    println!("{}", note);
+    Ok(())
+}
+
 pub fn topic_list(
     config: &Config,
     discourse_name: &str,

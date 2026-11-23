@@ -1,6 +1,6 @@
 # dsc topic
 
-Pull, push, sync, delete, restore, and tag individual topics.
+Pull, push, sync, delete, restore, close, reopen, and tag individual topics.
 
 ## dsc topic pull
 
@@ -135,6 +135,33 @@ Restores a soft-deleted topic via Discourse's topic recovery endpoint. Supports 
 
 ```bash
 dsc topic restore myforum 1178
+```
+
+## dsc topic close / reopen
+
+```text
+dsc topic close  <discourse> <topic-id>
+dsc topic reopen <discourse> <topic-id>
+```
+
+Closes a topic to new replies, or reopens a closed one, through Discourse's topic status endpoint (`PUT /t/{id}/status.json` with `status=closed`). Only the closed flag is sent: archived, pinned, listed/unlisted state, title, tags and posts are left alone, and the command re-reads the topic afterwards to verify that `closed` changed and `archived` did not.
+
+- Already in the requested state: prints `already closed` / `already open` and sends nothing.
+- Soft-deleted topic: refused. Closing is not deletion; restore with `dsc topic restore` first if you really mean to close it.
+- Supports global `-n` / `--dry-run`, which reads the topic and prints the exact request without sending it.
+
+Discourse side effects you should expect:
+
+- **Close** adds a small-action "closed" post to the topic *without* bumping it, and cancels any pending close timer.
+- **Reopen** adds a small-action "opened" post that *does* bump the topic, and re-applies the category's auto-close rule if one is set.
+
+```bash
+# Deprecate a documentation topic quietly
+dsc topic push myforum 1178 ./deprecated-notice.md --no-bump
+dsc topic title myforum 1178 "DEPRECATED: Old install guide"
+dsc topic tag myforum 1178 deprecated
+dsc -n topic close myforum 1178
+dsc topic close myforum 1178
 ```
 
 ## dsc topic list --deleted
