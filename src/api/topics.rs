@@ -224,6 +224,30 @@ impl DiscourseClient {
         Ok(())
     }
 
+    /// Close (`closed = true`) or reopen (`closed = false`) a topic via
+    /// `PUT /t/{id}/status.json` (`TopicsController#status`). Sends only the
+    /// `closed` status, so archived, pinned and visibility state are left
+    /// alone. Discourse makes the change conditionally and adds a small-action
+    /// post only when the state actually changed.
+    pub fn set_topic_closed(&self, topic_id: u64, closed: bool) -> Result<()> {
+        let path = format!("/t/{}/status.json", topic_id);
+        let payload = topic_closed_payload(closed);
+        let response = self.send_retrying(|| Ok(self.put(&path)?.form(&payload)))?;
+        let status = response.status();
+        let text = response
+            .text_capped()
+            .unwrap_or_else(|_| "<failed to read response body>".to_string());
+        if !status.is_success() {
+            let action = if closed {
+                "close topic request"
+            } else {
+                "reopen topic request"
+            };
+            return Err(http_error(action, status, &text));
+        }
+        Ok(())
+    }
+
     /// List soft-deleted topics via Discourse's topic-list status filter.
     pub fn list_deleted_topics(&self, query: Option<&str>) -> Result<Vec<DeletedTopicSummary>> {
         self.list_deleted_topics_filtered(query, None)
@@ -644,6 +668,14 @@ fn deleted_topic_matches(topic: &DeletedTopicRow, query: Option<&str>) -> bool {
         .all(|term| haystack.contains(&term.to_lowercase()))
 }
 
+/// Form body for `PUT /t/{id}/status.json` that changes only `closed`.
+fn topic_closed_payload(closed: bool) -> [(&'static str, &'static str); 2] {
+    [
+        ("status", "closed"),
+        ("enabled", if closed { "true" } else { "false" }),
+    ]
+}
+
 fn delete_topic_path(topic_id: u64, force_destroy: bool) -> String {
     if force_destroy {
         format!("/t/{topic_id}.json?force_destroy=true")
@@ -695,6 +727,18 @@ mod tests {
     fn deleted_topic_list_rejects_missing_topics_array() {
         let response = serde_json::json!({ "topic_list": {} });
         assert!(serde_json::from_value::<DeletedTopicListResponse>(response).is_err());
+    }
+
+    #[test]
+    fn closed_payload_changes_only_the_closed_status() {
+        assert_eq!(
+            topic_closed_payload(true),
+            [("status", "closed"), ("enabled", "true")]
+        );
+        assert_eq!(
+            topic_closed_payload(false),
+            [("status", "closed"), ("enabled", "false")]
+        );
     }
 
     #[test]

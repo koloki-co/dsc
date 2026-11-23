@@ -326,6 +326,8 @@ const CASES: &[Case] = &[
     ),
     ("topic delete", &["topic", "delete", "mock", "7"], true),
     ("topic restore", &["topic", "restore", "mock", "7"], true),
+    ("topic close", &["topic", "close", "mock", "7"], true),
+    ("topic reopen", &["topic", "reopen", "mock", "7"], true),
     ("topic tag", &["topic", "tag", "mock", "7", "beta"], true),
     (
         "topic untag",

@@ -399,6 +399,16 @@ fn main() -> Result<()> {
                 topic_id,
             } => commands::topic::topic_restore(&config, &discourse, topic_id, dry_run),
 
+            TopicCommand::Close {
+                discourse,
+                topic_id,
+            } => commands::topic::topic_set_closed(&config, &discourse, topic_id, true, dry_run),
+
+            TopicCommand::Reopen {
+                discourse,
+                topic_id,
+            } => commands::topic::topic_set_closed(&config, &discourse, topic_id, false, dry_run),
+
             TopicCommand::Tag {
                 discourse,
                 topic_id,
