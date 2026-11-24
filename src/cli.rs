@@ -1392,6 +1392,19 @@ pub enum TopicCommand {
         /// Topic ID to restore. Use `topic list --deleted` to discover IDs.
         topic_id: u64,
     },
+    /// Move a topic to another category in place, keeping its ID, posts,
+    /// replies and revisions. No-op if already there. Honours `--dry-run`.
+    Move {
+        /// Discourse name.
+        discourse: String,
+        /// Topic ID to move.
+        topic_id: u64,
+        /// Destination category ID or slug.
+        category: String,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
     /// Close a topic to new replies, leaving archived and other status
     /// untouched. No-op if already closed. Honours `--dry-run`.
     Close {

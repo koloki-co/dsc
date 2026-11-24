@@ -1,6 +1,6 @@
 # dsc topic
 
-Pull, push, sync, delete, restore, close, reopen, and tag individual topics.
+Pull, push, sync, delete, restore, move, close, reopen, and tag individual topics.
 
 ## dsc topic pull
 
@@ -162,6 +162,27 @@ dsc topic title myforum 1178 "DEPRECATED: Old install guide"
 dsc topic tag myforum 1178 deprecated
 dsc -n topic close myforum 1178
 dsc topic close myforum 1178
+```
+
+## dsc topic move
+
+```text
+dsc topic move <discourse> <topic-id> <category> [--format text|json|yaml]
+```
+
+Moves one existing topic to another category **in place**, through Discourse's topic update endpoint (`PUT /t/{id}.json` with only `category_id`). The topic keeps its ID, URL, posts, replies, revisions and links; title, tags, status, ownership and pin state are not sent. This is different from `dsc post move` (moves posts between topics) and from `dsc category pull`/`push` (copies content, creating new topics).
+
+- `<category>` is a numeric category ID or a slug. Subcategories are included; a slug shared by subcategories under different parents is refused as ambiguous - pass the ID instead.
+- Already in the destination: prints `already in ...; no change` and sends nothing.
+- Soft-deleted topic: refused; restore it first.
+- Discourse enforces category permissions, required tags and other category rules; its validation error is shown as-is.
+- After the write, the topic is re-read to verify the same ID, the destination category and an unchanged post count.
+- `--format json|yaml` emits `topic_id`, `title`, `status` (`moved`, `unchanged` or `planned`), `from`/`to` (`id`, `name`) and `posts_count`.
+- Supports global `-n` / `--dry-run`, which prints the exact request without sending it.
+
+```bash
+dsc -n topic move myforum 1178 business
+dsc topic move myforum 1178 business
 ```
 
 ## dsc topic list --deleted

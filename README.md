@@ -37,7 +37,7 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 
 | Area | Works now | On the roadmap |
 |---|---|---|
-| **Topics & posts** | pull / push / sync as Markdown, reply, create, rename (`topic title`), close / reopen, set tags, full-thread export; per-post edit / delete / move | — |
+| **Topics & posts** | pull / push / sync as Markdown, reply, create, rename (`topic title`), move between categories, close / reopen, set tags, full-thread export; per-post edit / delete / move | — |
 | **Categories** | list; pull / push a whole category as Markdown with durable `topic_id` binding, a reviewable dry-run plan, `--updates-only`, `--no-bump`, admonition/link conversion; declarative definition pull/push/diff/set/rename | definition assets and guarded prune |
 | **Boards** | list, inspect, and snapshot Discourse Boards with columns, topic cards, and floater cards | guarded declarative push and prune |
 | **Tags** | pull / push the taxonomy, rename, per-topic tag / untag | — |
