@@ -248,6 +248,25 @@ impl DiscourseClient {
         Ok(())
     }
 
+    /// Move a topic to another category in place via `PUT /t/{id}.json` with
+    /// only `category_id=` (`TopicsController#update`, which validates through
+    /// `TopicCategoryChangeValidator` and applies the change via
+    /// `PostRevisor`). The topic keeps its ID, posts and history; nothing else
+    /// is sent, so title, tags and status are left alone.
+    pub fn set_topic_category(&self, topic_id: u64, category_id: u64) -> Result<()> {
+        let path = format!("/t/{}.json", topic_id);
+        let payload = topic_category_payload(category_id);
+        let response = self.send_retrying(|| Ok(self.put(&path)?.form(&payload)))?;
+        let status = response.status();
+        let text = response
+            .text_capped()
+            .unwrap_or_else(|_| "<failed to read response body>".to_string());
+        if !status.is_success() {
+            return Err(http_error("move topic request", status, &text));
+        }
+        Ok(())
+    }
+
     /// List soft-deleted topics via Discourse's topic-list status filter.
     pub fn list_deleted_topics(&self, query: Option<&str>) -> Result<Vec<DeletedTopicSummary>> {
         self.list_deleted_topics_filtered(query, None)
@@ -676,6 +695,11 @@ fn topic_closed_payload(closed: bool) -> [(&'static str, &'static str); 2] {
     ]
 }
 
+/// Form body for `PUT /t/{id}.json` that changes only the category.
+fn topic_category_payload(category_id: u64) -> [(&'static str, String); 1] {
+    [("category_id", category_id.to_string())]
+}
+
 fn delete_topic_path(topic_id: u64, force_destroy: bool) -> String {
     if force_destroy {
         format!("/t/{topic_id}.json?force_destroy=true")
@@ -738,6 +762,14 @@ mod tests {
         assert_eq!(
             topic_closed_payload(false),
             [("status", "closed"), ("enabled", "false")]
+        );
+    }
+
+    #[test]
+    fn category_payload_sends_only_category_id() {
+        assert_eq!(
+            topic_category_payload(9),
+            [("category_id", "9".to_string())]
         );
     }
 

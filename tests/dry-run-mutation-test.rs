@@ -92,7 +92,11 @@ fn get_body(path: &str) -> String {
         return post.to_string();
     }
     if p.starts_with("/categories.json") {
-        return format!(r#"{{"category_list":{{"categories":[{category}]}}}}"#);
+        // A second category gives `topic move` a destination other than the
+        // test topic's own category 4.
+        return format!(
+            r#"{{"category_list":{{"categories":[{category},{{"id":5,"name":"Other","slug":"other"}}]}}}}"#
+        );
     }
     if p.starts_with("/c/") {
         return format!(
@@ -326,6 +330,7 @@ const CASES: &[Case] = &[
     ),
     ("topic delete", &["topic", "delete", "mock", "7"], true),
     ("topic restore", &["topic", "restore", "mock", "7"], true),
+    ("topic move", &["topic", "move", "mock", "7", "5"], true),
     ("topic close", &["topic", "close", "mock", "7"], true),
     ("topic reopen", &["topic", "reopen", "mock", "7"], true),
     ("topic tag", &["topic", "tag", "mock", "7", "beta"], true),

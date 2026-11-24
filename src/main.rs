@@ -399,6 +399,15 @@ fn main() -> Result<()> {
                 topic_id,
             } => commands::topic::topic_restore(&config, &discourse, topic_id, dry_run),
 
+            TopicCommand::Move {
+                discourse,
+                topic_id,
+                category,
+                format,
+            } => commands::topic::topic_move(
+                &config, &discourse, topic_id, &category, format, dry_run,
+            ),
+
             TopicCommand::Close {
                 discourse,
                 topic_id,

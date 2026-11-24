@@ -39,13 +39,22 @@ category_id={destination-category-id}
 
 The controller calls `TopicCategoryChangeValidator` before passing the category change to `PostRevisor`. This indicates an in-place move with normal revision/audit behaviour, but a real forum must confirm the exact accepted form shape, response fields, activity-bump behaviour and staff-action record. No API key, response body or production write was retained for this report.
 
+## Implementation notes (2026-11-24)
+
+Implemented offline in `src/commands/topic.rs::topic_move` and `DiscourseClient::set_topic_category`; tests in `tests/topic-move-test.rs` plus a `topic move` case in `tests/dry-run-mutation-test.rs`.
+
+- Destination resolution reads `/categories.json?include_subcategories=true` (plus the existing `/site.json` merge) once, flattens nested subcategories, and accepts an existing numeric ID or a slug matching exactly one category. Child slugs are only unique per parent, so a slug shared across parents is refused with the candidate IDs.
+- Soft-deleted topics are refused (restore first), consistent with `topic close`.
+- Post-write verification checks the re-read topic ID, `category_id` and `posts_count`.
+- Text output names both categories as `"Name" (id)`; `--format json|yaml` emits the same identifiers with `status` = `moved` | `unchanged` | `planned`.
+
 ## Phases
 
 ### Phase 1 - blocking move
 
-- [ ] Add a client method for the in-place category update and a `dsc topic move` command.
-- [ ] Implement complete dry-run output, same-category no-op handling and post-write verification.
-- [ ] Add mock-server tests for ID and slug destination resolution, exact form payload, zero dry-run writes, category-rule rejection, same-category no-op, failed mutation and post-write mismatch.
+- [x] Add a client method for the in-place category update and a `dsc topic move` command.
+- [x] Implement complete dry-run output, same-category no-op handling and post-write verification.
+- [x] Add mock-server tests for ID and slug destination resolution, exact form payload, zero dry-run writes, category-rule rejection, same-category no-op, failed mutation and post-write mismatch.
 - [ ] Verify the endpoint against a non-production forum and record the redacted request shape, response fields, Discourse version, resulting revision and activity-bump behaviour.
 
 ### Phase 2 - ergonomics

@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use crate::api::CategoryInfo;
 use crate::api::DiscourseClient;
 use crate::api::PostEditOptions;
 use crate::api::TopicResponse;
 use crate::cli::ListFormat;
 use crate::commands::common::{
-    emit_result, emit_with, ensure_api_credentials, read_path_or_stdin, select_discourse,
+    emit_result, emit_with, ensure_api_credentials, not_found, read_path_or_stdin, select_discourse,
 };
 use crate::config::Config;
 use crate::utils::{
@@ -15,6 +16,7 @@ use crate::utils::{
     write_markdown, write_markdown_output, yaml_scalar,
 };
 use anyhow::{Context, Result, anyhow};
+use serde::Serialize;
 use serde_json::json;
 use std::fs;
 use std::io::{self, Write};
@@ -463,6 +465,217 @@ pub fn topic_set_closed(
     );
     println!("{}", note);
     Ok(())
+}
+
+/// One side of a topic move: the category ID and its display name.
+#[derive(Debug, Serialize)]
+struct MoveCategory {
+    id: Option<u64>,
+    name: Option<String>,
+}
+
+/// Structured result of `dsc topic move`.
+#[derive(Debug, Serialize)]
+struct TopicMoveResult {
+    discourse: String,
+    topic_id: u64,
+    title: String,
+    /// `moved`, `unchanged` (already in the destination) or `planned` (dry run).
+    status: &'static str,
+    from: MoveCategory,
+    to: MoveCategory,
+    posts_count: Option<u64>,
+}
+
+/// Every category from the listing, including nested subcategories, once each.
+fn all_categories(categories: Vec<CategoryInfo>) -> Vec<CategoryInfo> {
+    fn walk(cat: CategoryInfo, out: &mut Vec<CategoryInfo>) {
+        let mut cat = cat;
+        let subs = std::mem::take(&mut cat.subcategory_list);
+        out.push(cat);
+        for sub in subs {
+            walk(sub, out);
+        }
+    }
+    let mut flat = Vec::new();
+    for cat in categories {
+        walk(cat, &mut flat);
+    }
+    let mut seen = std::collections::HashSet::new();
+    flat.retain(|cat| cat.id.is_none_or(|id| seen.insert(id)));
+    flat
+}
+
+/// Resolve a destination category by numeric ID or slug against the listing.
+/// A numeric ID must exist; a slug must match exactly one category (child
+/// slugs are only unique per parent, so an ambiguous slug is refused).
+fn resolve_move_destination<'a>(
+    categories: &'a [CategoryInfo],
+    selector: &str,
+) -> Result<&'a CategoryInfo> {
+    let selector = selector.trim();
+    if selector.is_empty() {
+        return Err(anyhow!("missing destination category"));
+    }
+    if let Ok(id) = selector.parse::<u64>() {
+        return categories
+            .iter()
+            .find(|cat| cat.id == Some(id))
+            .ok_or_else(|| not_found("category", id));
+    }
+    let matches: Vec<&CategoryInfo> = categories
+        .iter()
+        .filter(|cat| cat.slug == selector && cat.id.is_some())
+        .collect();
+    match matches.as_slice() {
+        [] => Err(not_found("category", selector)),
+        [one] => Ok(one),
+        many => Err(anyhow!(
+            "category slug \"{}\" is ambiguous (IDs {}); pass the numeric category ID instead",
+            selector,
+            many.iter()
+                .filter_map(|cat| cat.id)
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+fn category_label(cat: &MoveCategory) -> String {
+    match (cat.id, cat.name.as_deref()) {
+        (Some(id), Some(name)) => format!("\"{}\" ({})", name, id),
+        (Some(id), None) => format!("category {}", id),
+        (None, _) => "no category".to_string(),
+    }
+}
+
+/// Move one topic to another category in place (R87).
+///
+/// Reads the topic and the category listing first, refuses deleted topics,
+/// and treats a move to the current category as a no-op with no write. The
+/// only write is `PUT /t/{id}.json` with `category_id=`; Discourse enforces
+/// category permissions and rules, and its validation error is surfaced as-is.
+/// The post-write re-fetch verifies the topic kept its ID and post count and
+/// now reports the destination category.
+pub fn topic_move(
+    config: &Config,
+    discourse_name: &str,
+    topic_id: u64,
+    category: &str,
+    format: ListFormat,
+    dry_run: bool,
+) -> Result<()> {
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+
+    let before = client.fetch_topic(topic_id, false)?;
+    let title = topic_display_title(&before, topic_id);
+    if before.deleted_at.is_some() {
+        return Err(anyhow!(
+            "topic {} \"{}\" is deleted; restore it with `dsc topic restore {} {}` before moving it",
+            topic_id,
+            title,
+            discourse.name,
+            topic_id
+        ));
+    }
+
+    let categories = all_categories(client.fetch_categories()?);
+    let dest = resolve_move_destination(&categories, category)?;
+    let dest_id = dest.id.expect("resolved categories carry an id");
+    let name_of = |id: Option<u64>| {
+        id.and_then(|id| categories.iter().find(|cat| cat.id == Some(id)))
+            .map(|cat| cat.name.clone())
+    };
+    let from = MoveCategory {
+        id: before.category_id,
+        name: name_of(before.category_id),
+    };
+    let to = MoveCategory {
+        id: Some(dest_id),
+        name: Some(dest.name.clone()),
+    };
+    let prefix = if dry_run { "[dry-run] " } else { "" };
+    let mut result = TopicMoveResult {
+        discourse: discourse.name.clone(),
+        topic_id,
+        title: title.clone(),
+        status: "unchanged",
+        from,
+        to,
+        posts_count: before.posts_count,
+    };
+
+    if before.category_id == Some(dest_id) {
+        let text = format!(
+            "{}{}: topic {} \"{}\" is already in {}; no change",
+            prefix,
+            discourse.name,
+            topic_id,
+            title,
+            category_label(&result.to)
+        );
+        return emit_result(format, &result, &text);
+    }
+
+    if dry_run {
+        result.status = "planned";
+        let text = format!(
+            "[dry-run] {}: would move topic {} \"{}\" from {} to {} (PUT /t/{}.json category_id={})",
+            discourse.name,
+            topic_id,
+            title,
+            category_label(&result.from),
+            category_label(&result.to),
+            topic_id,
+            dest_id
+        );
+        return emit_result(format, &result, &text);
+    }
+
+    client.set_topic_category(topic_id, dest_id)?;
+
+    let after = client
+        .fetch_topic(topic_id, false)
+        .with_context(|| format!("re-reading topic {} to verify the move", topic_id))?;
+    if after.id.is_some_and(|id| id != topic_id) {
+        return Err(anyhow!(
+            "Discourse accepted the move but re-reading topic {} returned topic {}",
+            topic_id,
+            after.id.unwrap_or_default()
+        ));
+    }
+    if after.category_id != Some(dest_id) {
+        return Err(anyhow!(
+            "Discourse accepted the move but topic {} is in {} rather than {}",
+            topic_id,
+            category_label(&MoveCategory {
+                id: after.category_id,
+                name: name_of(after.category_id),
+            }),
+            category_label(&result.to)
+        ));
+    }
+    if after.posts_count != before.posts_count {
+        return Err(anyhow!(
+            "topic {} moved but its post count changed unexpectedly ({:?} → {:?})",
+            topic_id,
+            before.posts_count,
+            after.posts_count
+        ));
+    }
+
+    result.status = "moved";
+    let text = format!(
+        "moved topic {} \"{}\" from {} to {}",
+        topic_id,
+        title,
+        category_label(&result.from),
+        category_label(&result.to)
+    );
+    emit_result(format, &result, &text)
 }
 
 pub fn topic_list(
