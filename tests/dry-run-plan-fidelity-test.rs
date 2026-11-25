@@ -337,6 +337,20 @@ const SERVER_GROUP_VOLUNTEERS_JSON: &str =
     r#"{"group":{"id":77,"name":"volunteers","full_name":"Volunteers","automatic":false}}"#;
 const SERVER_GROUP_STAFF_JSON: &str = r#"{"group":{"id":3,"name":"staff","automatic":true}}"#;
 
+/// `topic move` fixture: topic 606 starts in `General` (category 4 of
+/// `SERVER_CATEGORY_DEFS_JSON`). Its re-read reports the category a real
+/// `PUT /t/606.json` last set (`Recorder::moved_topic_category`), so the real
+/// run's post-write verification can pass, while the dry-run - which sends no
+/// PUT - always plans from the frozen category 4.
+const MOVE_TOPIC_ID: u64 = 606;
+const MOVE_TOPIC_START_CATEGORY: u64 = 4;
+
+fn move_topic_json(category_id: u64) -> String {
+    format!(
+        r#"{{"id":{MOVE_TOPIC_ID},"title":"Movable topic","slug":"movable-topic","category_id":{category_id},"posts_count":3,"post_stream":{{"posts":[]}}}}"#
+    )
+}
+
 #[derive(Default)]
 struct Recorder {
     /// Overrides the `GET /tag_groups.json` body when set; the default is
@@ -354,6 +368,8 @@ struct Recorder {
     /// post-delete verification list can see this: the dry-run issues no
     /// DELETE, so the list both phases plan from is identical.
     deleted_emojis: Vec<String>,
+    /// The `category_id` a real `topic move` run last sent for topic 606.
+    moved_topic_category: Option<u64>,
 }
 
 fn start_mock(recorder: Arc<Mutex<Recorder>>) -> String {
@@ -622,6 +638,31 @@ fn handle(mut stream: TcpStream, recorder: &Mutex<Recorder>) {
         )
     } else if method == "GET" && path == "/c/7.json" {
         ("HTTP/1.1 200 OK", SERVER_CATEGORY_JSON.to_string())
+    } else if method == "GET" && path == format!("/t/{MOVE_TOPIC_ID}.json") {
+        let category = recorder
+            .lock()
+            .expect("recorder lock")
+            .moved_topic_category
+            .unwrap_or(MOVE_TOPIC_START_CATEGORY);
+        ("HTTP/1.1 200 OK", move_topic_json(category))
+    } else if method == "PUT" && path == format!("/t/{MOVE_TOPIC_ID}.json") {
+        // `topic move`: recorded as `PUT <path> -> <every sent form key=value,
+        // sorted>`, so an extra wire field (title, tags, status) fails the
+        // comparison as well as a wrong destination.
+        let mut fields: Vec<String> = form_keys(&body)
+            .into_iter()
+            .map(|key| format!("{key}={}", form_field(&body, &key)))
+            .collect();
+        fields.sort_unstable();
+        let mut recorder = recorder.lock().expect("recorder lock");
+        recorder.moved_topic_category = form_field(&body, "category_id").parse().ok();
+        recorder
+            .puts
+            .push((format!("PUT {path}"), fields.join("&")));
+        (
+            "HTTP/1.1 200 OK",
+            format!(r#"{{"basic_topic":{{"id":{MOVE_TOPIC_ID}}}}}"#),
+        )
     } else if method == "GET" && path.starts_with("/t/101.json") {
         ("HTTP/1.1 200 OK", SERVER_TOPIC_101_JSON.to_string())
     } else if method == "GET" && path.starts_with("/t/102.json") {
@@ -2031,5 +2072,90 @@ fn group_destroy_automatic_group_is_refused_identically_by_plan_and_real_run() {
     assert!(
         recorder.lock().expect("recorder lock").puts.is_empty(),
         "an automatic group must never be deleted"
+    );
+}
+
+/// Parse `dsc topic move`'s `[dry-run] <forum>: would move topic <id> "<title>"
+/// from <from> to <to> (PUT <path> <form>)` line into `PUT <path> -> <form>`,
+/// matching how the mock records the real run's `PUT /t/:id.json`. The
+/// from/to labels are returned separately so the test can check them too.
+fn parse_topic_move_planned_changes(stdout: &str) -> BTreeMap<String, String> {
+    stdout
+        .lines()
+        .filter(|line| line.contains(": would move topic "))
+        .filter_map(|line| {
+            let (_, request) = line.trim_end().rsplit_once(" (PUT ")?;
+            let request = request.strip_suffix(')')?;
+            let (path, form) = request.split_once(' ')?;
+            Some((format!("PUT {path}"), form.to_string()))
+        })
+        .collect()
+}
+
+#[test]
+fn topic_move_dry_run_plan_matches_the_real_run_against_the_same_frozen_state() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+
+    // The destination is named by slug, so both phases must resolve `meta`
+    // to category 5 from the same listing; the plan's stated request must be
+    // exactly the one PUT the real run sends, with no other form field.
+    let dry_run = run_dsc(
+        &["--dry-run", "topic", "move", "mock", "606", "meta"],
+        &config_path,
+    );
+    let dry_stdout = String::from_utf8_lossy(&dry_run.stdout);
+    assert!(
+        dry_stdout.contains(r#"from "General" (4) to "Meta" (5)"#),
+        "the plan must name the frozen source and resolved destination: {dry_stdout}"
+    );
+    recorder.lock().expect("recorder lock").puts.clear();
+
+    assert_dry_run_plan_matches_real_run(
+        &config_path,
+        &recorder,
+        &["--dry-run", "topic", "move", "mock", "606", "meta"],
+        &["topic", "move", "mock", "606", "meta"],
+        parse_topic_move_planned_changes,
+        &BTreeMap::from([("PUT /t/606.json".to_string(), "category_id=5".to_string())]),
+    );
+    assert_eq!(
+        recorder.lock().expect("recorder lock").puts.len(),
+        1,
+        "the real run must send exactly one PUT for the planned move"
+    );
+}
+
+#[test]
+fn topic_move_to_current_category_plans_and_sends_nothing() {
+    let recorder = Arc::new(Mutex::new(Recorder::default()));
+    let url = start_mock(Arc::clone(&recorder));
+    let dir = TempDir::new().expect("tempdir");
+    let config_path = mock_config(&dir, &url);
+
+    // A move to the topic's current category is a no-op in both phases: no
+    // planned request line, and the real run sends no PUT.
+    for args in [
+        &["--dry-run", "topic", "move", "mock", "606", "general"][..],
+        &["topic", "move", "mock", "606", "general"][..],
+    ] {
+        let output = run_dsc(args, &config_path);
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            parse_topic_move_planned_changes(&stdout).is_empty(),
+            "{args:?} must not plan a move: {stdout}"
+        );
+        assert!(stdout.contains("no change"), "{args:?}: {stdout}");
+    }
+    assert!(
+        recorder.lock().expect("recorder lock").puts.is_empty(),
+        "a move to the current category must send no request"
     );
 }
