@@ -21,16 +21,17 @@ dsc update report <name> <payload.md> [--yes]
 
 1. Refuse or skip if a `./launcher rebuild` is already running, unless `--force` is set.
 2. Fetch the initial Discourse version and OS details.
-3. On rootless hosts, preflight `/var/discourse`: its checkout and Git directories must be writable by the launcher user, contain no foreign-owned entries outside `shared/`, be clean, and be able to fast-forward to `origin/main`. This refuses before any disruptive action and never repairs ownership automatically.
-4. Check available 1 KiB blocks on `/` and compare them without whole-GiB rounding. If space is below the configured minimum, run the [disk recovery](#disk-guard-and-recovery) sequence before making any OS or Discourse change.
-5. Run the OS package update over SSH and reboot if applicable.
-6. Verify the reboot by requiring Linux's boot ID to change, then requiring three consecutive successful SSH boot-ID probes. A reboot command that closes SSH with exit 255 is treated as indeterminate and reconciled through this check; it never skips directly to the rebuild.
-7. Check whether the running Discourse commit matches the latest commit on the configured branch (default `latest`, override with `--branch` or `discourse_branch` in `dsc.toml`). If they match, skip the rebuild.
-8. Run the Discourse rebuild (`./launcher rebuild app`) when step 7 cannot prove the running commit is current. This includes an unavailable GitHub comparison or unknown running commit, which deliberately fail open to a rebuild. A raw SSH exit 255 is not retried because it cannot prove whether launcher started.
-9. Require Discourse to serve version information again. When a newer target commit was known, refuse success if the running commit remained unchanged after the rebuild.
-10. Run Docker cleanup (`docker container prune -f && docker image prune -f`) and report root disk usage.
-11. When changelog posting is enabled, read the configured topic before any remote mutation. A deleted, closed, archived, or inaccessible configured topic stops the run before OS update, reboot, or rebuild. Reply permission can still change after this read; any resulting post failure is recorded separately.
-12. Post the changelog checklist only after maintenance verifies healthy.
+3. Probe Docker daemon selection with one read-only SSH command: rootful/rootless installation and activity, and the `app` container's state under each daemon. Refuse before any disruptive action when `app` is running or restarting under the daemon `docker_rootless` does *not* select, or when the selected daemon has no `app` but the other does (a wrong or missing `docker_rootless`). Warn, and continue, when both daemons are installed, a stopped duplicate `app` exists, another user runs `rootlesskit`, or a daemon could not be inspected; an uninspectable daemon is never reported as absent. `dsc` never switches, stops, or reconfigures either daemon.
+4. On rootless hosts, preflight `/var/discourse`: its checkout and Git directories must be writable by the launcher user, contain no foreign-owned entries outside `shared/`, be clean, and be able to fast-forward to `origin/main`. This refuses before any disruptive action and never repairs ownership automatically.
+5. Check available 1 KiB blocks on `/` and compare them without whole-GiB rounding. If space is below the configured minimum, run the [disk recovery](#disk-guard-and-recovery) sequence before making any OS or Discourse change.
+6. Run the OS package update over SSH and reboot if applicable.
+7. Verify the reboot by requiring Linux's boot ID to change, then requiring three consecutive successful SSH boot-ID probes. A reboot command that closes SSH with exit 255 is treated as indeterminate and reconciled through this check; it never skips directly to the rebuild.
+8. Check whether the running Discourse commit matches the latest commit on the configured branch (default `latest`, override with `--branch` or `discourse_branch` in `dsc.toml`). If they match, skip the rebuild.
+9. Run the Discourse rebuild (`./launcher rebuild app`) when step 8 cannot prove the running commit is current. This includes an unavailable GitHub comparison or unknown running commit, which deliberately fail open to a rebuild. A raw SSH exit 255 is not retried because it cannot prove whether launcher started.
+10. Require Discourse to serve version information again. When a newer target commit was known, refuse success if the running commit remained unchanged after the rebuild.
+11. Run Docker cleanup (`docker container prune -f && docker image prune -f`) and report root disk usage.
+12. When changelog posting is enabled, read the configured topic before any remote mutation. A deleted, closed, archived, or inaccessible configured topic stops the run before OS update, reboot, or rebuild. Reply permission can still change after this read; any resulting post failure is recorded separately.
+13. Post the changelog checklist only after maintenance verifies healthy.
 
 If the OS update command fails, `dsc update` aborts after attempting the rollback command (when configured).
 
@@ -87,6 +88,8 @@ dsc update all -y --skip-recent
 ## Rootless Docker
 
 If `docker_rootless = true` is set on a Discourse entry, the update command drops `sudo -n` from Docker and launcher commands. This is required for instances provisioned with `dsc harden` (which defaults to rootless Docker). Without this flag, commands like `sudo ./launcher rebuild app` fail because the root user has no Docker context.
+
+Before anything else touches the host, `dsc` also checks that the configured daemon is the one actually holding `app` (see step 3 of the [workflow](#update-workflow)). A host whose `app` lives under the other daemon is refused with a pointer to correct `docker_rootless`, rather than rebuilt into a second `app` against the same shared data.
 
 Before OS update, rootless hosts also verify that `/var/discourse` is a clean, writable `discourse_docker` checkout that can fast-forward to `origin/main`. If foreign-owned files are found, `dsc` prints up to eight escaped paths and a `find ... -exec chown` recovery command that deliberately prunes `shared/`; it never changes ownership itself.
 
