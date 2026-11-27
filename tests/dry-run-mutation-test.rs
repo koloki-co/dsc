@@ -284,6 +284,11 @@ const CASES: &[Case] = &[
     ("board show", &["board", "show", "mock", "3"], true),
     ("board pull", &["board", "pull", "mock", "3"], true),
     (
+        "board scaffold",
+        &["board", "scaffold", "mock", "to-do"],
+        true,
+    ),
+    (
         "upcoming-change enable",
         &[
             "upcoming-change",
@@ -1048,6 +1053,7 @@ const NO_SERVER_MUTATION_LEAVES: &[&str] = &[
     "backup list",
     "backup pull",
     "board list",
+    "board templates",
     "category def pull",
     "category diff",
     "category get",

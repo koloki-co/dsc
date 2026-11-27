@@ -121,6 +121,9 @@ fn main() -> Result<()> {
     // completion installation, and local version checks cannot be broken by
     // an unrelated missing or malformed config.
     let command = match cli.command {
+        Commands::Board {
+            command: BoardCommand::Templates { format },
+        } => return commands::board::board_templates(format),
         Commands::Version {
             discourse: None,
             all: false,
@@ -1740,6 +1743,22 @@ fn main() -> Result<()> {
         },
 
         Commands::Board { command } => match command {
+            BoardCommand::Templates { .. } => {
+                unreachable!("templates dispatches before config loading")
+            }
+            BoardCommand::Scaffold {
+                discourse,
+                template,
+                name,
+                format,
+            } => commands::board::board_scaffold(
+                &config,
+                &discourse,
+                &template,
+                name.as_deref(),
+                format,
+                dry_run,
+            ),
             BoardCommand::List { discourse, format } => {
                 commands::board::board_list(&config, &discourse, format)
             }

@@ -82,6 +82,10 @@ pub struct Board {
     pub can_manage: bool,
     #[serde(default)]
     pub created_by: Option<BoardUserRef>,
+    /// The board index includes ordered column definitions without invoking the
+    /// side-effectful board-detail endpoint.
+    #[serde(default)]
+    pub columns: Vec<BoardColumn>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -208,7 +212,26 @@ struct BoardShowEnvelope {
     columns: Vec<BoardColumn>,
 }
 
+#[derive(Debug, Deserialize)]
+struct BoardCreateEnvelope {
+    board: Board,
+}
+
 const BOARDS_PATH: &str = "/boards/api/boards.json";
+
+/// Exact payload accepted by Boards' transactional create endpoint. Shared by
+/// scaffold planning and application so dry-run cannot describe a different
+/// request from the live path.
+pub(crate) fn board_create_payload(name: &str, slug: &str, columns: &[String]) -> Value {
+    serde_json::json!({
+        "board": {
+            "name": name,
+            "slug": slug,
+            "columns": columns.iter().map(|title| serde_json::json!({ "title": title })).collect::<Vec<_>>(),
+            "acl": [],
+        }
+    })
+}
 
 impl DiscourseClient {
     /// List every board accessible to the configured API user.
@@ -242,6 +265,24 @@ impl DiscourseClient {
             board: envelope.board,
             columns: envelope.columns,
         })
+    }
+
+    /// Create an empty board with its ordered columns in one transactional
+    /// Boards-plugin request. The caller deliberately supplies no cards,
+    /// constraints, or ACL grants.
+    pub fn create_board(&self, name: &str, slug: &str, columns: &[String]) -> Result<Board> {
+        let payload = board_create_payload(name, slug, columns);
+        let response = self.send_retrying(|| Ok(self.post(BOARDS_PATH)?.json(&payload)))?;
+        let status = response.status();
+        let text = response
+            .text_capped()
+            .context("reading board create response")?;
+        if status != reqwest::StatusCode::CREATED {
+            return Err(boards_http_error("create board", status, &text));
+        }
+        let envelope: BoardCreateEnvelope =
+            serde_json::from_str(&text).context("parsing board create response")?;
+        Ok(envelope.board)
     }
 }
 

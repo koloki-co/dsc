@@ -2,14 +2,246 @@
 //
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use crate::api::{Board, BoardAssignee, BoardCard, BoardDetail, DiscourseClient};
+use crate::api::{
+    Board, BoardAssignee, BoardCard, BoardDetail, DiscourseClient, board_create_payload,
+};
 use crate::cli::ListFormat;
 use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
-use crate::utils::{atomic_write, ensure_output_available, is_json_path};
-use anyhow::{Context, Result};
+use crate::utils::{atomic_write, ensure_output_available, is_json_path, slugify};
+use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+/// A bundled, create-only board layout. Templates are deliberately code-owned
+/// in this first phase: no local file is interpreted as a board mutation.
+#[derive(Debug, Clone, Serialize)]
+pub struct BoardTemplate {
+    pub name: &'static str,
+    pub default_name: &'static str,
+    pub columns: &'static [&'static str],
+}
+
+const BOARD_TEMPLATES: &[BoardTemplate] = &[BoardTemplate {
+    name: "to-do",
+    default_name: "To-do",
+    columns: &["Ideas", "Backlog", "In progress", "Completed", "Reference"],
+}];
+
+#[derive(Debug, Serialize)]
+struct BoardScaffoldResult {
+    discourse: String,
+    template: String,
+    name: String,
+    slug: String,
+    columns: Vec<String>,
+    /// `planned`, `created`, or `unchanged`.
+    action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    board_id: Option<i64>,
+    /// The exact JSON body for the sole mutating request, when creating.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request: Option<serde_json::Value>,
+}
+
+/// List bundled board templates without loading configuration or contacting a
+/// forum.
+pub fn board_templates(format: ListFormat) -> Result<()> {
+    emit_with(format, &BOARD_TEMPLATES, || {
+        for template in BOARD_TEMPLATES {
+            println!(
+                "{} (default board: {})",
+                template.name, template.default_name
+            );
+            for column in template.columns {
+                println!("  - {column}");
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Create one empty board from a bundled template. Existing boards are never
+/// adopted or updated: a matching layout is a no-op and every collision is an
+/// error requiring operator review.
+pub fn board_scaffold(
+    config: &Config,
+    discourse_name: &str,
+    template_name: &str,
+    supplied_name: Option<&str>,
+    format: ListFormat,
+    dry_run: bool,
+) -> Result<()> {
+    let template = find_template(template_name)?;
+    let name = supplied_name.unwrap_or(template.default_name).trim();
+    if name.is_empty() {
+        bail!("board name must not be empty");
+    }
+    let slug = slugify(name);
+    let columns = template
+        .columns
+        .iter()
+        .map(|title| (*title).to_string())
+        .collect::<Vec<_>>();
+
+    let discourse = select_discourse(config, Some(discourse_name))?;
+    ensure_api_credentials(discourse)?;
+    let client = DiscourseClient::new(discourse)?;
+    let boards = client.list_boards()?;
+    let matching = boards
+        .iter()
+        .filter(|board| board.slug.as_deref() == Some(slug.as_str()))
+        .collect::<Vec<_>>();
+    if matching.len() > 1 {
+        bail!(
+            "multiple accessible boards use slug '{slug}'; review them manually before scaffolding"
+        );
+    }
+    if let Some(board) = matching.first() {
+        if board.name == name && board_column_titles(board) == columns {
+            return emit_scaffold_result(
+                format,
+                BoardScaffoldResult {
+                    discourse: discourse.name.clone(),
+                    template: template.name.to_string(),
+                    name: name.to_string(),
+                    slug,
+                    columns,
+                    action: "unchanged".to_string(),
+                    board_id: Some(board.id),
+                    request: None,
+                },
+                dry_run,
+            );
+        }
+        bail!(
+            "board slug '{slug}' already belongs to '{}' with a different layout; choose --name or review it manually",
+            board.name
+        );
+    }
+
+    let planned = BoardScaffoldResult {
+        discourse: discourse.name.clone(),
+        template: template.name.to_string(),
+        name: name.to_string(),
+        slug: slug.clone(),
+        columns: columns.clone(),
+        action: "planned".to_string(),
+        board_id: None,
+        request: Some(board_create_payload(name, &slug, &columns)),
+    };
+    if dry_run {
+        return emit_scaffold_result(format, planned, true);
+    }
+
+    let created = client.create_board(name, &slug, &columns)?;
+    verify_created_board(&created, name, &slug, &columns, "create response")?;
+    let verified = client.list_boards()?;
+    let matching = verified
+        .iter()
+        .filter(|board| board.slug.as_deref() == Some(slug.as_str()))
+        .collect::<Vec<_>>();
+    if matching.len() != 1 {
+        bail!(
+            "board scaffold verification failed: expected exactly one board with slug '{slug}' in the board index, found {}",
+            matching.len()
+        );
+    }
+    verify_created_board(matching[0], name, &slug, &columns, "board index")?;
+    emit_scaffold_result(
+        format,
+        BoardScaffoldResult {
+            action: "created".to_string(),
+            board_id: Some(created.id),
+            ..planned
+        },
+        false,
+    )
+}
+
+fn find_template(name: &str) -> Result<&'static BoardTemplate> {
+    BOARD_TEMPLATES
+        .iter()
+        .find(|template| template.name == name)
+        .ok_or_else(|| {
+            anyhow!(
+                "unknown board template '{name}'; available templates: {}",
+                BOARD_TEMPLATES
+                    .iter()
+                    .map(|template| template.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+}
+
+fn board_column_titles(board: &Board) -> Vec<String> {
+    board
+        .columns
+        .iter()
+        .map(|column| column.title.clone())
+        .collect()
+}
+
+fn verify_created_board(
+    board: &Board,
+    name: &str,
+    slug: &str,
+    columns: &[String],
+    source: &str,
+) -> Result<()> {
+    if board.name != name
+        || board.slug.as_deref() != Some(slug)
+        || board_column_titles(board) != columns
+    {
+        bail!(
+            "board scaffold verification failed in {source}: expected '{}' ({slug}) with columns [{}]",
+            name,
+            columns.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn emit_scaffold_result(
+    format: ListFormat,
+    result: BoardScaffoldResult,
+    dry_run: bool,
+) -> Result<()> {
+    emit_with(format, &result, || {
+        if dry_run && result.action == "planned" {
+            println!(
+                "[dry-run] scaffold board '{}' on {}",
+                result.name, result.discourse
+            );
+            println!("template: {}", result.template);
+            println!("slug: {}", result.slug);
+            println!("access: restricted (creator and mandatory administrators only)");
+            println!("columns: {}", result.columns.join(" -> "));
+            let request = serde_json::to_string(
+                result
+                    .request
+                    .as_ref()
+                    .expect("planned scaffold must include its request"),
+            )
+            .context("serializing board scaffold plan")?;
+            println!("+ POST /boards/api/boards.json {request}");
+        } else if result.action == "unchanged" {
+            println!(
+                "Board '{}' already matches the {} template; no changes made.",
+                result.name, result.template
+            );
+        } else {
+            println!(
+                "Created board '{}' from the {} template (id {}).",
+                result.name,
+                result.template,
+                result.board_id.unwrap_or_default()
+            );
+        }
+        Ok(())
+    })
+}
 
 /// List every board accessible to the configured API user.
 pub fn board_list(config: &Config, discourse_name: &str, format: ListFormat) -> Result<()> {
@@ -390,6 +622,7 @@ mod tests {
             can_write: false,
             can_manage: false,
             created_by: None,
+            columns: vec![],
             extra: Default::default(),
         };
         assert_eq!(acl_summary(&board), "acl:read");
@@ -416,6 +649,7 @@ mod tests {
             can_write: false,
             can_manage: false,
             created_by: None,
+            columns: vec![],
             extra: Default::default(),
         };
         assert_eq!(constraint_summary(&board), "tags:discourse");

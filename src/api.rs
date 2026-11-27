@@ -35,6 +35,7 @@ mod webhooks;
 
 pub use ai::AiLlmSummary;
 pub use api_keys::{ApiKeySummary, CreatedApiKey};
+pub(crate) use boards::board_create_payload;
 pub use boards::{
     Board, BoardAssignee, BoardCard, BoardCardTag, BoardCardTopic, BoardColumn, BoardDetail,
     BoardUserRef,

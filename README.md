@@ -39,7 +39,7 @@ A glance at where `dsc` is, so you can tell whether it covers your use case befo
 |---|---|---|
 | **Topics & posts** | pull / push / sync as Markdown, reply, create, rename (`topic title`), move between categories, close / reopen, set tags, full-thread export; per-post edit / delete / move | — |
 | **Categories** | list; pull / push a whole category as Markdown with durable `topic_id` binding, a reviewable dry-run plan, `--updates-only`, `--no-bump`, admonition/link conversion; declarative definition pull/push/diff/set/rename | definition assets and guarded prune |
-| **Boards** | list, inspect, and snapshot Discourse Boards with columns, topic cards, and floater cards | guarded declarative push and prune |
+| **Boards** | list, inspect, snapshot, and scaffold an empty standard board with columns, topic cards, and floater cards | guarded declarative push and prune |
 | **Tags** | pull / push the taxonomy, rename, per-topic tag / untag | — |
 | **Site settings** | get / set / list, pull / push snapshots, diff two sources, **audit one setting across every forum**, list / inspect / enable / disable hidden Upcoming Changes | validated `setting upload` |
 | **Discourse AI** | safe non-secret list / show of LLM definitions | reviewable definition sync, recipes, and explicitly authorised synthetic provider tests |
@@ -166,7 +166,7 @@ dsc update myforum
   - [analytics](docs/analytics.md) — community-health snapshot (growth, activity, health)
   - [report](docs/report.md) — fetch a single raw Discourse admin report by id
   - [explorer](docs/explorer.md) — inspect and run saved Data Explorer queries
-  - [board](docs/board.md) - list, inspect, and snapshot Discourse Boards
+  - [board](docs/board.md) - scaffold, list, inspect, and snapshot Discourse Boards
   - [upcoming-change](docs/upcoming-change.md) — list, inspect, enable and disable Discourse's hidden Upcoming Changes
   - [ai](docs/ai.md) — inspect non-secret Discourse AI LLM definitions
   - [upload](docs/upload.md) — upload a file and return its short URL

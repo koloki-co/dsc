@@ -17,14 +17,9 @@ that API is undocumented in the official API docs and was invisible to
 (Discourse 2026.9.0, commit `dd4cc4f4cc`) captured the full request/response
 shape; this spec records it so implementation does not need to re-derive it.
 
-## Current state (as of 2026-09-07)
+## Current state (as of 2026-11-27)
 
-Phase 1 provides `dsc board list`, `show`, and `pull`. There are no explicit
-board write commands yet, but the detail GET used by `show` and `pull` invokes
-Discourse's own topic-card backfill and board-view history writes. The API is
-live on bawmedical but no boards remain (the discovery scratch board was
-deleted after capture). The plugin is not enabled on any other configured
-forum.
+Phase 1 provides `dsc board list`, `show`, and `pull`. Phase 2 provides the bundled `to-do` template through offline `dsc board templates` and guarded `dsc board scaffold`. Scaffold is create-only: it reads the side-effect-free index, refuses collisions, creates the empty board and five columns in one transactional request, then verifies the response and refreshed index before reporting success. It does not create cards, modify existing boards, or add access grants. The detail GET used by `show` and `pull` invokes Discourse's own topic-card backfill and board-view history writes.
 
 ## API surface (observed 2026-09-03)
 
@@ -191,8 +186,8 @@ The [Discourse create action and service](https://github.com/discourse/discourse
 
 ### Phase 2 - board templates and create-only scaffolding
 
-- [ ] Ship `board templates` and `board scaffold` with the bundled `to-do` template.
-- [ ] Test offline discovery, exact column order, zero writes in dry-run, duplicate prevention, conflicting or unavailable boards, and preservation of existing cards. Test that a successful create is not reported when verification fails.
+- [x] Ship `board templates` and `board scaffold` with the bundled `to-do` template.
+- [x] Test offline discovery, exact column order, zero writes in dry-run, duplicate prevention, conflicting or unavailable boards, and preservation of existing boards. Test that a successful create is not reported when verification fails.
 - [ ] Pilot with Koloki Demo: create once, check access as a non-staff member, and rerun without adding a second board.
 
 ### Phase 3 - guarded content sync

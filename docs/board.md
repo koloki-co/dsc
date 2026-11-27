@@ -1,6 +1,6 @@
 # dsc board
 
-List, show, and snapshot Discourse Boards - the official kanban plugin (core, Business/Enterprise plans, shipped September 2026). This phase exposes no explicit create, update, or delete commands. However, Discourse's board-detail GET endpoint performs its own board maintenance: it can create or delete tag-driven topic cards and records one board-view event per user per day. Consequently, `dsc board show` and `dsc board pull` can change server state and refuse to run under global `--dry-run`. A guarded `board push` is a later phase.
+Create standard empty boards, list, show, and snapshot Discourse Boards - the official kanban plugin (core, Business/Enterprise plans, shipped September 2026). `board scaffold` is deliberately create-only: it never adds cards, changes an existing board, or grants access beyond Discourse's normal creator and administrator access. However, Discourse's board-detail GET endpoint performs its own board maintenance: it can create or delete tag-driven topic cards and records one board-view event per user per day. Consequently, `dsc board show` and `dsc board pull` can change server state and refuse to run under global `--dry-run`. A guarded `board push` is a later phase.
 
 Boards live behind `/boards/api/*`, an undocumented plugin API. A 404 from any `dsc board` command can mean Boards is disabled, unlicensed on the current plan, unavailable on this Discourse version, or the board does not exist.
 
@@ -15,6 +15,32 @@ One row per board accessible to the configured API user: id, name, slug, ACL sum
 ```bash
 dsc board list myforum
 dsc board list myforum --format json
+```
+
+## Scaffold a standard board
+
+```text
+dsc board templates [--format text|json|yaml]
+dsc board scaffold <discourse> <template> [--name <name>] [--format text|json|yaml] [--dry-run]
+```
+
+`templates` is offline and lists the bundled layouts. The first template, `to-do`, creates an empty **To-do** board with these columns, in order:
+
+1. Ideas
+2. Backlog
+3. In progress
+4. Completed
+5. Reference
+
+Backlog is work that has been decided but has not started. Reference is outside the task flow. The scaffold creates no cards, topic bindings, tag/category constraints, or public ACL entries.
+
+Before writing, `scaffold` reads only the side-effect-free board index and derives a slug from the effective name. An existing board with the same name and exact ordered columns is a no-op. Any other slug collision is refused rather than modified, adopted, or silently renamed. After a successful create, `dsc` verifies both the response and refreshed index before reporting success.
+
+```bash
+dsc board templates
+dsc --dry-run board scaffold myforum to-do
+dsc board scaffold myforum to-do
+dsc board scaffold myforum to-do --name "Sysadmin tasks"
 ```
 
 ## Show a board
@@ -101,4 +127,4 @@ Schema v1 contains only stable, mutable board fields and identity fields needed 
 
 - Auth is the standard configured `apikey`/`api_username`; the acting user needs the board ACL `view` to read.
 - `--dry-run` permits `board list`, but refuses `board show` and `board pull` because the detail endpoint can mutate board cards and view history.
-- `push` (guarded, declarative writes) is a later phase - see `spec/commands/boards.md`.
+- `push` (guarded, declarative updates and card management) is a later phase - see `spec/commands/boards.md`.

@@ -595,10 +595,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: ExplorerCommand,
     },
-    /// List, show, and snapshot Discourse Boards (core kanban plugin,
+    /// Create, list, show, and snapshot Discourse Boards (core kanban plugin,
     /// Business/Enterprise plans). Detail reads may trigger server-side sync.
     #[command(after_help = "Examples:
   dsc board list myforum
+  dsc board templates
+  dsc --dry-run board scaffold myforum to-do
   dsc board show myforum 3
   dsc board pull myforum 3 board.yaml")]
     Board {
@@ -1062,6 +1064,31 @@ impl ExplorerOrderArg {
 #[derive(Subcommand)]
 #[command(next_display_order = None)]
 pub enum BoardCommand {
+    /// List bundled, create-only board templates without contacting a forum.
+    #[command(after_help = "Examples:
+  dsc board templates
+  dsc board templates --format json")]
+    Templates {
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
+    /// Create an empty board from a bundled template without touching existing boards.
+    #[command(after_help = "Examples:
+  dsc --dry-run board scaffold myforum to-do
+  dsc board scaffold myforum to-do --name \"Sysadmin tasks\"")]
+    Scaffold {
+        /// Discourse name.
+        discourse: String,
+        /// Bundled template name, from `dsc board templates`.
+        template: String,
+        /// Board name. Defaults to the template's standard name.
+        #[arg(long)]
+        name: Option<String>,
+        /// Output format.
+        #[arg(long, short = 'f', value_enum, default_value = "text")]
+        format: ListFormat,
+    },
     /// List boards accessible to the configured API user.
     #[command(visible_alias = "ls")]
     #[command(after_help = "Examples:

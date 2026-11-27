@@ -10,8 +10,8 @@ mod common;
 use common::*;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use tempfile::TempDir;
 
 /// A mock Discourse that answers `/boards/api/boards.json` and
@@ -153,6 +153,96 @@ fn config_for(url: &str, dir: &TempDir) -> std::path::PathBuf {
             "[[discourse]]\nname = \"alpha\"\nbaseurl = \"{url}\"\napikey = \"k\"\napi_username = \"tester\"\n"
         ),
     )
+}
+
+#[derive(Default)]
+struct ScaffoldMock {
+    boards: Vec<serde_json::Value>,
+    creates: Vec<serde_json::Value>,
+    list_requests: usize,
+    malformed_create_response: bool,
+}
+
+fn start_scaffold_mock(state: ScaffoldMock) -> (String, Arc<Mutex<ScaffoldMock>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind scaffold mock");
+    let addr = listener.local_addr().expect("scaffold mock addr");
+    let state = Arc::new(Mutex::new(state));
+    let thread_state = Arc::clone(&state);
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            handle_scaffold(stream, &thread_state);
+        }
+    });
+    (format!("http://{addr}"), state)
+}
+
+fn handle_scaffold(mut stream: TcpStream, state: &Arc<Mutex<ScaffoldMock>>) {
+    let mut reader = BufReader::new(stream.try_clone().expect("clone scaffold stream"));
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).is_err() || request_line.trim().is_empty() {
+        return;
+    }
+    let mut content_length = 0usize;
+    loop {
+        let mut line = String::new();
+        if reader.read_line(&mut line).is_err() || line == "\r\n" || line == "\n" {
+            break;
+        }
+        if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+            content_length = value.trim().parse().unwrap_or(0);
+        }
+    }
+    let mut body = vec![0; content_length];
+    reader.read_exact(&mut body).expect("read scaffold body");
+    let method = request_line.split_whitespace().next().unwrap_or("");
+    let path = request_line.split_whitespace().nth(1).unwrap_or("");
+    let (status, response) = match (method, path) {
+        ("GET", "/boards/api/boards.json") => {
+            let mut state = state.lock().expect("lock scaffold state");
+            state.list_requests += 1;
+            (
+                "200 OK",
+                serde_json::json!({ "boards": state.boards }).to_string(),
+            )
+        }
+        ("POST", "/boards/api/boards.json") => {
+            let request: serde_json::Value = serde_json::from_slice(&body).expect("scaffold JSON");
+            let mut state = state.lock().expect("lock scaffold state");
+            state.creates.push(request.clone());
+            let mut board = request["board"].clone();
+            board["id"] = serde_json::json!(42);
+            for (index, column) in board["columns"]
+                .as_array_mut()
+                .expect("scaffold columns")
+                .iter_mut()
+                .enumerate()
+            {
+                column["id"] = serde_json::json!(index + 1);
+            }
+            if state.malformed_create_response {
+                let mut malformed = board.clone();
+                malformed["columns"] = serde_json::json!([]);
+                (
+                    "201 Created",
+                    serde_json::json!({ "board": malformed }).to_string(),
+                )
+            } else {
+                state.boards.push(board.clone());
+                (
+                    "201 Created",
+                    serde_json::json!({ "board": board }).to_string(),
+                )
+            }
+        }
+        _ => ("404 Not Found", "{}".to_string()),
+    };
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+        response.len()
+    );
+    stream
+        .write_all(response.as_bytes())
+        .expect("write scaffold response");
 }
 
 #[test]
@@ -348,4 +438,145 @@ fn board_commands_report_a_clear_error_when_plugin_is_disabled() {
         stderr.contains("Boards") && stderr.contains("Business/Enterprise"),
         "expected a Boards-specific 404 hint, got: {stderr}"
     );
+}
+
+#[test]
+fn board_templates_are_offline_and_list_the_standard_columns() {
+    let dir = TempDir::new().expect("tempdir");
+    let missing_config = dir.path().join("does-not-exist.toml");
+    let output = run_dsc(&["board", "templates", "--format", "json"], &missing_config);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let templates: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("templates JSON");
+    assert_eq!(templates[0]["name"], "to-do");
+    assert_eq!(templates[0]["default_name"], "To-do");
+    assert_eq!(
+        templates[0]["columns"],
+        serde_json::json!(["Ideas", "Backlog", "In progress", "Completed", "Reference"])
+    );
+}
+
+#[test]
+fn board_scaffold_dry_run_plans_the_exact_transaction_without_posting() {
+    let (url, state) = start_scaffold_mock(ScaffoldMock::default());
+    let dir = TempDir::new().expect("tempdir");
+    let config = config_for(&url, &dir);
+    let output = run_dsc(
+        &[
+            "--dry-run",
+            "board",
+            "scaffold",
+            "alpha",
+            "to-do",
+            "--format",
+            "json",
+        ],
+        &config,
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let plan: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("scaffold plan JSON");
+    assert_eq!(plan["action"], "planned");
+    assert_eq!(plan["slug"], "to-do");
+    assert_eq!(
+        plan["request"],
+        serde_json::json!({"board":{"name":"To-do","slug":"to-do","columns":[{"title":"Ideas"},{"title":"Backlog"},{"title":"In progress"},{"title":"Completed"},{"title":"Reference"}],"acl":[]}})
+    );
+    let state = state.lock().expect("lock state");
+    assert_eq!(state.list_requests, 1);
+    assert!(state.creates.is_empty(), "dry-run must not POST");
+}
+
+#[test]
+fn board_scaffold_creates_once_then_preserves_the_existing_board() {
+    let (url, state) = start_scaffold_mock(ScaffoldMock::default());
+    let dir = TempDir::new().expect("tempdir");
+    let config = config_for(&url, &dir);
+    let first = run_dsc(
+        &["board", "scaffold", "alpha", "to-do", "--format", "json"],
+        &config,
+    );
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    let created: serde_json::Value = serde_json::from_slice(&first.stdout).expect("create JSON");
+    assert_eq!(created["action"], "created");
+    assert_eq!(created["board_id"], 42);
+
+    let second = run_dsc(
+        &["board", "scaffold", "alpha", "to-do", "--format", "json"],
+        &config,
+    );
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let unchanged: serde_json::Value =
+        serde_json::from_slice(&second.stdout).expect("unchanged JSON");
+    assert_eq!(unchanged["action"], "unchanged");
+    let state = state.lock().expect("lock state");
+    assert_eq!(
+        state.creates.len(),
+        1,
+        "a matching board must not be adopted or posted again"
+    );
+}
+
+#[test]
+fn board_scaffold_refuses_a_conflicting_existing_slug_without_posting() {
+    let (url, state) = start_scaffold_mock(ScaffoldMock {
+        boards: vec![serde_json::json!({
+            "id": 7,
+            "name": "To-do",
+            "slug": "to-do",
+            "columns": [{"id": 1, "title": "Different"}],
+        })],
+        ..Default::default()
+    });
+    let dir = TempDir::new().expect("tempdir");
+    let config = config_for(&url, &dir);
+    let output = run_dsc(&["board", "scaffold", "alpha", "to-do"], &config);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("different layout"));
+    assert!(state.lock().expect("lock state").creates.is_empty());
+}
+
+#[test]
+fn board_scaffold_names_an_unavailable_boards_plugin_before_posting() {
+    let (url, _) = start_mock(sample_list(), sample_show(), true);
+    let dir = TempDir::new().expect("tempdir");
+    let config = config_for(&url, &dir);
+    let output = run_dsc(&["board", "scaffold", "alpha", "to-do"], &config);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Boards") && stderr.contains("Business/Enterprise"),
+        "expected a Boards-specific unavailable hint, got: {stderr}"
+    );
+}
+
+#[test]
+fn board_scaffold_does_not_report_success_when_create_verification_fails() {
+    let (url, state) = start_scaffold_mock(ScaffoldMock {
+        malformed_create_response: true,
+        ..Default::default()
+    });
+    let dir = TempDir::new().expect("tempdir");
+    let config = config_for(&url, &dir);
+    let output = run_dsc(&["board", "scaffold", "alpha", "to-do"], &config);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("verification failed"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("Created board"));
+    assert_eq!(state.lock().expect("lock state").creates.len(), 1);
 }
