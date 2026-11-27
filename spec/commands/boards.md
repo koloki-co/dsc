@@ -122,6 +122,8 @@ slug, category_id, tags, bumped_at, closed, image_url, posts_count),
 dsc board list <discourse> [--format text|json|yaml]
 dsc board show <discourse> <board-id> [--format text|json|yaml]
 dsc board pull <discourse> <board-id> [<file>] [--force]
+dsc board templates [--format text|json|yaml]                                   # planned
+dsc board scaffold <discourse> <template> [--name <name>] [--format text|json|yaml] [--dry-run] # planned
 dsc board push <discourse> <file> [--dry-run] [--yes]   # later phase
 ```
 
@@ -135,6 +137,41 @@ dsc board push <discourse> <file> [--dry-run] [--yes]   # later phase
   topics as a side effect of board moves - `dsc` must never silently edit
   forum content to place a card (the tag-bound-column auto-flow does this
   server-side anyway).
+
+### Create from a template
+
+`scaffold` creates a new, empty board from a named template. It doesn't import cards or reconcile an existing board, so it doesn't need `push` or a previous `pull`. `templates` lists the bundled templates and their ordered column titles offline. Use one registry for both commands; add more templates as concrete workflows emerge. The first template, `to-do`, creates a board called **To-do** unless `--name` is supplied:
+
+| Column | Purpose |
+| --- | --- |
+| Ideas | Suggestions we haven't committed to. |
+| Backlog | Work we've decided to do, but haven't started. |
+| In progress | Work under way. |
+| Completed | Finished work. |
+| Reference | Material worth keeping handy, outside the task flow. |
+
+Start on one explicitly named forum. Build a stable slug from the effective name and check the Boards index for it. If the same board name and ordered columns already exist under that slug, report a no-op without adopting the board or touching its cards or permissions. If the slug exists with a different layout or name, stop and suggest `--name` or manual review. Don't generate a suffixed name or slug to get past a collision. A board absent from the permission-filtered index may still exist; rely on the server's unique slug and refuse on a rejected or ambiguous create. After a timeout, re-list before any retry.
+
+`--dry-run` shows the selected forum, template, effective name and slug, ordered columns, restricted access and exact intended create request. It uses only the side-effect-free board index, not the detail GET. Apply creates the board and columns together, then verifies the returned board and confirms it in the index. The first version grants no access beyond Discourse's normal creator and mandatory admin access. It creates no cards, public grants, category or tag bindings, column move actions or site settings. Fleet targeting, custom template files and existing-board updates are out of scope for the first version.
+
+The [Discourse create action and service](https://github.com/discourse/discourse/tree/5eb2603b38634e60dca145e03d8ffaf7a74d5276/plugins/boards) support a single `POST /boards/api/boards.json` with the following payload. Source review confirms that board, ordered columns and ACL creation run in one transaction; the upstream request spec covers creating ordered columns. Verify this exact scaffold request, response and non-member visibility on Koloki Demo before rollout. No scaffold write was tested against a live forum during this design pass.
+
+```json
+{
+  "board": {
+    "name": "To-do",
+    "slug": "to-do",
+    "columns": [
+      { "title": "Ideas" },
+      { "title": "Backlog" },
+      { "title": "In progress" },
+      { "title": "Completed" },
+      { "title": "Reference" }
+    ],
+    "acl": []
+  }
+}
+```
 
 ## Phases
 
@@ -152,7 +189,13 @@ dsc board push <discourse> <file> [--dry-run] [--yes]   # later phase
   rather than a pre-flight `admin/site_settings.json` check, matching the
   existing Data Explorer precedent.
 
-### Phase 2 - guarded writes
+### Phase 2 - board templates and create-only scaffolding
+
+- [ ] Ship `board templates` and `board scaffold` with the bundled `to-do` template.
+- [ ] Test offline discovery, exact column order, zero writes in dry-run, duplicate prevention, conflicting or unavailable boards, and preservation of existing cards. Test that a successful create is not reported when verification fails.
+- [ ] Pilot with Koloki Demo: create once, check access as a non-staff member, and rerun without adding a second board.
+
+### Phase 3 - guarded content sync
 
 - [ ] `board push` for board/column/floater-card definitions with a complete
   dry-run plan (create/update/unchanged per object, `-` reset markers as in
