@@ -1207,6 +1207,37 @@ enum UpdateOutcome {
 const REBUILD_CHECK_CMD: &str =
     "pgrep -f '[l]auncher rebuild' >/dev/null 2>&1 && echo REBUILDING || echo IDLE";
 
+/// R81 read-only preflight: refuse before any disruptive step when the
+/// configured daemon disagrees with where `app` actually lives, and warn on a
+/// mixed rootful/rootless host. A failed probe is a warning, never absence.
+fn check_docker_daemons(target: &str, discourse_label: &str, rootless: bool) -> Result<()> {
+    use crate::commands::update_daemon::{DAEMON_PROBE_CMD, classify_daemons, parse_daemon_probe};
+    stage(discourse_label, "Checking Docker daemon selection");
+    let output = match run_ssh_command_named(target, DAEMON_PROBE_CMD, "Docker daemon probe") {
+        Ok(output) => output,
+        Err(error) => {
+            stage(
+                discourse_label,
+                &format!(
+                    "Warning: could not probe Docker daemons ({}); rootful/rootless state not verified",
+                    concise_failure_detail(&error)
+                ),
+            );
+            return Ok(());
+        }
+    };
+    let verdict = classify_daemons(&parse_daemon_probe(&output), rootless);
+    for warning in &verdict.warnings {
+        stage(discourse_label, &format!("Warning: {warning}"));
+    }
+    match verdict.refusal {
+        Some(refusal) => Err(anyhow!(
+            "Docker daemon preflight refused on {target}: {refusal}"
+        )),
+        None => Ok(()),
+    }
+}
+
 fn rebuild_in_progress(target: &str) -> Result<bool> {
     Ok(run_ssh_command(target, REBUILD_CHECK_CMD)?.contains("REBUILDING"))
 }
@@ -1433,6 +1464,7 @@ fn run_update(discourse: &DiscourseConfig, force: bool, branch: &str) -> Result<
     };
 
     let rootless = discourse.docker_rootless.unwrap_or(false);
+    check_docker_daemons(&target, &discourse_label, rootless)?;
     if rootless {
         stage(
             &discourse_label,

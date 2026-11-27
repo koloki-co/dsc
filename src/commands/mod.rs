@@ -43,6 +43,7 @@ pub mod theme;
 pub mod topic;
 pub mod upcoming_change;
 pub mod update;
+pub(crate) mod update_daemon;
 pub mod update_log;
 pub mod upload;
 pub mod user;
