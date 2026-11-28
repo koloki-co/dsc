@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 //! Functional coverage for the R71 snapshot provenance header on
-//! `tag pull` and `category def pull`, against a mocked Discourse. See
+//! `tag pull`, `category def pull` and `theme palette pull`, against a mocked Discourse. See
 //! `spec/commands/snapshot-provenance.md` for the contract: pulls write a
 //! credential-free `provenance` object, and push treats it as informational
 //! only, so a snapshot copied from another site still applies.
@@ -77,6 +77,12 @@ fn handle(mut stream: TcpStream, requests: &Mutex<Vec<String>>) {
         )
     } else if path.starts_with("/c/4/show.json") {
         ("HTTP/1.1 200 OK", format!(r#"{{"category":{category}}}"#))
+    } else if path.starts_with("/admin/color_schemes.json") {
+        (
+            "HTTP/1.1 200 OK",
+            r#"[{"id":19,"name":"Brand","colors":[{"name":"primary","hex":"222222"}],"base_scheme_id":null}]"#
+                .to_string(),
+        )
     } else {
         ("HTTP/1.1 404 Not Found", "{}".to_string())
     };
@@ -210,6 +216,60 @@ fn category_def_pull_writes_provenance_and_push_ignores_it() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         !stdout.contains('~') && !stdout.contains("+ create"),
+        "provenance must not plan a change, got: {stdout}"
+    );
+    assert_only_reads(&requests);
+}
+
+#[test]
+fn palette_pull_writes_provenance_and_push_ignores_it() {
+    let (url, requests) = start_mock();
+    let dir = TempDir::new().expect("tempdir");
+    let config = config_for(&url, &dir);
+    let path = dir.path().join("palette.yaml");
+
+    let output = run_dsc(
+        &[
+            "theme",
+            "palette",
+            "pull",
+            "alpha",
+            "19",
+            path.to_str().unwrap(),
+        ],
+        &config,
+    );
+    assert!(
+        output.status.success(),
+        "theme palette pull failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let content = std::fs::read_to_string(&path).unwrap();
+    let snapshot: serde_yaml::Value = serde_yaml::from_str(&content).unwrap();
+    assert_eq!(snapshot["id"], 19);
+    assert_eq!(snapshot["colors"]["primary"], "222222");
+    assert_provenance(&snapshot, &url, &content);
+
+    retarget_provenance(&path);
+    let output = run_dsc(
+        &[
+            "--dry-run",
+            "theme",
+            "palette",
+            "push",
+            "alpha",
+            path.to_str().unwrap(),
+        ],
+        &config,
+    );
+    assert!(
+        output.status.success(),
+        "theme palette push --dry-run failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("= unchanged: palette 19") && !stdout.contains("PUT "),
         "provenance must not plan a change, got: {stdout}"
     );
     assert_only_reads(&requests);

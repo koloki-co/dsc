@@ -13,10 +13,15 @@ use crate::api::{DiscourseClient, color_schemes};
 use crate::cli::ListFormat;
 use crate::commands::common::{emit_with, ensure_api_credentials, select_discourse};
 use crate::config::Config;
-use crate::utils::{atomic_write, normalize_baseurl};
+use crate::utils::{SnapshotProvenance, atomic_write, normalize_baseurl, snapshot_provenance};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PaletteFile {
+    /// Informational origin of the snapshot. Never enforced: push and its
+    /// conflict checks ignore it, so a reviewed palette can be copied to
+    /// another site. Absent in files written before R71 reached palettes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provenance: Option<SnapshotProvenance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<i64>,
     name: String,
@@ -88,7 +93,8 @@ pub fn palette_pull(
     ensure_api_credentials(discourse)?;
     let client = DiscourseClient::new(discourse)?;
     let response = client.fetch_color_scheme(palette_id)?;
-    let palette = palette_from_response(&response, palette_id)?;
+    let mut palette = palette_from_response(&response, palette_id)?;
+    palette.provenance = Some(snapshot_provenance(&discourse.baseurl));
 
     let path = match local_path {
         Some(path) => path.to_path_buf(),
@@ -165,7 +171,9 @@ pub fn palette_push(
         if changed_name.is_some() || !changed_colors.is_empty() {
             client.update_color_scheme(target_id, changed_name, &changed_colors)?;
         }
-        let refreshed = palette_from_response(&client.fetch_color_scheme(target_id)?, target_id)?;
+        let mut refreshed =
+            palette_from_response(&client.fetch_color_scheme(target_id)?, target_id)?;
+        refreshed.provenance = Some(snapshot_provenance(&discourse.baseurl));
         write_palette_file(local_path, &refreshed, true)?;
         let url = format!(
             "{}/admin/customize/colors/{}",
@@ -181,8 +189,10 @@ pub fn palette_push(
         let new_id = client.create_color_scheme(&palette.name, &palette.colors)?;
         let mut created_with_id = palette;
         created_with_id.id = Some(new_id);
+        created_with_id.provenance = Some(snapshot_provenance(&discourse.baseurl));
         write_palette_file(local_path, &created_with_id, true)?;
-        let created = palette_from_response(&client.fetch_color_scheme(new_id)?, new_id)?;
+        let mut created = palette_from_response(&client.fetch_color_scheme(new_id)?, new_id)?;
+        created.provenance = Some(snapshot_provenance(&discourse.baseurl));
         write_palette_file(local_path, &created, true)?;
         let url = format!(
             "{}/admin/customize/colors/{}",
@@ -309,6 +319,7 @@ fn palette_from_response(response: &Value, fallback_id: i64) -> Result<PaletteFi
         colors: colors.clone(),
     };
     Ok(PaletteFile {
+        provenance: None,
         id: Some(id),
         name,
         colors,
@@ -464,6 +475,7 @@ mod tests {
             colors: BTreeMap::from([("primary".to_string(), "222222".to_string())]),
         };
         let current = PaletteFile {
+            provenance: None,
             id: Some(1),
             name: "Brand".to_string(),
             colors: BTreeMap::from([("primary".to_string(), "333333".to_string())]),
