@@ -5,6 +5,118 @@ All notable changes to `dsc` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Releases are grouped from conventional-commit messages by [git-cliff](https://git-cliff.org).
 
+## [0.25.0] - 2026-11-27
+
+### Bug fixes
+
+- **category**: Bound custom-field reads in def push ([c771d9e](https://github.com/koloki-co/dsc/commit/c771d9e7a1ae34c185560921d5bc94232fd9efed))
+
+- **topic**: Send supported no-bump parameter (R89) ([047eca5](https://github.com/koloki-co/dsc/commit/047eca5964863e32190a4063e318b4a1547c534d))
+
+- **topic**: Keep object-shaped tags in topic tag/untag (R84) ([8a20046](https://github.com/koloki-co/dsc/commit/8a200461400c98ec334e19ed661c637ecde356ba))
+
+- **update**: Separate reporting from maintenance success ([99d2462](https://github.com/koloki-co/dsc/commit/99d2462322db713cd54d3129557073d7f5e9998b))
+
+- **topic**: Parse map-valued tags in deleted-topic list ([2a82b70](https://github.com/koloki-co/dsc/commit/2a82b70193177bd4856145e5188d3ad83c3fd789))
+
+- **user-field**: Show complete create plans ([b4f51e7](https://github.com/koloki-co/dsc/commit/b4f51e78913620fbf5ea86b5745da465dc60034c))
+
+### CI / dependencies
+
+- **deps**: Bump zensical ([#230](https://github.com/koloki-co/dsc/issues/230)) ([f3e1816](https://github.com/koloki-co/dsc/commit/f3e1816d66c624c58a47b94704c2990233f68d52))
+
+- **deps**: Bump the routine-minor-and-patch group with 4 updates ([#229](https://github.com/koloki-co/dsc/issues/229)) ([a9b57ef](https://github.com/koloki-co/dsc/commit/a9b57ef0ff440ea927549b929fedb5504f1f7063))
+
+- **deps**: Bump taiki-e/install-action ([#228](https://github.com/koloki-co/dsc/issues/228)) ([cea0422](https://github.com/koloki-co/dsc/commit/cea0422e47083c3a9538210f6e745e18f92a84ce))
+
+- **deps**: Update url to 2.5.9 ([1caae25](https://github.com/koloki-co/dsc/commit/1caae252785a50a237028a4540abac15bfdcf2e3))
+
+- **deps**: Bump zensical ([75ac9ef](https://github.com/koloki-co/dsc/commit/75ac9ef49272c0c5e0cf96172fdb7dd65689abaf))
+
+- **deps**: Bump taiki-e/install-action ([4d1b7b4](https://github.com/koloki-co/dsc/commit/4d1b7b4b0af1a8a6ce6e14fa7fb6c8ce2fc187b7))
+
+- **deps**: Bump toml and uuid ([f6b659a](https://github.com/koloki-co/dsc/commit/f6b659a4dc7489641bedb33fbba9e883c1bc6ceb))
+
+- **deps**: Bump zensical ([2c3e97d](https://github.com/koloki-co/dsc/commit/2c3e97dc6b03db31c49dd1961a6eb122d5a6fe44))
+
+- **deps**: Bump the routine-minor-and-patch group with 3 updates ([84aebbf](https://github.com/koloki-co/dsc/commit/84aebbf9fef0273909f79769e1c6365b0f8f3700))
+
+- **deps**: Bump toml ([79bfe96](https://github.com/koloki-co/dsc/commit/79bfe96afc6316148a64fb84c2178fbf9ed6a5b6))
+
+- **deps**: Bump uuid to 1.29.0 ([acd9676](https://github.com/koloki-co/dsc/commit/acd9676bffde6598e5964e9caf02b7fc41e33b78))
+
+### Chores
+
+- **license**: Add CC-BY-SA-4.0 text ([6bf085e](https://github.com/koloki-co/dsc/commit/6bf085e81f4fc8b46a3ae8ce3266d52a44c38d30))
+
+- Merge remote main before publishing roadmap ([93cbac6](https://github.com/koloki-co/dsc/commit/93cbac64b8aea8af292ce427b44b76bf617cbdde))
+
+### Documentation
+
+- **boards**: Prioritise create-only board scaffolding ([3d982b5](https://github.com/koloki-co/dsc/commit/3d982b5da4eb094f9de29fb9256f8fc99d37c920))
+
+- **roadmap**: Add topic close workflow (R90) ([2f074a0](https://github.com/koloki-co/dsc/commit/2f074a0a6a8b110894d4de863577eda0c3d98be0))
+
+- **ai**: Record live LLM API capture (R88) ([984d728](https://github.com/koloki-co/dsc/commit/984d7284ef17b6d14564ee2e8bb2c838f14d7332))
+
+- **ai**: Specify safe LLM setup workflow (R88) ([3c2a2ad](https://github.com/koloki-co/dsc/commit/3c2a2adfc421a708e9175e9ab851b71e0672fd44))
+
+- **topic**: Specify in-place category moves ([bf5a8dc](https://github.com/koloki-co/dsc/commit/bf5a8dcce5a322a5b4862534cccf50393be848d5))
+
+- **ops**: Track rootless privileged-port readiness ([1b52990](https://github.com/koloki-co/dsc/commit/1b52990f128a5e0ba0721cca664dacd0c28b2178))
+
+- **ops**: Record update reporting and deleted-topic gaps ([66da7c4](https://github.com/koloki-co/dsc/commit/66da7c40568edcd30e6df325254513fee4005c0f))
+
+- **spec**: Record account investigation tooling gaps ([34ccebc](https://github.com/koloki-co/dsc/commit/34ccebc5c9cc1eb7a688e76d6fd697cae92259f9))
+
+- **roadmap**: Record mixed Docker daemon warning requirement ([dffdfef](https://github.com/koloki-co/dsc/commit/dffdfef0e279d644aad79150713dd96e76ed77e0))
+
+### Features
+
+- **board**: Scaffold standard to-do boards (R58) ([6e4c4cb](https://github.com/koloki-co/dsc/commit/6e4c4cbaf612cbdca435bc3c92c8cccc0f3b4d0d))
+
+- **update**: Refuse mismatched rootful/rootless daemon selection (R81) ([d7cf674](https://github.com/koloki-co/dsc/commit/d7cf674eff76fba774460416e46b9e9a7f77b7e2))
+
+- **topic**: Add in-place topic move between categories (R87) ([620019f](https://github.com/koloki-co/dsc/commit/620019f74d34a8a3a6f6f21a53ded2f344f1bdea))
+
+- **topic**: Add topic close and reopen (R90) ([9e2c85c](https://github.com/koloki-co/dsc/commit/9e2c85c2855dc29b751bd903c1d7de16cddf199f))
+
+- **ai**: Add safe LLM definition inspection (R88) ([d513ae6](https://github.com/koloki-co/dsc/commit/d513ae6da4fac2b1c3d4c8cd2f7d3ec616933af9))
+
+- **snapshot**: Add provenance to tag and category def pulls (R71) ([7e645f6](https://github.com/koloki-co/dsc/commit/7e645f697aebc0e770ff4384109b5221dbf0aa83))
+
+- **user**: Add privacy-scoped --admin view to user info (R82) ([9c8374c](https://github.com/koloki-co/dsc/commit/9c8374c904e8d9c86022e9ecfa54963cd6066875))
+
+- **snapshot**: Add provenance to declarative pulls (R71) ([190694e](https://github.com/koloki-co/dsc/commit/190694e001b3054d4f14b5955f2f6ec393729c8b))
+
+- **log**: Add opt-in --include-context to log staff (R83) ([9b8910e](https://github.com/koloki-co/dsc/commit/9b8910e035cc65943cb6a532b27d4be3f130ba5a))
+
+- **log**: Add --user actor-or-target union to log staff (R83) ([10ef4bb](https://github.com/koloki-co/dsc/commit/10ef4bb6b9bfb08b7a44b3412a8436f42e1b954b))
+
+- **log**: Add inclusive --until bound to log staff (R83) ([706dab2](https://github.com/koloki-co/dsc/commit/706dab202a0e0abe039e69b75b70b95e3b0986c3))
+
+- **theme**: Itemise theme push dry-run plan ([e24a937](https://github.com/koloki-co/dsc/commit/e24a9371bfdf26657a25bad55fad6b1cf67f8018))
+
+- **user-field**: Pull individual definitions ([2ee4f35](https://github.com/koloki-co/dsc/commit/2ee4f358cb0cc87c4034733eada627efba4d1763))
+
+- **list**: Remove configured discourses ([e55e7c0](https://github.com/koloki-co/dsc/commit/e55e7c0b6f7239b88b5ede45ee3e951c36a0421f))
+
+### Performance
+
+- **category**: Read custom fields only for the selected category (R91) ([477e60a](https://github.com/koloki-co/dsc/commit/477e60ac7de1ee5d627a1460bcb57b64ae85ec7b))
+
+### Tests
+
+- **topic**: Check topic move dry-run plan against the real run (R73) ([180f76d](https://github.com/koloki-co/dsc/commit/180f76dfd7b011f802a3e9b91052b0b12ba05feb))
+
+- **group**: Check group destroy dry-run plan against the real run (R73) ([0908a55](https://github.com/koloki-co/dsc/commit/0908a55b4ecb5722b3645f56f89c7ac7e75264e9))
+
+- **emoji**: Check emoji delete dry-run plan against the real run (R73) ([be7a67e](https://github.com/koloki-co/dsc/commit/be7a67ed2bcd2e786cab8781abfb068eed9e10d2))
+
+- **user-field**: Check user-field push dry-run plan against real run ([6a5e79a](https://github.com/koloki-co/dsc/commit/6a5e79aeebe8dbdee06dc1c3f55d3234337a7767))
+
+- **theme**: Check theme field push dry-run plan against real run ([2106894](https://github.com/koloki-co/dsc/commit/2106894ae367ca9a62634551bd60dfb8a1cb9bc9))
+
 ## [0.24.0] - 2026-11-03
 
 ### Bug fixes
